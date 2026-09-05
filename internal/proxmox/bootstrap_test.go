@@ -1028,7 +1028,7 @@ func TestInactivateRetainedModuleUsesBoundedGuestServiceContract(t *testing.T) {
 	}{
 		{kind: KindQEMU, module: "tailnet-router", want: "/usr/sbin/qm guest exec 200 -- /bin/sh -c", services: []string{"tailscaled"}},
 		{kind: KindLXC, module: "airvpn", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"boetticher-airvpn.service"}},
-		{kind: KindLXC, module: "arr", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"sonarr", "radarr", "nginx"}},
+		{kind: KindLXC, module: "arr", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"sonarr", "radarr", "lidarr", "readarr", "prowlarr", "qbittorrent", "boetticher-arr-peer-firewall", "nginx", "LoadState", "not-found"}},
 	} {
 		t.Run(string(guest.kind)+"/"+guest.module, func(t *testing.T) {
 			runner := &fakeRunner{output: []byte("{\"exitcode\":0,\"exited\":1}")}

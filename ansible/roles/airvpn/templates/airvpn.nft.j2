@@ -1,3 +1,5 @@
+{% set peer_port = module_configs.airvpn.qbittorrent_port | default(0) | int %}
+{% set forward_arr = '10.10.20.110/32' in (firewall_plan.airvpn_source_cidrs | default([])) and peer_port > 0 %}
 destroy table inet boetticher_airvpn
 destroy table ip boetticher_airvpn_nat
 
@@ -25,6 +27,9 @@ table inet boetticher_airvpn {
   chain forward {
     type filter hook forward priority filter; policy drop;
     ct state established,related accept comment "boetticher:airvpn-forward-established"
+{% if forward_arr %}
+    iifname "airvpn0" oifname "eth0" ip daddr 10.10.20.110 meta l4proto { tcp, udp } th dport {{ peer_port }} ct status dnat accept comment "boetticher:arr-forwarded-peer"
+{% endif %}
 {% if firewall_plan.airvpn_source_cidrs | default([]) | length > 0 %}
     iifname "eth0" oifname "airvpn0" ip saddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } accept comment "boetticher:airvpn-selected-sources"
 {% endif %}
@@ -34,8 +39,17 @@ table inet boetticher_airvpn {
 }
 
 table ip boetticher_airvpn_nat {
+{% if forward_arr %}
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "airvpn0" meta l4proto { tcp, udp } th dport {{ peer_port }} dnat to 10.10.20.110 comment "boetticher:arr-peer-dnat"
+  }
+{% endif %}
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
+{% if forward_arr %}
+    iifname "airvpn0" oifname "eth0" ip daddr 10.10.20.110 meta l4proto { tcp, udp } th dport {{ peer_port }} ct status dnat snat to 10.10.5.20 comment "boetticher:arr-peer-return-path"
+{% endif %}
 {% if firewall_plan.airvpn_source_cidrs | default([]) | length > 0 %}
     oifname "airvpn0" ip saddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } masquerade comment "boetticher:airvpn-payload-nat"
 {% endif %}

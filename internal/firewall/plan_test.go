@@ -658,6 +658,29 @@ func TestDeclaredEndpointsReachOnlyTheSmallstepCADestination(t *testing.T) {
 	}
 }
 
+func TestAirVPNHasBoundedManagementSSHWithoutARR(t *testing.T) {
+	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}
+	s, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range plan.Rules {
+		if rule.Name == "MGMT administration to airvpn" {
+			if rule.SourceCIDR != model.ProxmoxManagementAddress+"/32" || rule.DestinationCIDR != model.AirVPNGuestAddress+"/32" || rule.Protocol != "tcp" || strings.Join(rule.Ports, ",") != "22" || rule.Action != "allow" {
+				t.Fatalf("AirVPN management scope widened: %#v", rule)
+			}
+			return
+		}
+	}
+	t.Fatal("AirVPN has no management SSH rule when ARR is disabled")
+}
+
 func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("airvpn", "age1airvpn", model.GatewayModeManaged))
 	airvpnEnabled, bifrostEnabled := true, true

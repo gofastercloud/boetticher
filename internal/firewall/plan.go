@@ -653,19 +653,26 @@ func policyRules(s model.Site) []PolicyRule {
 	// TRANSIT appliance. Keep this management path narrower than the ordinary
 	// MGMT rules: only the host's fixed management address may reach the
 	// module's SSH port, and only while the module is declared.
-	if tailnet, ok := componentReference(s, "lab-tailnet-01"); ok {
+	for _, target := range []struct{ name, host, counter string }{
+		{"tailnet-router", "lab-tailnet-01", "tailnet_router"},
+		{"airvpn", "lab-airvpn-01", "airvpn"},
+	} {
+		appliance, ok := componentReference(s, target.host)
+		if !ok {
+			continue
+		}
 		rules = append(rules, PolicyRule{
 			Sequence:        len(rules) + 1,
-			Name:            "MGMT administration to tailnet-router",
+			Name:            "MGMT administration to " + target.name,
 			From:            "MGMT",
 			To:              "TRANSIT",
 			Action:          "allow",
 			Protocol:        "tcp",
 			Ports:           []string{"22"},
-			Counter:         "boetticher_mgmt_administration_to_tailnet_router",
-			Description:     "boetticher MGMT administration to tailnet-router",
+			Counter:         "boetticher_mgmt_administration_to_" + target.counter,
+			Description:     "boetticher MGMT administration to " + target.name,
 			SourceCIDR:      model.ProxmoxManagementAddress + "/32",
-			DestinationCIDR: tailnet.Address + "/32",
+			DestinationCIDR: appliance.Address + "/32",
 		})
 	}
 	// ARR is the one current module whose job includes arbitrary media
@@ -687,6 +694,16 @@ func policyRules(s model.Site) []PolicyRule {
 			SourceMAC:       componentSourceMAC(s, arr),
 			DestinationCIDR: model.AirVPNGuestAddress + "/32",
 		})
+		if port := s.ModuleConfig["airvpn"].QBittorrentPort; port != 0 {
+			rules = append(rules, PolicyRule{
+				Sequence: len(rules) + 1, Name: "AirVPN forwarded qBittorrent peers",
+				From: "TRANSIT", To: arr.Zone, Action: "allow", Protocol: "tcp/udp",
+				Ports: []string{strconv.Itoa(port)}, Counter: "boetticher_arr_forwarded_peer",
+				SourceCIDR: model.AirVPNGuestAddress + "/32", SourceMAC: networkmodel.ManagedModuleMAC(model.AirVPNGuestVMID), DestinationCIDR: arr.Address + "/32",
+				Description: "AirVPN tunnel DNAT and SNAT to the fixed ARR peer port only",
+			})
+		}
+
 	}
 	for _, declaration := range s.Declarations {
 		for _, intent := range declaration.NetworkIntents {

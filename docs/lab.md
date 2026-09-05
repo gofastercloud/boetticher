@@ -189,6 +189,24 @@ trigger a rebuild. The release manifest signs the exact artifact bytes. Release
 source provenance remains the exact source revision used for controller and
 bundle assembly, while the build-definition digest is provenance only.
 
+## Optional-module acceptance
+
+Qualify optional modules one at a time. A completed deployment is followed by
+the real module journey: an active process alone does not establish success.
+For AirVPN, verify a recent WireGuard handshake, IPv4 tunnel egress, enabled
+forwarding after repeated deployment, and blocked direct-WAN fallback. For
+Tailscale, verify registration, the advertised subnet route, and access from a
+separate tailnet client; Proxmox API and guest SSH remain denied on that path.
+For logging, verify newly received guest journal entries as well as collector
+health. Client-certificate rejection is a failed upload, even when both
+services are running.
+
+ARR acceptance requires its dedicated data-disk storage and application
+journeys. Activating storage on an existing single-disk site is a separate
+operation; do not initialize an attached disk merely to satisfy a module test.
+Printer acceptance requires the selected physical USB printer. Qualify the
+external Companion separately after its network reservation and setup.
+
 ## Recovery
 
 Keep the private site repository, independent Age identity, certificate

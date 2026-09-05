@@ -220,21 +220,30 @@ case "$name" in
     ;;
   boetticher-arr)
     test -x "$rootfs/usr/sbin/nginx"
+    for app in sonarr radarr lidarr prowlarr; do
+      test -f "$rootfs/etc/systemd/system/$app.service"
+      grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/$app.service"
+      if grep -Fq 'MemoryDenyWriteExecute' "$rootfs/etc/systemd/system/$app.service"; then
+        echo "arr artifact blocks the .NET JIT with MemoryDenyWriteExecute" >&2
+        exit 1
+      fi
+    done
     test -x "$rootfs/opt/sonarr/Sonarr"
     test -x "$rootfs/opt/radarr/Radarr"
+    test -x "$rootfs/opt/lidarr/Lidarr"
+    test -x "$rootfs/opt/prowlarr/Prowlarr"
+    test -x "$rootfs/usr/bin/qbittorrent-nox"
+    test -x "$rootfs/usr/local/libexec/boetticher-arr-configure"
+    test ! -e "$rootfs/opt/readarr"
+    test ! -e "$rootfs/etc/systemd/system/readarr.service"
     chroot "$rootfs" getent passwd sonarr | grep -Fq ':2200:2200:'
     chroot "$rootfs" getent passwd radarr | grep -Fq ':2201:2200:'
+    chroot "$rootfs" getent passwd lidarr | grep -Fq ':2202:2200:'
+    chroot "$rootfs" getent passwd prowlarr | grep -Fq ':2204:2200:'
+    chroot "$rootfs" getent passwd qbittorrent | grep -Fq ':2205:2200:'
     chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
-    test -f "$rootfs/etc/systemd/system/sonarr.service"
-    test -f "$rootfs/etc/systemd/system/radarr.service"
-    grep -Fq 'ExecStart=/opt/sonarr/Sonarr -nobrowser -data=/var/lib/arr/sonarr' "$rootfs/etc/systemd/system/sonarr.service"
-    grep -Fq 'ExecStart=/opt/radarr/Radarr -nobrowser -data=/var/lib/arr/radarr' "$rootfs/etc/systemd/system/radarr.service"
-    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/sonarr.service"
-    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/radarr.service"
-    if grep -Fq 'MemoryDenyWriteExecute' "$rootfs/etc/systemd/system/sonarr.service" "$rootfs/etc/systemd/system/radarr.service"; then
-      echo "arr artifact blocks the .NET JIT with MemoryDenyWriteExecute" >&2
-      exit 1
-    fi
+    chroot "$rootfs" dpkg-query -W -f='${Version}' qbittorrent-nox | grep -Fxq '5.1.0-2'
+    grep -Fq 'User=qbittorrent' "$rootfs/etc/systemd/system/qbittorrent.service"
     test ! -e "$rootfs/etc/nginx/sites-enabled/default"
     if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
       echo "arr artifact contains generated TLS material" >&2

@@ -128,17 +128,20 @@ func TestArrRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T)
 	}
 }
 
-func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.T) {
+func TestARRRoleUsesBoundedGuestLocalConfiguration(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	block := ansibleTaskBlock(string(contents), "Bind Sonarr and Radarr to loopback with no native login")
-	if block == "" {
-		t.Fatal("ARR role is missing its initial Sonarr/Radarr configuration task")
+	for _, required := range []string{"boetticher-arr-configure, check", "boetticher-arr-configure, prepare", "boetticher-arr-configure, wire", "state: stopped", "readarr.service", "loop: [sonarr, radarr, lidarr, prowlarr, qbittorrent]"} {
+		if !strings.Contains(string(contents), required) {
+			t.Fatalf("ARR lifecycle missing %q", required)
+		}
 	}
-	if !strings.Contains(block, "force: false") {
-		t.Fatal("ARR role overwrites application-managed configuration on every deploy")
+	for _, forbidden := range []string{"<ApiKey>", "ansible.builtin.slurp:", "ansible.builtin.fetch:", "apt:"} {
+		if strings.Contains(string(contents), forbidden) {
+			t.Fatalf("ARR role crosses guest-local artifact boundary: %q", forbidden)
+		}
 	}
 }
 

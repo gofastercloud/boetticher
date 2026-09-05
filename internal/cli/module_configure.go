@@ -520,6 +520,8 @@ func configurationFieldValue(config model.ModuleConfig, key string) string {
 			return string(model.ModuleNetworkDirect)
 		}
 		return string(config.Network)
+	case "qbittorrent_port":
+		return strconv.Itoa(config.QBittorrentPort)
 	case "servers":
 		return config.Servers
 	case "model_alias":
@@ -551,6 +553,12 @@ func applyConfigurationField(config *model.SiteConfig, name string, field model.
 	switch field.Key {
 	case "network":
 		moduleConfig.Network = model.ModuleNetworkMode(value)
+	case "qbittorrent_port":
+		port, err := strconv.Atoi(value)
+		if err != nil || !model.ValidQBittorrentPort(port) {
+			return fmt.Errorf("qbittorrent_port must be 0 or between 2049 and 65535, excluding ARR web/API ports")
+		}
+		moduleConfig.QBittorrentPort = port
 	case "servers":
 		moduleConfig.Servers = value
 	case "model_alias":

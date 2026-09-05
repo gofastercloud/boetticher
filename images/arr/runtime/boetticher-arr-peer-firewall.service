@@ -1,0 +1,12 @@
+[Unit]
+Description=Restrict ARR peer ingress to the AirVPN router
+Before=qbittorrent.service
+ConditionPathExists=/etc/nftables.d/arr-peers.nft
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/arr-peers.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
