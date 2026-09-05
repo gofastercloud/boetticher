@@ -41,9 +41,19 @@ func runUpdate(args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("Problem: validate update: %w", err)
 	}
-	originalSite, err := site.ComposeConfig(*siteDir, config)
-	if err != nil {
-		return fmt.Errorf("Problem: compose existing desired state: %w", err)
+	if config.SecretMetadata.RootAgeRecipient == "" {
+		return errors.New("Problem: this site predates the separate root-authority boundary; it must be recreated with boetticher init")
+	}
+	previousPulse := config.TestedVersions.Pulse
+	pulseUpgrade := previousPulse == "6.1.2"
+	var originalSite model.Site
+	if pulseUpgrade {
+		config.TestedVersions.Pulse = model.PulseVersion
+	} else {
+		originalSite, err = site.ComposeConfig(*siteDir, config)
+		if err != nil {
+			return fmt.Errorf("Problem: compose existing desired state: %w", err)
+		}
 	}
 	fromVersion := config.PlatformVersion
 	if fromVersion == "" {
@@ -61,6 +71,9 @@ func runUpdate(args []string, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "Update plan: platform %s -> %s; schema remains %d; model revision %s\n", fromVersion, model.PlatformVersion, model.SchemaVersion, updateRevision(resolved))
+	if pulseUpgrade {
+		fmt.Fprintf(out, "Pulse: %s -> %s; import the matching newly built release before deploy\n", previousPulse, model.PulseVersion)
+	}
 	if *dryRun {
 		fmt.Fprintln(out, "Dry run: no desired or generated state was changed; deploy has not been called.")
 		return nil
@@ -71,6 +84,13 @@ func runUpdate(args []string, out io.Writer) error {
 
 	if err := site.SaveConfig(*siteDir, config); err != nil {
 		return fmt.Errorf("Problem: save updated desired configuration: %w", err)
+	}
+	if pulseUpgrade {
+		// The old projections describe software unavailable to this controller.
+		// Keep them untouched until deploy regenerates them from the new desired
+		// version, rather than attempting to recompose the unsupported old pin.
+		fmt.Fprintln(out, "Updated desired Pulse version atomically. Generated files are unchanged; import the matching release and run deploy. No deployment was performed.")
+		return nil
 	}
 	if err := writeModelProjections(*siteDir, resolved); err != nil {
 		return rollbackUpdate(*siteDir, original, originalSite, fmt.Errorf("refresh generated projections: %w", err))

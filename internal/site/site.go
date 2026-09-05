@@ -145,7 +145,7 @@ func Save(dir string, s model.Site) error {
 	return SaveConfig(dir, model.ConfigFromSite(s))
 }
 
-func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error) {
+func Init(dir, ageIdentityPath, rootAgeIdentityPath string, externalFirewall bool) (model.Site, error) {
 	if _, err := os.Stat(dir); err == nil {
 		entries, readErr := os.ReadDir(dir)
 		if readErr != nil {
@@ -163,6 +163,16 @@ func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error
 	if err != nil {
 		return model.Site{}, err
 	}
+	if model.ExpandUserPath(rootAgeIdentityPath) == model.ExpandUserPath(ageIdentityPath) {
+		return model.Site{}, errors.New("root Age identity must be distinct from the routine Age identity")
+	}
+	rootRecipient, err := createAgeIdentity(rootAgeIdentityPath)
+	if err != nil {
+		return model.Site{}, err
+	}
+	if rootRecipient == recipient {
+		return model.Site{}, errors.New("root Age identity must use a distinct recipient")
+	}
 	installationID, err := randomID()
 	if err != nil {
 		return model.Site{}, err
@@ -172,6 +182,7 @@ func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error
 		gatewayMode = model.GatewayModeExternal
 	}
 	s := model.NewSite(installationID, recipient, gatewayMode)
+	s.SecretMetadata.RootAgeRecipient = rootRecipient
 	upstreamMAC, err := model.GenerateGatewayUpstreamMAC()
 	if err != nil {
 		return model.Site{}, err
@@ -274,7 +285,43 @@ func RuntimeDir(s model.Site) string {
 	return filepath.Join(home, ".config", "boetticher", "runtime", s.SecretMetadata.InstallationID)
 }
 
+const rootAuthoritySecretsPath = "secrets/root-authority.sops.yaml"
+const rootCRLPath = "pki/root.crl.pem"
+
 func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Authority, error) {
+	return loadAuthority(dir, s, ageIdentityPath, false)
+}
+
+// LoadAuthorityWithRootKey is reserved for explicit root-authority operations.
+// It keeps the root key out of the routine platform-secret document; callers
+// that need a separate decryption identity must enforce it at that operation.
+func LoadAuthorityWithRootKey(dir string, s model.Site, ageIdentityPath, rootAgeIdentityPath string) (pki.Authority, error) {
+	if s.SecretMetadata.RootAgeRecipient == "" {
+		return pki.Authority{}, errors.New("root authority recipient is absent; clean root-authority initialization is required")
+	}
+	authority, err := loadAuthority(dir, s, ageIdentityPath, false)
+	if err != nil {
+		return pki.Authority{}, err
+	}
+	if err := ValidateAgeIdentity(rootAgeIdentityPath, s.SecretMetadata.RootAgeRecipient); err != nil {
+		return pki.Authority{}, fmt.Errorf("validate root Age identity: %w", err)
+	}
+	values, err := LoadEncryptedDocument(dir, rootAgeIdentityPath, rootAuthoritySecretsPath)
+	if err != nil {
+		return pki.Authority{}, err
+	}
+	encoded, ok := values["root_key_pem_b64"].(string)
+	if !ok || encoded == "" {
+		return pki.Authority{}, errors.New("encrypted root authority secrets missing root_key_pem_b64")
+	}
+	authority.RootKeyPEM, err = pki.Decode(encoded)
+	if err != nil {
+		return pki.Authority{}, err
+	}
+	return authority, nil
+}
+
+func loadAuthority(dir string, s model.Site, ageIdentityPath string, includeRootKey bool) (pki.Authority, error) {
 	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
 	if err != nil {
 		return pki.Authority{}, err
@@ -298,7 +345,31 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 	if err != nil {
 		return pki.Authority{}, err
 	}
-	return pki.Authority{RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}, nil
+	authority := pki.Authority{RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}
+	if includeRootKey {
+		return pki.Authority{}, errors.New("root authority requires the dedicated root Age identity")
+	}
+	return authority, nil
+}
+
+// LoadRootCRL loads and validates the public root CRL created during an
+// explicit root-authority operation. It intentionally has no secret input.
+func LoadRootCRL(dir string, authority pki.Authority, now time.Time) (string, error) {
+	path, err := safeSitePath(dir, rootCRLPath)
+	if err != nil {
+		return "", err
+	}
+	data, err := pathguard.ReadFileLimited(path, MaxEncryptedDocumentBytes)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("root CRL is absent; this site requires clean root-authority initialization before deployment")
+		}
+		return "", fmt.Errorf("read root CRL: %w", err)
+	}
+	if err := pki.ValidateRootCRL(authority.RootCertPEM, string(data), now); err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // StoreEncryptedDocument encrypts a secret document with the pinned in-process
@@ -389,6 +460,9 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 }
 
 func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) error {
+	if s.SecretMetadata.RootAgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == s.SecretMetadata.AgeRecipient {
+		return errors.New("root authority requires a distinct root Age recipient")
+	}
 	secret, err := randomID()
 	if err != nil {
 		return err
@@ -413,7 +487,6 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	document := map[string]string{
 		"installation_id":         s.SecretMetadata.InstallationID,
 		"bootstrap_secret":        secret,
-		"root_key_pem_b64":        pki.Encode(authority.RootKeyPEM),
 		"root_cert_pem_b64":       pki.Encode(authority.RootCertPEM),
 		"issuing_key_pem_b64":     pki.Encode(authority.IssuingKeyPEM),
 		"issuing_cert_pem_b64":    pki.Encode(authority.IssuingCertPEM),
@@ -422,7 +495,24 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"pulse_proxy_auth_secret": pulseProxyAuthSecret,
 		"step_ca_password":        stepCAPassword,
 	}
-	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
+	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document); err != nil {
+		return err
+	}
+	if err := StoreEncryptedDocument(dir, s.SecretMetadata.RootAgeRecipient, rootAuthoritySecretsPath, map[string]string{"root_key_pem_b64": pki.Encode(authority.RootKeyPEM)}); err != nil {
+		return err
+	}
+	rootCRL, err := pki.GenerateRootCRL(authority, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("generate initial root CRL: %w", err)
+	}
+	if err := pki.ValidateRootCRL(authority.RootCertPEM, rootCRL, time.Now().UTC()); err != nil {
+		return fmt.Errorf("validate initial root CRL: %w", err)
+	}
+	path, err := safeSitePath(dir, rootCRLPath)
+	if err != nil {
+		return err
+	}
+	return atomicWrite(path, []byte(rootCRL), 0644)
 }
 
 // LoadPlatformSecret reads one named value from the encrypted platform

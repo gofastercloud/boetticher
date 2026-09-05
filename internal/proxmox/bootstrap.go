@@ -634,6 +634,7 @@ func (r SSHRunner) isolatedSSHConfig() ([]byte, error) {
 	}
 	lines := strings.SplitAfter(string(data), "\n")
 	inTarget := false
+	inBastion := false
 	foundTarget := false
 	var filtered strings.Builder
 	for _, line := range lines {
@@ -645,16 +646,29 @@ func (r SSHRunner) isolatedSSHConfig() ([]byte, error) {
 		fields := strings.Fields(trimmed)
 		if len(fields) > 1 && strings.EqualFold(strings.TrimSuffix(fields[0], "="), "host") {
 			inTarget = false
+			inBastion = false
 			for _, alias := range fields[1:] {
 				if alias == r.HostAlias {
 					inTarget = true
 					foundTarget = true
-					break
+				}
+				if alias == "lab-bastion" {
+					inBastion = true
 				}
 			}
 		}
 		if inTarget && len(fields) > 1 && strings.EqualFold(strings.TrimSuffix(fields[0], "="), "identityfile") {
 			continue
+		}
+		if inBastion && len(fields) > 1 {
+			switch strings.ToLower(strings.TrimSuffix(fields[0], "=")) {
+			case "controlmaster":
+				line = "    ControlMaster no\n"
+			case "controlpersist":
+				continue
+			case "controlpath":
+				line = "    ControlPath none\n"
+			}
 		}
 		filtered.WriteString(line)
 	}
@@ -935,7 +949,7 @@ var retainedModuleServices = map[string][]string{
 	"airvpn":         {"boetticher-airvpn.service"},
 	"bifrost":        {"bifrost", "nginx"},
 	"printer":        {"octoprint", "nginx"},
-	"arr":            {"sonarr", "radarr", "nginx"},
+	"arr":            {"sonarr", "radarr", "lidarr", "readarr", "prowlarr", "qbittorrent", "boetticher-arr-peer-firewall", "nginx"},
 	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
 	"gatus":          {"gatus", "nginx"},
 }
@@ -965,7 +979,13 @@ func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address
 	}
 	serviceCommands := make([]string, 0, len(services))
 	for _, service := range services {
-		serviceCommands = append(serviceCommands, "systemctl disable --now "+shellQuote(service)+"; if systemctl is-active --quiet "+shellQuote(service)+"; then echo retained service remains active: "+shellQuote(service)+" >&2; exit 1; fi; if systemctl is-enabled --quiet "+shellQuote(service)+"; then echo retained service remains enabled: "+shellQuote(service)+" >&2; exit 1; fi")
+		command := "systemctl disable --now " + shellQuote(service) + "; if systemctl is-active --quiet " + shellQuote(service) + "; then echo retained service remains active: " + shellQuote(service) + " >&2; exit 1; fi; if systemctl is-enabled --quiet " + shellQuote(service) + "; then echo retained service remains enabled: " + shellQuote(service) + " >&2; exit 1; fi"
+		if module == "arr" {
+			// ARR 1.0.0 and 1.0.1 have different bounded service sets. Stop
+			// every known installed service, including retired Readarr.
+			command = "if [ \"$(systemctl show --property=LoadState --value " + shellQuote(service) + ")\" != not-found ]; then " + command + "; fi"
+		}
+		serviceCommands = append(serviceCommands, command)
 	}
 	guestCommand := "set -eu; systemctl daemon-reload; " + strings.Join(serviceCommands, "; ")
 	var command string
@@ -1642,17 +1662,20 @@ func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput
 		if !relevant {
 			continue
 		}
-		if acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+		if acl.RoleID != role || acl.Type != expectedType {
 			return errors.New("scoped credential ACL is unexpected")
 		}
 		if acl.Path == "/" {
+			if acl.Propagate != 1 {
+				return errors.New("scoped credential ACL is unexpected")
+			}
 			if seenLegacy[acl.UGID] || len(seenScoped) > 0 {
 				return errors.New("scoped credential ACL is unexpected")
 			}
 			seenLegacy[acl.UGID] = true
 			continue
 		}
-		if !allowedPaths[acl.Path] || seenLegacy[acl.UGID] {
+		if !allowedPaths[acl.Path] || acl.Propagate != scopedProvisionerACLPropagate(acl.Path) || seenLegacy[acl.UGID] {
 			return errors.New("scoped credential ACL is unexpected")
 		}
 		key := acl.UGID + "\x00" + acl.Path
@@ -1863,9 +1886,79 @@ func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, addres
 	return nil
 }
 
+// EnsureScopedCredentialAuditACL grants only the read-only Sys.Audit
+// privilege at the Proxmox root path. Cluster-level read APIs (notably backup
+// job inspection) are authorized at / rather than a node or resource path;
+// keeping this privilege in a separate role avoids widening the provisioner
+// role's mutation privileges at the root.
+func EnsureScopedCredentialAuditACL(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID string) error {
+	const role = "BoetticherAuditor"
+	if !safeID(userID) || !safeID(tokenID) {
+		return errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect Proxmox audit role: %w", err)
+	}
+	if exists, roleErr := validateScopedRoleJSON(roleOutput, role, "Sys.Audit"); roleErr != nil {
+		return fmt.Errorf("validate Proxmox audit role: %w", roleErr)
+	} else if !exists {
+		command := "pvesh create /access/roles --roleid " + shellQuote(role) + " --privs 'Sys.Audit'"
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command)); err != nil {
+			return fmt.Errorf("create Proxmox audit role: %w", err)
+		}
+	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect Proxmox audit user: %w", err)
+	}
+	if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return fmt.Errorf("validate Proxmox audit user: %w", err)
+	}
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect Proxmox audit token: %w", err)
+	}
+	if err := validateScopedCredentialTokenMetadata(tokensOutput, tokenID); err != nil {
+		return fmt.Errorf("validate Proxmox audit token: %w", err)
+	}
+	for _, subject := range []struct {
+		flag  string
+		value string
+	}{{"--users", userID}, {"--tokens", userID + "!" + tokenID}} {
+		command := "pvesh set /access/acl --path '/' " + subject.flag + " " + shellQuote(subject.value) + " --roles '" + role + "' --propagate 1"
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command)); err != nil {
+			return fmt.Errorf("assign Proxmox audit role: %w", err)
+		}
+	}
+	aclOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
+	if err != nil {
+		return fmt.Errorf("verify Proxmox audit ACL: %w", err)
+	}
+	var acls []scopedCredentialACLEntry
+	if err := decodeAccessList(aclOutput, &acls); err != nil {
+		return fmt.Errorf("decode Proxmox audit ACL: %w", err)
+	}
+	expected := map[string]struct{}{userID: {}, userID + "!" + tokenID: {}}
+	seen := map[string]bool{}
+	for _, acl := range acls {
+		if _, ok := expected[acl.UGID]; !ok || acl.RoleID != role {
+			continue
+		}
+		if acl.Path != "/" || acl.Propagate != 1 || seen[acl.UGID] {
+			return errors.New("Proxmox audit ACL is unexpected")
+		}
+		seen[acl.UGID] = true
+	}
+	if len(seen) != len(expected) {
+		return errors.New("Proxmox audit ACL is incomplete")
+	}
+	return nil
+}
+
 func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string, paths []string) error {
 	for _, aclPath := range paths {
-		setACL := "pvesh set /access/acl --path " + shellQuote(aclPath) + " " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
+		setACL := "pvesh set /access/acl --path " + shellQuote(aclPath) + " " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate " + strconv.Itoa(scopedProvisionerACLPropagate(aclPath))
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL)); err != nil {
 			return err
 		}
@@ -1873,11 +1966,24 @@ func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, 
 	return nil
 }
 
+// The storage collection grants only the API collection capability needed to
+// create the fixed storage IDs. Child privileges are granted explicitly below;
+// inheriting them from /storage would authorize arbitrary future storage IDs.
+func scopedProvisionerACLPropagate(path string) int {
+	if path == "/storage" {
+		return 0
+	}
+	return 1
+}
+
 func scopedProvisionerACLPaths(node string) []string {
 	if !safeNodeID(node) {
 		return nil
 	}
-	paths := []string{"/nodes/" + node, "/sdn", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
+	// Proxmox checks Datastore.Allocate against the storage collection when
+	// updating a storage definition, so the collection path must be granted in
+	// addition to the bounded content paths used for artifact operations.
+	paths := []string{"/nodes/" + node, "/sdn", "/storage", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
 	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, model.ArrVMID, 200, 210, 240, 250} {
 		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
 	}
@@ -1932,7 +2038,12 @@ func validateScopedProvisionerACL(aclOutput []byte, userID, tokenID, role, node 
 		if !relevant {
 			continue
 		}
-		if acl.Path == "/" || !allowedPaths[acl.Path] || acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+		if acl.RoleID == "BoetticherAuditor" {
+			// The read-only root audit role is deliberately separate from
+			// the mutating provisioner ACL and is validated independently.
+			continue
+		}
+		if acl.Path == "/" || !allowedPaths[acl.Path] || acl.Propagate != scopedProvisionerACLPropagate(acl.Path) || acl.RoleID != role || acl.Type != expectedType {
 			return errors.New("scoped credential ACL is unexpected")
 		}
 		key := acl.UGID + "\x00" + acl.Path

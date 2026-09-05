@@ -1,0 +1,32 @@
+[Unit]
+Description=Boetticher Blinkt status indicators
+After=boetticher-companion.service
+Wants=boetticher-companion.service
+
+[Service]
+User=blinkt
+SupplementaryGroups=gpio companion
+ExecStart=/usr/local/libexec/boetticher-blinkt
+RuntimeDirectory=boetticher-blinkt
+WorkingDirectory=/run/boetticher-blinkt
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=3
+NoNewPrivileges=true
+CapabilityBoundingSet=
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX
+DevicePolicy=closed
+DeviceAllow=/dev/gpiochip0 rw
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

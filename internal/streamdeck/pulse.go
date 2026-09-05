@@ -2,7 +2,6 @@ package streamdeck
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -47,35 +45,6 @@ type PulseClient struct {
 	baseURL string
 	token   string
 	http    *http.Client
-}
-
-func NewPulseClient(config Config, token string) (*PulseClient, error) {
-	if strings.TrimSpace(token) == "" {
-		return nil, errors.New("StreamDeck Pulse client requires a credential")
-	}
-	if err := config.Validate(); err != nil {
-		return nil, err
-	}
-	caPEM, err := os.ReadFile(config.CACertificate)
-	if err != nil {
-		return nil, fmt.Errorf("read StreamDeck Pulse CA: %w", err)
-	}
-	roots, err := privateCAPool(caPEM)
-	if err != nil {
-		return nil, err
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    roots,
-	}
-	return newPulseClient(config.PulseURL, token, &http.Client{
-		Transport: transport,
-		Timeout:   requestTimeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	})
 }
 
 func privateCAPool(caPEM []byte) (*x509.CertPool, error) {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -69,7 +70,15 @@ func readAirVPNAPIKey(path string) ([]byte, error) {
 	if err := validateAirVPNAPIKeyFile(path); err != nil {
 		return nil, err
 	}
-	return pathguard.ReadFileLimited(path, 4096)
+	data, err := pathguard.ReadFileLimited(path, 4096)
+	if err != nil {
+		return nil, err
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return nil, errors.New("AirVPN API key file is empty")
+	}
+	return data, nil
 }
 
 func firewallAirVPNMetadata(metadata airvpn.Metadata) firewall.AirVPNProfile {

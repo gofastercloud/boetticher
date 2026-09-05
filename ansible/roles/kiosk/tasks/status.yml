@@ -1,0 +1,45 @@
+---
+- name: Install the signed Companion status executable
+  ansible.builtin.copy:
+    src: "{{ companion_binary }}"
+    dest: /usr/local/libexec/boetticher-companion
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart boetticher-companion
+
+- name: Install private-CA trust for Companion consumers
+  ansible.builtin.copy:
+    content: "{{ kiosk_root_ca_pem }}"
+    dest: /etc/boetticher/companion-ca.pem
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - restart boetticher-companion
+    - restart pulse-agent
+
+- name: Render public Companion configuration
+  ansible.builtin.copy:
+    content: "{{ companion_config | to_nice_json }}\n"
+    dest: /etc/boetticher/companion.json
+    owner: root
+    group: companion
+    mode: '0640'
+  notify: restart boetticher-companion
+
+- name: Install the local status service
+  ansible.builtin.template:
+    src: boetticher-companion.service.j2
+    dest: /etc/systemd/system/boetticher-companion.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart boetticher-companion
+
+- name: Start the local status service independently of network-online
+  ansible.builtin.systemd_service:
+    name: boetticher-companion.service
+    enabled: true
+    state: started
+    daemon_reload: true

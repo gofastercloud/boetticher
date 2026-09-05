@@ -39,6 +39,7 @@
     --root /var/lib/boetticher/step-ca/certs/root_ca.crt
     --cert-not-after 720h
     --not-after 5m
+    | tail -n 1
   args:
     executable: /bin/sh
   delegate_to: lab-dns-01
@@ -64,7 +65,20 @@
       - "https://lab-dns-01.{{ domain }}:9443"
       - --root
       - "{{ step_ca_endpoint_root_path }}"
-      - --bundle
+      - --force
+  changed_when: true
+  no_log: true
+  when: not step_ca_endpoint_marker.stat.exists
+
+- name: Bundle the {{ step_ca_endpoint_name }} certificate chain
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/step
+      - certificate
+      - bundle
+      - "{{ step_ca_endpoint_certificate_path }}.new"
+      - "{{ step_ca_endpoint_intermediate_path }}"
+      - "{{ step_ca_endpoint_certificate_path }}.bundle"
       - --force
   changed_when: true
   no_log: true
@@ -74,14 +88,14 @@
   ansible.builtin.shell: >-
     set -eu;
     /usr/local/bin/step certificate verify
-    {{ step_ca_endpoint_certificate_path | quote }}.new
+    {{ step_ca_endpoint_certificate_path | quote }}.bundle
     --roots {{ step_ca_endpoint_root_path | quote }};
     test -s {{ step_ca_endpoint_key_path | quote }}.new;
-    chown {{ step_ca_endpoint_certificate_owner | default('root') }}:{{ step_ca_endpoint_certificate_group | default('root') }} {{ step_ca_endpoint_certificate_path | quote }}.new;
-    chmod {{ step_ca_endpoint_certificate_mode | default('0644') }} {{ step_ca_endpoint_certificate_path | quote }}.new;
+    chown {{ step_ca_endpoint_certificate_owner | default('root') }}:{{ step_ca_endpoint_certificate_group | default('root') }} {{ step_ca_endpoint_certificate_path | quote }}.bundle;
+    chmod {{ step_ca_endpoint_certificate_mode | default('0644') }} {{ step_ca_endpoint_certificate_path | quote }}.bundle;
     chown {{ step_ca_endpoint_key_owner | default('root') }}:{{ step_ca_endpoint_key_group | default('root') }} {{ step_ca_endpoint_key_path | quote }}.new;
     chmod {{ step_ca_endpoint_key_mode | default('0600') }} {{ step_ca_endpoint_key_path | quote }}.new;
-    mv -f {{ step_ca_endpoint_certificate_path | quote }}.new {{ step_ca_endpoint_certificate_path | quote }};
+    mv -f {{ step_ca_endpoint_certificate_path | quote }}.bundle {{ step_ca_endpoint_certificate_path | quote }};
     mv -f {{ step_ca_endpoint_key_path | quote }}.new {{ step_ca_endpoint_key_path | quote }};
     install -o root -g root -m 0644 /dev/null {{ step_ca_endpoint_marker_path | quote }}
   args:

@@ -142,6 +142,13 @@ boetticher companion setup --host-key 'ssh-ed25519 VERIFIED_HOST_KEY' --confirm 
 boetticher companion status --site ./my-boetticher
 ```
 
+For a Pi fitted with Blinkt, add `--blinkt=true` to `companion add`. Use
+`--display=false` or `--streamdeck=false` when that hardware is not fitted.
+The default screen is a local read-only dashboard controlled from StreamDeck;
+no mouse, keyboard, touchscreen, or browser login is required. Run platform
+`deploy` after changing the Companion configuration so its dedicated Pulse
+credentials are prepared before `companion setup`.
+
 `companion add` changes desired state only. It derives `lab-display-01` at
 `10.10.20.50` on SERVERS; the following `deploy` applies that Kea reservation,
 DDNS identity, and the exact Proxmox-bastion route. Setup and status then use
@@ -153,6 +160,14 @@ as the managed Companion identity. Supply `--host-key` on the first setup only
 after independently verifying the Pi's SSH host key.
 
 ## Everyday operations
+
+This controller pins Pulse server and agents to 6.4.1. For an existing site
+that pins 6.1.2, run `boetticher update --dry-run --site ./my-boetticher`, then
+`boetticher update --confirm --site ./my-boetticher`. This updates desired state
+only. Import a matching new signed release containing monitoring image 1.0.1,
+then deploy to update Pulse and install the module-local VPN sensors. Repeat
+`companion setup` to update the Pi agent and displays. Do not use the Pulse
+self-updater to bypass the appliance release selection.
 
 Use the consolidated read-only view first:
 

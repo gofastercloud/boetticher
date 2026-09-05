@@ -34,6 +34,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
@@ -205,11 +206,18 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
 	planDigestFlag := fs.String("plan", "", "exact immutable plan digest produced by boetticher plan --live")
+	onlyModule := fs.String("only-module", "", "reconcile only one enabled optional module guest; core/network state is left unchanged")
 	replaceFirewall := fs.Bool("replace-firewall", false, "replace only the managed firewall root disk after proving its persistent volumes")
 	recreateLegacyLXCs := fs.Bool("recreate-legacy-lxcs", false, "discard only proven legacy local-raw LXC state and recreate those appliances on planned storage")
 	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *onlyModule != "" {
+		definition, ok := modules.FirstPartyRegistry().Definition(*onlyModule)
+		if !ok || definition.Policy == modules.Mandatory || *onlyModule == "firewall" || *onlyModule == "dns" || *onlyModule == "monitoring" {
+			return errors.New("--only-module requires one enabled optional module")
+		}
 	}
 	if !*dryRun && *planDigestFlag == "" {
 		if !stdinIsTerminal() {
@@ -226,6 +234,28 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
+	}
+	if *onlyModule != "" && !modules.IsEnabled(s, *onlyModule) {
+		return fmt.Errorf("--only-module requires enabled module %s", *onlyModule)
+	}
+	if *onlyModule != "" {
+		currentRevision, revisionErr := s.Revision()
+		if revisionErr != nil {
+			return fmt.Errorf("calculate full deployment baseline for --only-module: %w", revisionErr)
+		}
+		applied, found, stateErr := site.LoadLastAppliedState(*siteDir)
+		if stateErr != nil {
+			return fmt.Errorf("read full deployment baseline for --only-module: %w", stateErr)
+		}
+		if !found || applied.ModelRevision != currentRevision {
+			return errors.New("--only-module requires a current successful full deployment; run boetticher deploy before scoped replacement")
+		}
+		if !*dryRun {
+			if err := recoverInterruptedDeployment(ctx, *siteDir, s, out); err != nil {
+				return err
+			}
+		}
+		return runScopedModuleDeploy(ctx, *siteDir, *ageIdentity, *onlyModule, *planDigestFlag, *confirm, *dryRun, s, currentRevision, out, report, registerCleanup, registerCommit, registerOperationFailure)
 	}
 	if !*dryRun {
 		if err := recoverInterruptedDeployment(ctx, *siteDir, s, out); err != nil {
@@ -532,6 +562,21 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	rootRunner.ConfigFile = ""
 	rootRunner.HostAlias = ""
 	rootRunner.HostKeyAlias = model.LogicalProxmoxIdentity
+	allowedDestinations := jumpDestinations(s)
+	if err := proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", durableOperatorPublicKey, allowedDestinations); err != nil {
+		return fmt.Errorf("refresh Proxmox bastion allow-list for desired modules: %w", err)
+	}
+	if err := proxmox.EnsureScopedCredentialACL(ctx, rootRunner, s.BootstrapAddress, "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", node); err != nil {
+		return fmt.Errorf("repair scoped Proxmox ACLs before module reconciliation: %w", err)
+	}
+	proxmoxClient.RestoreReplacementACL = func(repairCtx context.Context, vmid int) error {
+		for _, guest := range proxmoxPlan.Guests {
+			if guest.VMID == vmid && guest.Kind == proxmox.KindLXC && strings.HasPrefix(guest.Owner, "boetticher/module/") {
+				return proxmox.EnsureScopedCredentialACL(repairCtx, rootRunner, s.BootstrapAddress, "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", node)
+			}
+		}
+		return fmt.Errorf("replacement ACL target %d is outside the accepted plan", vmid)
+	}
 	if err := proxmoxClient.SetSnippetRunner(rootRunner, s.BootstrapAddress, "root"); err != nil {
 		return fmt.Errorf("bind temporary Apply authority to Proxmox host operations: %w", err)
 	}
@@ -611,6 +656,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("HOLD: generate enforceable client revocation list: %w", err)
 	}
 	runtimeVariables["client_crl_pem"] = clientCRL
+	rootCRL, err := site.LoadRootCRL(*siteDir, authority, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("load validated root revocation list for nginx chain validation: %w", err)
+	}
+	runtimeVariables["client_crl_bundle_pem"] = clientCRL + rootCRL
 	var pulseAdminPassword string
 	if monitoringEnabled {
 		var loadErr error
@@ -658,6 +708,8 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
+	// Nginx uses the issuing CA as its direct client trust anchor so the
+	// issuing-CA CRL can be checked without requiring a separate root CRL.
 	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	runtimeVariables["step_ca_root_cert_pem"] = authority.RootCertPEM
 	runtimeVariables["step_ca_intermediate_cert_pem"] = authority.IssuingCertPEM
@@ -773,6 +825,18 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
+		var isolationVariables map[string]any
+		if err := json.Unmarshal(variables, &isolationVariables); err != nil {
+			return err
+		}
+		isolationVariables["boetticher_network_isolation_only"] = true
+		isolationData, err := json.Marshal(isolationVariables)
+		if err != nil {
+			return err
+		}
+		if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, isolationData, model.LogicalProxmoxIdentity, ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil {
+			return fmt.Errorf("install Core bridge isolation before guest startup: %w", err)
+		}
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
 		for _, candidate := range proxmoxPlan.Guests {
 			if candidate.Kind == proxmox.KindQEMU {
@@ -832,6 +896,26 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if err := verifyFirewallBootstrapNetwork(ctx, firewallRunner); err != nil {
 			return fmt.Errorf("HOLD: managed gateway bootstrap network is not ready before runtime configuration: %w", err)
 		}
+		upstream, err := observeGatewayUpstream(ctx, firewallRunner, firewallPlan)
+		if err != nil {
+			return fmt.Errorf("verify HOME prefix before opening restricted egress: %w", err)
+		}
+		firewallPlan.Upstream = &upstream
+		boundRules, err := firewall.RenderNFTWithResolver(firewallPlan, endpointLookup)
+		if err != nil {
+			return err
+		}
+		var boundVariables map[string]any
+		if err := json.Unmarshal(variables, &boundVariables); err != nil {
+			return err
+		}
+		boundVariables["firewall_plan"] = firewallPlan
+		boundVariables["firewall_ruleset"] = boundRules
+		boundVariables["firewall_ruleset_sha256"] = firewall.RulesetDigest(boundRules)
+		variables, err = json.Marshal(boundVariables)
+		if err != nil {
+			return err
+		}
 		if err := installCredentialsForGuest(ctx, firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
 		}
@@ -856,7 +940,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return fmt.Errorf("resolve DNS readiness contract: %w", err)
 	}
-	for _, module := range deploymentModuleNames(s) {
+	for _, module := range deploymentModuleNames(s, *onlyModule) {
 		if !modules.IsEnabled(s, module) {
 			continue
 		}
@@ -893,15 +977,26 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		for _, guest := range replacedGuests {
 			report.recordMutation("Proxmox", guest.Name, "guest replaced", true)
 		}
-		for _, guest := range replacedGuests {
+		// A newly created guest can reuse a stable hostname after an earlier
+		// failed/replaced attempt. Remove only that exact stale host-key entry
+		// before independently pinning the guest's new key.
+		for _, guest := range append(append([]proxmox.GuestPlan{}, missingGuests...), replacedGuests...) {
 			if err := retireReplacedHostKey(*siteDir, s, guest); err != nil {
-				return fmt.Errorf("retire replaced %s host key: %w", guest.Name, err)
+				return fmt.Errorf("retire stale %s host key: %w", guest.Name, err)
 			}
 		}
 		for _, guest := range proxmoxPlan.Guests {
 			matches := guest.Owner == "boetticher/module/"+module
 			if !matches || guest.Kind != proxmox.KindLXC {
 				continue
+			}
+			if *onlyModule != "" {
+				// Scoped replacement may follow an earlier failed run whose
+				// artifact state is now current but whose host key is stale.
+				// Remove only this guest's entry before independent pinning.
+				if err := retireReplacedHostKey(*siteDir, s, guest); err != nil {
+					return fmt.Errorf("retire scoped %s host key: %w", guest.Name, err)
+				}
 			}
 			guestRunner := applianceSSHRunnerWithIdentity(s, *siteDir, guest.Name, temporaryPrivateKey)
 			// Register before waiting for SSH: first boot may already have
@@ -1052,6 +1147,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	for _, guest := range retainedGuests {
 		module := strings.TrimPrefix(guest.Owner, "boetticher/module/")
 		if err := proxmox.InactivateRetainedModule(ctx, rootRunner, s.BootstrapAddress, "root", guest.Kind, guest.VMID, module); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "configuration file") && strings.Contains(strings.ToLower(err.Error()), "does not exist") {
+				// A retained declaration can outlive a guest that was never
+				// created. Proxmox's exact missing-config result proves there
+				// is no running service set to inactivate.
+				continue
+			}
 			return fmt.Errorf("HOLD: inactivate retained %s guest %s through Proxmox: %w", module, guest.Name, err)
 		}
 	}
@@ -1061,12 +1162,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	// readiness checks above before this all-host bootstrap/network pass. That
 	// foundation barrier makes independent host progress safe; the later
 	// health phase remains the final live gate.
-	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil {
-		return err
+	if *onlyModule == "" {
+		if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(out, "      Scoped module deployment: network and DNS reconciliation skipped (%s)\n", *onlyModule)
 	}
 	report.complete()
 	report.start("services", "Configure services and runtime credentials")
-	if err := installModuleRuntimeConfigs(ctx, *siteDir, s, proxmoxPlan, temporaryPrivateKey); err != nil {
+	if err := installModuleRuntimeConfigs(ctx, *siteDir, s, proxmoxPlan, temporaryPrivateKey, *onlyModule); err != nil {
 		return err
 	}
 	report.recordMutation("Services", "appliance runtime configuration", "reconciled", true)
@@ -1076,8 +1181,20 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
-		return fmt.Errorf("install endpoint-signed certificates: %w", err)
+	if *onlyModule == "" {
+		if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
+			return fmt.Errorf("install endpoint-signed certificates: %w", err)
+		}
+	} else {
+		for _, guest := range proxmoxPlan.Guests {
+			if guest.Owner != "boetticher/module/"+*onlyModule || guest.Kind != proxmox.KindLXC {
+				continue
+			}
+			if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report, temporaryPrivateKey); err != nil {
+				return fmt.Errorf("install scoped endpoint configuration for %s: %w", guest.Name, err)
+			}
+		}
+		fmt.Fprintf(out, "      Scoped module deployment: service-wide certificate reconciliation skipped (%s)\n", *onlyModule)
 	}
 	report.complete()
 	if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseVerify, nil); err != nil {
@@ -1102,16 +1219,31 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
 		}
 		pulseBaseURL := "https://" + pulseForward.Address()
+		pulseOperatorCertificate, issueErr := pki.IssueClient(authority, "operator", s.Network.Domain, time.Now().UTC())
+		if issueErr != nil {
+			return fmt.Errorf("issue Pulse operator client certificate: %w", issueErr)
+		}
 		pulseAdmin, clientErr := pulse.NewAdminClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, AdminUser: "admin", AdminPassword: pulseAdminPassword,
-			CAPEM:      authority.RootCertPEM,
+			CAPEM:         authority.RootCertPEM,
+			ClientCertPEM: pulseOperatorCertificate.ChainPEM, ClientKeyPEM: pulseOperatorCertificate.KeyPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
 			return clientErr
 		}
-		if aiopsEnabled {
-			clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
+		if s.Companion.Capabilities().Enabled {
+			if _, _, err := loadOrCreatePulseToken(*siteDir, *ageIdentity, s, "companion_read_token", func() (string, error) { return pulseAdmin.CreateReadToken(ctx, "boetticher companion read") }); err != nil {
+				return fmt.Errorf("prepare Companion read credential: %w", err)
+			}
+			if s.Companion.Capabilities().PulseAgent {
+				if _, _, err := loadOrCreatePulseToken(*siteDir, *ageIdentity, s, "companion_agent_token", func() (string, error) { return pulseAdmin.CreateAgentReportToken(ctx, "boetticher companion report") }); err != nil {
+					return fmt.Errorf("prepare Companion report credential: %w", err)
+				}
+			}
+		}
+		if aiopsEnabled && (*onlyModule == "" || *onlyModule == "aiops") {
+			clientCertificate, issueErr := pki.IssueClient(authority, "aiops-router-client", s.Network.Domain, time.Now().UTC())
 			if issueErr != nil {
 				return fmt.Errorf("issue runtime AIOps canary certificate: %w", issueErr)
 			}
@@ -1285,7 +1417,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.complete()
 	report.start("persist", "Persist final state")
-	backupChanged, err := proxmoxClient.ApplyBackupJobWithMutation(ctx, node, proxmox.BackupJob{
+	backupChanged, err := proxmox.ApplyBackupJobWithRunner(ctx, rootRunner, s.BootstrapAddress, "root", node, proxmox.BackupJob{
 		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,
 		Schedule: backupPlan.Schedule, VMIDList: backupPlan.VMIDList(), Retention: backupPlan.Retention,
 	})
@@ -1312,6 +1444,176 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 }
 
 const deploymentRootTimeout = 3 * time.Minute
+
+// runScopedModuleDeploy deliberately starts from a verified full deployment
+// baseline. It reuses that baseline's rendered inventory and variables, then
+// touches only the selected module's LXC guests and their credentials. Core
+// policy, storage, DNS, Pulse, backups, ACLs, bastion policy, and projections
+// remain owned by full deploy.
+func runScopedModuleDeploy(ctx context.Context, siteDir, ageIdentity, module, planDigest string, confirm, dryRun bool, s model.Site, revision string, out io.Writer, report *deploymentReport, registerCleanup deploymentCleanupRegistrar, registerCommit func(func() error), registerFailure func(func(error))) error {
+	if dryRun {
+		fmt.Fprintf(out, "Scoped module deployment: PASS %s validated against full baseline %s; no mutation performed\n", module, revision)
+		return nil
+	}
+	if !confirm {
+		return errors.New("--only-module changes the selected module; rerun with --confirm")
+	}
+	if planDigest == "" {
+		return errors.New("--only-module requires --plan from the current full deployment baseline")
+	}
+	lastApplied, found, err := site.LoadLastAppliedState(siteDir)
+	if err != nil || !found || lastApplied.ModelRevision != revision || lastApplied.PlanDigest != planDigest {
+		return errors.New("--only-module requires the exact plan digest from the current successful full deployment")
+	}
+	if _, pending, err := loadPendingModulePurge(siteDir, s); err != nil {
+		return err
+	} else if pending {
+		return errors.New("--only-module refuses while a module purge is pending; run a full deploy")
+	}
+	manifest, bundleDigest, err := artifacts.ImportedReleaseManifest(siteDir)
+	if err != nil {
+		return fmt.Errorf("authenticated release bundle is required before scoped deployment: %w", err)
+	}
+	if manifest.ReleaseVersion != model.ReleaseVersion {
+		return fmt.Errorf("scoped deployment release version %s is incompatible with controller %s", manifest.ReleaseVersion, model.ReleaseVersion)
+	}
+	ansibleRoot, cleanupSource, err := ansibleSourceRoot()
+	if err != nil {
+		return err
+	}
+	defer cleanupSource()
+	variablesPath := filepath.Join(siteDir, "generated", "ansible", "variables.json")
+	variables, err := pathguard.ReadFileLimited(variablesPath, 4<<20)
+	if err != nil {
+		return fmt.Errorf("read full deployment variables for scoped module: %w", err)
+	}
+	var variableDocument map[string]any
+	if err := json.Unmarshal(variables, &variableDocument); err != nil || variableDocument["model_revision"] != revision {
+		return errors.New("--only-module requires current generated variables from the full deployment baseline")
+	}
+	inventoryPath := filepath.Join(siteDir, "generated", "ansible", "inventory.ini")
+	if _, err := pathguard.ReadFileLimited(inventoryPath, 1<<20); err != nil {
+		return fmt.Errorf("read full deployment inventory for scoped module: %w", err)
+	}
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	plan, err = proxmox.ResolveQualifiedArtifacts(siteDir, plan, true)
+	if err != nil {
+		return err
+	}
+	client, _, err := loadProxmoxClientWithSnippetUser(siteDir, s, ageIdentity, "", false, model.DefaultAdminSSHUser)
+	if err != nil {
+		return err
+	}
+	node, err := client.SingleNode(ctx)
+	if err != nil {
+		return err
+	}
+	plan.Node = node
+	plan.DestructiveConfirmed = true
+	targets := make([]proxmox.GuestPlan, 0)
+	for _, guest := range plan.Guests {
+		if guest.Kind == proxmox.KindLXC && guest.Owner == "boetticher/module/"+module {
+			targets = append(targets, guest)
+		}
+	}
+	if len(targets) == 0 {
+		return fmt.Errorf("--only-module %s has no owned LXC guest", module)
+	}
+	states, err := inspectDeploymentGuestStates(ctx, client, node, targets)
+	if err != nil {
+		return err
+	}
+	privateKey, publicKey, err := newTemporaryRootIdentity()
+	if err != nil {
+		return err
+	}
+	durableOperatorPublicKey, err := operatorPublicKeyForSite(s)
+	if err != nil {
+		return err
+	}
+	state := site.OperationState{ID: report.runID, Kind: "scoped-module-deploy", Phase: site.PhaseApply, ModelRevision: revision, PlanDigest: planDigest, BundleDigest: bundleDigest, TemporaryPublicKey: publicKey, TemporaryHostAddress: s.BootstrapAddress}
+	for _, guest := range targets {
+		state.TemporaryCleanupGuests = append(state.TemporaryCleanupGuests, site.OperationGuest{Name: guest.Name, VMID: guest.VMID, Kind: string(guest.Kind), Address: guest.Address})
+	}
+	if err := site.SaveOperationState(siteDir, state); err != nil {
+		return err
+	}
+	recoveryRunner := proxmoxRootSSHRunner(s, siteDir)
+	cleanup := newTemporaryRootCleanup(s, siteDir, publicKey, privateKey)
+	cleanup.hostEstablished()
+	if registerCleanup == nil {
+		return errors.New("scoped deployment cleanup registration is required")
+	}
+	registerCleanup(func(cleanupCtx context.Context) error { return cleanup.revoke(cleanupCtx) })
+	if registerFailure != nil {
+		registerFailure(func(cause error) { _ = saveDeployOperationPhase(siteDir, &state, site.PhaseFailed, cause) })
+	}
+	if registerCommit != nil {
+		registerCommit(func() error { return site.ClearOperationState(siteDir) })
+	}
+	if err := proxmox.InstallTemporaryRootAccess(ctx, recoveryRunner, s.BootstrapAddress, "root", publicKey); err != nil {
+		return err
+	}
+	rootRunner := recoveryRunner.WithIdentityData(privateKey).FreshConnection()
+	rootRunner.ConfigFile, rootRunner.HostAlias, rootRunner.HostKeyAlias = "", "", model.LogicalProxmoxIdentity
+	plan.OperatorPublicKey = durableOperatorPublicKey
+	plan.PrivilegedRunner = rootRunner
+	plan.PrivilegedAddress = s.BootstrapAddress
+	plan.PrivilegedUser = "root"
+	if err := client.SetSnippetRunner(rootRunner, s.BootstrapAddress, "root"); err != nil {
+		return err
+	}
+	if err := proxmox.ProvisionModule(ctx, client, plan, module); err != nil {
+		return err
+	}
+	bindings, err := deploymentCredentialBindings(s)
+	if err != nil {
+		return err
+	}
+	values := map[string]string{}
+	for _, binding := range bindings {
+		target := false
+		for _, guest := range targets {
+			target = target || binding.Guest == guest.Name
+		}
+		if !target {
+			continue
+		}
+		value, loadErr := site.LoadPlatformSecret(siteDir, s, ageIdentity, binding.SecretKey)
+		if loadErr != nil {
+			return loadErr
+		}
+		values[binding.SecretKey] = value
+	}
+	for _, guest := range targets {
+		if state, ok := states[guest.VMID]; ok && (state.replacement || !state.exists) {
+			if err := retireReplacedHostKey(siteDir, s, guest); err != nil {
+				return err
+			}
+		}
+		guestRunner := applianceSSHRunnerWithIdentity(s, siteDir, guest.Name, privateKey)
+		cleanup.guestEstablished(guest)
+		if err := waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner.FreshConnection(), guest, publicKey, deploymentKnownHosts(siteDir), guest.Hostname+"."+s.Network.Domain); err != nil {
+			return err
+		}
+		if err := installCredentialsForGuest(ctx, guestRunner, guest.Name, bindings, values); err != nil {
+			return err
+		}
+	}
+	if err := installModuleRuntimeConfigs(ctx, siteDir, s, plan, privateKey, module); err != nil {
+		return err
+	}
+	for _, guest := range targets {
+		if err := runTrackedAnsible(ctx, filepath.Join(ansibleRoot, "ansible", "site.yml"), inventoryPath, variables, guest.Name, report, privateKey); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(out, "Scoped module deployment: PASS %s reconciled without global platform mutation\n", module)
+	return nil
+}
 
 func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey, knownHosts, hostKeyAlias string, onAuthorityEstablished ...func()) error {
 	if guest.Hostname == "" || hostKeyAlias == "" {
@@ -1497,10 +1799,10 @@ func artifactQualificationStatus(artifact model.Artifact) string {
 // Site. The managed firewall is handled immediately above because dependent
 // guests must not be created until its management leg and forwarding policy
 // are ready.
-func deploymentModuleNames(s model.Site) []string {
+func deploymentModuleNames(s model.Site, onlyModule string) []string {
 	result := make([]string, 0, len(s.Modules))
 	for _, module := range s.Modules {
-		if module.Enabled && module.Name != "firewall" {
+		if module.Enabled && module.Name != "firewall" && (onlyModule == "" || module.Name == onlyModule) {
 			result = append(result, module.Name)
 		}
 	}
@@ -1530,7 +1832,7 @@ func deploymentGuestPlans(s model.Site, plan proxmox.Plan) []proxmox.GuestPlan {
 		seen[guest.VMID] = true
 		guests = append(guests, guest)
 	}
-	for _, module := range deploymentModuleNames(s) {
+	for _, module := range deploymentModuleNames(s, "") {
 		for _, guest := range plan.Guests {
 			matches := guest.Owner == "boetticher/module/"+module
 			if !matches || seen[guest.VMID] {
@@ -1891,7 +2193,7 @@ func loadOrCreatePulseToken(siteDir, ageIdentity string, s model.Site, key strin
 // non-secret appliance contract. Module declarations remain the source of
 // guest identity and runtime configuration; the SSH runner is only the Core
 // transport used to install the already-validated document.
-func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Site, plan proxmox.Plan, identityData []byte) error {
+func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Site, plan proxmox.Plan, identityData []byte, onlyModule string) error {
 	declarations := make(map[string]model.ModuleDeclaration, len(s.Declarations))
 	for _, declaration := range s.Declarations {
 		declarations[declaration.Module] = declaration
@@ -1904,6 +2206,9 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 	}
 	for _, guest := range s.PlatformComponents() {
 		if guest.Module == "" {
+			continue
+		}
+		if onlyModule != "" && guest.Module != onlyModule {
 			continue
 		}
 		resolvedGuest, ok := resolvedGuests[guest.Name]
@@ -2060,6 +2365,11 @@ func revokeTemporaryRootAccessForGuestsWithFallback(ctx context.Context, s model
 				if hostRevoke != nil && host {
 					hostRunner := proxmoxRootSSHRunner(s, siteDir)
 					if fallbackErr := hostRevoke(ctx, hostRunner, s.BootstrapAddress, "root", item.kind, item.vmid, operatorPublicKey); fallbackErr == nil {
+						return
+					} else if strings.Contains(strings.ToLower(fallbackErr.Error()), "configuration file") && strings.Contains(strings.ToLower(fallbackErr.Error()), "does not exist") {
+						// A planned guest may not have been created before an
+						// interrupted deployment. Proxmox's exact pct/qm error is
+						// authoritative proof that there is no guest to clean.
 						return
 					} else {
 						errs[index] = fmt.Errorf("revoke root access on %s: direct: %w; host fallback: %v", item.name, err, fallbackErr)

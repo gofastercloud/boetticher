@@ -1,0 +1,18 @@
+[Unit]
+Description=boetticher Tailnet routed-client boundary
+DefaultDependencies=no
+Requires=nftables.service
+After=nftables.service
+Before=network-pre.target tailscaled.service shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/sbin/sysctl -w net.ipv4.ip_forward=0
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/tailnet.nft
+ExecStop=/usr/sbin/sysctl -w net.ipv4.ip_forward=0
+
+[Install]
+WantedBy=network-pre.target

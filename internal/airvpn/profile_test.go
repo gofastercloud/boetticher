@@ -542,6 +542,18 @@ func TestParseProfileAcceptsUTF8BOM(t *testing.T) {
 	}
 }
 
+func TestParseProfileNormalizesDualStackInterfaceToIPv4(t *testing.T) {
+	value := strings.Replace(testProfile(), "Address = 10.64.12.3/32", "Address = 10.64.12.3/32, fd7d::1234/128", 1)
+	value = strings.Replace(value, "AllowedIPs = 0.0.0.0/0", "AllowedIPs = 0.0.0.0/0, ::/0", 1)
+	profile, err := ParseProfile([]byte(value))
+	if err != nil {
+		t.Fatalf("dual-stack AirVPN profile was rejected: %v", err)
+	}
+	if !strings.Contains(profile.Config, "Address = 10.64.12.3/32\n") || strings.Contains(profile.Config, "fd7d::1234") {
+		t.Fatalf("normalized profile retained an IPv6 interface address: %s", profile.Config)
+	}
+}
+
 func TestGenerateRejectsOversizedProviderResponse(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", maxProfileBytes+1)))

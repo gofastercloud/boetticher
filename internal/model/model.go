@@ -30,12 +30,12 @@ const (
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-20260327-2429"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2"
 	QualifiedGatewayImageSHA512 = "09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c"
-	PulseVersion                = "6.1.2"
-	PulseReleaseURL             = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz"
-	PulseReleaseSHA256          = "844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea"
-	PulseAgentVersion           = "6.1.2"
-	PulseAgentReleaseURL        = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64"
-	PulseAgentReleaseSHA256     = "1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75"
+	PulseVersion                = "6.4.1"
+	PulseReleaseURL             = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-v6.4.1-linux-amd64.tar.gz"
+	PulseReleaseSHA256          = "543e967718c6e71763b7a76d9c3c9c992157206810959750b4aa0aa0631bf1e0"
+	PulseAgentVersion           = "6.4.1"
+	PulseAgentReleaseURL        = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-agent-linux-amd64"
+	PulseAgentReleaseSHA256     = "974708439f052136cac2a334ad790bf9da12b3f1c8e758ebe7bc0a8d2a505ce9"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
 	AuthoritativePackageVersion = "4.9.17-1pdns.trixie"
@@ -96,8 +96,8 @@ const (
 )
 
 const (
-	PulseAgentARM64ReleaseURL    = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-arm64"
-	PulseAgentARM64ReleaseSHA256 = "20d956ccc93ca5fc8273b0f9c37398cf19271604b40dc6fe3ed8cbd39bef7185"
+	PulseAgentARM64ReleaseURL    = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-agent-linux-arm64"
+	PulseAgentARM64ReleaseSHA256 = "7012ab620b5a02803c465882b4ae8af4cde6acef24e7b8c05eff26b093c0ae53"
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
@@ -326,8 +326,9 @@ type Zone struct {
 }
 
 type SecretMetadata struct {
-	InstallationID string `yaml:"installation_id" json:"installation_id"`
-	AgeRecipient   string `yaml:"age_recipient" json:"age_recipient"`
+	InstallationID   string `yaml:"installation_id" json:"installation_id"`
+	AgeRecipient     string `yaml:"age_recipient" json:"age_recipient"`
+	RootAgeRecipient string `yaml:"root_age_recipient" json:"root_age_recipient"`
 }
 
 type OwnershipPolicy struct {
@@ -375,12 +376,14 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	Enabled    *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Network    ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
-	Servers    string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
-	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
-	Upstreams  []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models     []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	QBittorrentPort       int                     `yaml:"qbittorrent_port,omitempty" json:"qbittorrent_port,omitempty"`
+	TailnetTrustedClients []string                `yaml:"trusted_clients,omitempty" json:"trusted_clients,omitempty"`
+	Enabled               *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Network               ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
+	Servers               string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
+	ModelAlias            string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
+	Upstreams             []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models                []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type USBExportBinding struct {
@@ -511,11 +514,13 @@ type DNSRecord struct {
 // VMID is optional lookup metadata; MAC remains the network identity and this
 // model never gives boetticher ownership of the guest.
 type DHCPReservation struct {
-	Zone     string `yaml:"zone" json:"zone"`
-	Hostname string `yaml:"hostname" json:"hostname"`
-	Address  string `yaml:"address" json:"address"`
-	MAC      string `yaml:"mac" json:"mac"`
-	VMID     int    `yaml:"vmid,omitempty" json:"vmid,omitempty"`
+	DNSOverride string `yaml:"-" json:"dns_override,omitempty"`
+	NTPOverride string `yaml:"-" json:"ntp_override,omitempty"`
+	Zone        string `yaml:"zone" json:"zone"`
+	Hostname    string `yaml:"hostname" json:"hostname"`
+	Address     string `yaml:"address" json:"address"`
+	MAC         string `yaml:"mac" json:"mac"`
+	VMID        int    `yaml:"vmid,omitempty" json:"vmid,omitempty"`
 }
 
 // UserDNSRecord is an operator-owned record in the private namespace. Value
@@ -632,7 +637,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			},
 		},
 		PhysicalNetwork: PhysicalNetwork{Mode: ModeVirtualOnly},
-		SecretMetadata:  SecretMetadata{InstallationID: installationID, AgeRecipient: ageRecipient},
+		SecretMetadata:  SecretMetadata{InstallationID: installationID, AgeRecipient: ageRecipient, RootAgeRecipient: ageRecipient + "-root"},
 		Ownership: OwnershipPolicy{
 			PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax,
 			ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax,
@@ -640,7 +645,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			UserWorkloadsManaged: false,
 		},
 		Components: []Component{
-			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagMonitoringAgent}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
+			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagMonitoringAgent}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: false},
 		},
 	}
 	return site
@@ -653,6 +658,10 @@ func (s Site) Normalize() Site {
 	copySite.Components = cloneComponents(s.Components)
 	copySite.Modules = cloneResolvedModules(s.Modules)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
+	if tailnet, ok := copySite.ModuleConfig["tailnet-router"]; ok {
+		sort.Strings(tailnet.TailnetTrustedClients)
+		copySite.ModuleConfig["tailnet-router"] = tailnet
+	}
 	copySite.Companion = cloneCompanionConfig(s.Companion)
 	copySite.Declarations = cloneModuleDeclarations(s.Declarations)
 	copySite.USBExports = append([]USBExportBinding(nil), s.USBExports...)
@@ -943,8 +952,21 @@ func (s Site) Validate() error {
 	if s.Ownership != (OwnershipPolicy{PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax, ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax, UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax, UserWorkloadsManaged: false}) {
 		return errors.New("ownership policy must reserve 100-199 for platform, 200-499 for official modules, and 500-899 for user workloads; user workloads are not managed")
 	}
-	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" {
-		return fmt.Errorf("secret_metadata must contain a safe installation_id and public age_recipient")
+	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == s.SecretMetadata.AgeRecipient {
+		return fmt.Errorf("secret_metadata must contain a safe installation_id and distinct public age recipients")
+	}
+	if tailnet, ok := s.ModuleConfig["tailnet-router"]; ok {
+		seen := map[string]bool{}
+		for _, value := range tailnet.TailnetTrustedClients {
+			ip := net.ParseIP(value)
+			if ip == nil || ip.To4() == nil || ip.String() != value || ip.To4()[0] != 100 || ip.To4()[1] < 64 || ip.To4()[1] > 127 || seen[value] {
+				return errors.New("modules.tailnet-router.trusted_clients must contain unique canonical Tailnet IPv4 addresses")
+			}
+			seen[value] = true
+		}
+	}
+	if port := s.ModuleConfig["airvpn"].QBittorrentPort; !ValidQBittorrentPort(port) {
+		return errors.New("modules.airvpn.qbittorrent_port: use 0 to disable or a reserved port from 2049 to 65535 excluding ARR web/API ports")
 	}
 	if bifrost, ok := s.ModuleConfig["bifrost"]; ok && (bifrost.Enabled != nil && *bifrost.Enabled || len(bifrost.Upstreams) > 0 || len(bifrost.Models) > 0) {
 		if err := ValidateBifrostConfig(bifrost); err != nil {
@@ -1004,6 +1026,9 @@ func (s Site) Validate() error {
 				return errors.New("TRUSTED must provide DHCP reservations")
 			}
 		case ZoneTypeSandbox:
+			if len(z.DNSAddresses) != 1 || z.DNSAddresses[0] != z.Gateway || len(z.NTPAddresses) != 1 || z.NTPAddresses[0] != z.Gateway {
+				return errors.New("SANDBOX DNS and NTP must use only its dedicated gateway address")
+			}
 			if z.AddressMode != "dynamic" {
 				return errors.New("SANDBOX must provide dynamic DHCP")
 			}
@@ -1168,6 +1193,14 @@ func (s Site) Validate() error {
 func validateCompanion(companion *CompanionConfig) error {
 	if companion == nil {
 		return nil
+	}
+	if len(companion.StreamDeckSerial) > 128 {
+		return errors.New("companion.streamdeck_serial is too long")
+	}
+	for _, r := range companion.StreamDeckSerial {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-') {
+			return errors.New("companion.streamdeck_serial contains unsupported characters")
+		}
 	}
 	if companion.EthernetMAC == "" {
 		if companion.Capabilities().Enabled {
@@ -1362,6 +1395,17 @@ func validateDHCPReservations(s Site) error {
 	for _, reservation := range s.DHCPReservations {
 		if reservation.Zone != "SERVERS" {
 			return fmt.Errorf("DHCP reservation %q must use the fixed SERVERS zone", reservation.Hostname)
+		}
+		if reservation.DNSOverride != "" || reservation.NTPOverride != "" {
+			valid := false
+			for _, c := range s.PlatformComponents() {
+				if c.ProductOwned && c.Name == reservation.Hostname && c.Address == reservation.Address && c.VMID == reservation.VMID && s.ModuleConfig[c.Module].Network == ModuleNetworkAirVPN && reservation.DNSOverride == AirVPNGuestAddress && reservation.NTPOverride == AirVPNGuestAddress {
+					valid = true
+				}
+			}
+			if !valid {
+				return fmt.Errorf("DHCP service overrides require an AirVPN-selected managed guest: %s", reservation.Hostname)
+			}
 		}
 		if !IsDNSLabel(reservation.Hostname) {
 			return fmt.Errorf("DHCP reservation hostname %q must be one DNS label", reservation.Hostname)

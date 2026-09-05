@@ -162,6 +162,15 @@ func TestBuildSourceArchiveExcludesSiteSecrets(t *testing.T) {
 	}
 }
 
+func TestPublicBuildInputsIncludeSharedAnsibleTasks(t *testing.T) {
+	for _, relative := range PublicBuildInputs {
+		if relative == "ansible/tasks" {
+			return
+		}
+	}
+	t.Fatal("native image builder source inputs omit shared Ansible tasks")
+}
+
 func TestBuildNativeSourceArchiveIncludesOnlyBuilderSupport(t *testing.T) {
 	root := t.TempDir()
 	for _, relative := range append(append([]string(nil), PublicBuildInputs...), NativeBuilderSupportInputs...) {

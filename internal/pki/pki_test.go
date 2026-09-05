@@ -124,3 +124,49 @@ func TestValidateCRLDoesNotRequireTheColdRootKey(t *testing.T) {
 		t.Fatalf("CRL validation required the cold root key: %v", err)
 	}
 }
+
+func TestGenerateRootCRLIsSignedByRoot(t *testing.T) {
+	now := time.Date(2026, time.August, 29, 0, 0, 0, 0, time.UTC)
+	authority, err := GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crl, err := GenerateRootCRL(authority, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(crl))
+	if block == nil || block.Type != "X509 CRL" {
+		t.Fatalf("root CRL PEM block = %#v", block)
+	}
+	parsed, err := x509.ParseRevocationList(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := parseCert(authority.RootCertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := parsed.CheckSignatureFrom(root); err != nil {
+		t.Fatalf("root CRL signature invalid: %v", err)
+	}
+	if len(parsed.RevokedCertificateEntries) != 0 {
+		t.Fatal("root CRL unexpectedly contains revoked entries")
+	}
+}
+
+func TestValidateRootCRLDoesNotRequireRootKey(t *testing.T) {
+	now := time.Date(2026, time.August, 29, 0, 0, 0, 0, time.UTC)
+	authority, err := GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crl, err := GenerateRootCRL(authority, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority.RootKeyPEM = ""
+	if err := ValidateRootCRL(authority.RootCertPEM, crl, now.Add(time.Minute)); err != nil {
+		t.Fatalf("root CRL validation required the cold root key: %v", err)
+	}
+}

@@ -51,6 +51,7 @@ type ReleaseManifest struct {
 	Artifacts                  []ReleaseArtifact `json:"artifacts"`
 	Files                      []ReleaseFile     `json:"files"`
 	CompanionBinary            *ReleaseFile      `json:"companion_binary,omitempty"`
+	CompanionStatusBinary      *ReleaseFile      `json:"companion_status_binary,omitempty"`
 }
 
 // ReleaseBuildMetadata is supplied by the Linux release workflow. It keeps
@@ -94,6 +95,8 @@ type ReleaseInput struct {
 const (
 	CompanionStreamDeckPath = "companion/streamdeck/boetticher-streamdeck-linux-arm64"
 	CompanionStreamDeckKind = "companion"
+	CompanionStatusPath     = "companion/status/boetticher-companion-linux-arm64"
+	CompanionStatusKind     = "companion-status"
 )
 
 type ManifestSignature struct {
@@ -158,7 +161,10 @@ func BuildReleaseBundleWithMetadata(output string, metadata ReleaseBuildMetadata
 // BuildReleaseBundleWithMetadataAndCompanion adds the release-built external
 // companion binary to the signed bundle. The companion is deliberately not an
 // appliance artifact: it is a capability installed on a physical Pi.
-func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseBuildMetadata, siteAPIVersion string, schemaVersion int, privateKey ed25519.PrivateKey, keyID string, inputs []ReleaseInput, companionBinaryPath string) (ReleaseManifest, error) {
+func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseBuildMetadata, siteAPIVersion string, schemaVersion int, privateKey ed25519.PrivateKey, keyID string, inputs []ReleaseInput, companionBinaryPath string, statusBinaryPaths ...string) (ReleaseManifest, error) {
+	if len(statusBinaryPaths) > 1 {
+		return ReleaseManifest{}, errors.New("only one Companion status binary is supported")
+	}
 	if output == "" || metadata.ReleaseVersion == "" || metadata.SourceCommit == "" || metadata.BuildWorkflow == "" || metadata.ControllerMin == "" || metadata.ControllerMax == "" || siteAPIVersion == "" || schemaVersion <= 0 {
 		return ReleaseManifest{}, errors.New("release bundle output and compatibility versions are required")
 	}
@@ -285,6 +291,18 @@ func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseB
 			Path: companionMember.Path, SHA256: companionMember.SHA256, SizeBytes: companionMember.Size,
 			Kind: companionMember.Kind,
 		}
+	}
+	if len(statusBinaryPaths) == 1 && statusBinaryPaths[0] != "" {
+		member, err := newReleaseMember(CompanionStatusPath, statusBinaryPaths[0], CompanionStatusKind, "")
+		if err != nil {
+			return ReleaseManifest{}, err
+		}
+		if totalMemberBytes > MaxReleaseBundleBytes-member.Size {
+			return ReleaseManifest{}, errors.New("release bundle exceeds the permitted uncompressed size")
+		}
+		totalMemberBytes += member.Size
+		members = append(members, member)
+		manifest.CompanionStatusBinary = &ReleaseFile{Path: member.Path, SHA256: member.SHA256, SizeBytes: member.Size, Kind: member.Kind}
 	}
 	for _, member := range members {
 		manifest.Files = append(manifest.Files, ReleaseFile{Path: member.Path, SHA256: member.SHA256, SizeBytes: member.Size, Kind: member.Kind, Artifact: member.Artifact})
@@ -544,7 +562,7 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		if err := validateBundlePath(file.Path); err != nil {
 			return err
 		}
-		if file.SHA256 == "" || !isSHA256(file.SHA256) || file.SizeBytes < 0 || file.SizeBytes > MaxReleaseFileBytes || (file.Kind != "artifact" && file.Kind != "evidence" && file.Kind != CompanionStreamDeckKind) {
+		if file.SHA256 == "" || !isSHA256(file.SHA256) || file.SizeBytes < 0 || file.SizeBytes > MaxReleaseFileBytes || (file.Kind != "artifact" && file.Kind != "evidence" && file.Kind != CompanionStreamDeckKind && file.Kind != CompanionStatusKind) {
 			return fmt.Errorf("release member %q has invalid metadata", file.Path)
 		}
 		if _, exists := files[file.Path]; exists {
@@ -553,6 +571,10 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		if file.Kind == CompanionStreamDeckKind {
 			if manifest.CompanionBinary == nil || *manifest.CompanionBinary != file || file.Path != CompanionStreamDeckPath || file.Artifact != "" {
 				return fmt.Errorf("release companion member %q is not bound to the declared companion binary", file.Path)
+			}
+		} else if file.Kind == CompanionStatusKind {
+			if manifest.CompanionStatusBinary == nil || *manifest.CompanionStatusBinary != file || file.Path != CompanionStatusPath || file.Artifact != "" {
+				return fmt.Errorf("release Companion status member %q has invalid binding", file.Path)
 			}
 		} else {
 			artifact, err := releaseFileArtifact(file.Path, file.Kind)
@@ -572,6 +594,12 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		}
 		if declared, ok := files[companion.Path]; !ok || declared != companion {
 			return errors.New("release companion binary is missing its declared member")
+		}
+	}
+	if manifest.CompanionStatusBinary != nil {
+		file := *manifest.CompanionStatusBinary
+		if file.Path != CompanionStatusPath || file.Kind != CompanionStatusKind || file.Artifact != "" || files[file.Path] != file {
+			return errors.New("release Companion status binary is missing its declared member")
 		}
 	}
 	seenArtifacts := map[string]struct{}{}
@@ -613,7 +641,7 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		seenArtifacts[artifact.Artifact.Name] = struct{}{}
 	}
 	for path, file := range files {
-		if file.Kind == CompanionStreamDeckKind {
+		if file.Kind == CompanionStreamDeckKind || file.Kind == CompanionStatusKind {
 			continue
 		}
 		if _, ok := seenArtifacts[file.Artifact]; !ok {
@@ -810,6 +838,30 @@ func ResolveImportedCompanion(root string) (string, error) {
 	sum := sha256.Sum256(data)
 	if int64(len(data)) != companion.SizeBytes || hex.EncodeToString(sum[:]) != companion.SHA256 {
 		return "", errors.New("imported companion StreamDeck binary failed digest verification")
+	}
+	return path, nil
+}
+
+func ResolveImportedCompanionStatus(root string) (string, error) {
+	manifest, _, err := ImportedReleaseManifest(root)
+	if err != nil {
+		return "", err
+	}
+	if manifest.CompanionStatusBinary == nil {
+		return "", errors.New("import a release containing the Companion status binary before setup")
+	}
+	file := *manifest.CompanionStatusBinary
+	if file.Path != CompanionStatusPath || file.Kind != CompanionStatusKind || file.Artifact != "" {
+		return "", errors.New("invalid Companion status binary binding")
+	}
+	path := filepath.Join(root, "generated", "release", filepath.FromSlash(file.Path))
+	data, err := readReleaseFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	if int64(len(data)) != file.SizeBytes || hex.EncodeToString(sum[:]) != file.SHA256 {
+		return "", errors.New("Companion status binary failed digest verification")
 	}
 	return path, nil
 }

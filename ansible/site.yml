@@ -1,6 +1,26 @@
 ---
 # boetticher managed-appliance runtime configuration entry point.
 # Runtime credentials are intentionally not represented in this playbook.
+- name: Install the Core bridge boundary before appliance work
+  hosts: proxmox
+  become: false
+  gather_facts: false
+  roles:
+    - role: network-isolation-host
+      when:
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+        - firewall_plan.mode == 'managed'
+
+- name: Configure the AirVPN DNS and routing foundation before selected clients
+  hosts: airvpn
+  become: false
+  gather_facts: false
+  roles:
+    - role: airvpn
+      when: boetticher_deploy_phase | default('full') in ['full', 'services']
+    - role: chrony
+      when: boetticher_deploy_phase | default('full') in ['full', 'services']
+
 - name: Configure managed appliance runtime state
   hosts: managed
   # Deployment connects as the temporary root SSH identity installed during
@@ -8,6 +28,13 @@
   become: false
   gather_facts: false
   roles:
+    - role: firewall
+      when:
+        - inventory_hostname in groups.get('firewall', [])
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+        - not (boetticher_skip_firewall | default(false) | bool)
+    - role: airvpn-client
+      when: inventory_hostname in (airvpn_selected_guests | default([]))
     - base
     - role: chrony
       when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
@@ -19,11 +46,6 @@
       when: inventory_hostname in groups.get('monitor', [])
     - role: logging
       when: inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'
-    - role: firewall
-      when:
-        - inventory_hostname in groups.get('firewall', [])
-        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-        - not (boetticher_skip_firewall | default(false) | bool)
     - role: tailnet-router
       when:
         - inventory_hostname in groups.get('tailnet-router', [])
@@ -50,5 +72,7 @@
   roles:
     - role: usb-export-host
       when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+            and not (boetticher_network_isolation_only | default(false) | bool)
     - role: network-probe-host
       when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+            and not (boetticher_network_isolation_only | default(false) | bool)

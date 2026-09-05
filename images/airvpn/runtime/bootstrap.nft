@@ -1,0 +1,20 @@
+destroy table inet boetticher_airvpn
+table inet boetticher_airvpn {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept
+    meta nfproto ipv6 drop
+    iifname "eth0" ip saddr 10.10.99.5 tcp dport 22 accept
+    iifname "eth0" ip saddr 10.10.10.10 udp sport { 5353, 123 } ct state established accept
+    iifname "eth0" ip saddr 10.10.10.10 tcp sport { 5353, 9443 } ct state established accept
+  }
+  chain output {
+    type filter hook output priority filter; policy drop;
+    oifname "lo" accept
+    meta nfproto ipv6 drop
+    oifname "eth0" ip daddr 10.10.99.5 tcp sport 22 ct state established accept
+    oifname "eth0" ip daddr 10.10.10.10 udp dport { 5353, 123 } accept
+    oifname "eth0" ip daddr 10.10.10.10 tcp dport { 5353, 9443 } accept
+  }
+  chain forward { type filter hook forward priority filter; policy drop; }
+}

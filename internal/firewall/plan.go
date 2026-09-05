@@ -136,9 +136,11 @@ type DHCPSubnet struct {
 }
 
 type DHCPReservation struct {
-	Hostname string `json:"hostname"`
-	Address  string `json:"address"`
-	MAC      string `json:"mac"`
+	DNSOverride string `json:"dns_override,omitempty"`
+	NTPOverride string `json:"ntp_override,omitempty"`
+	Hostname    string `json:"hostname"`
+	Address     string `json:"address"`
+	MAC         string `json:"mac"`
 }
 
 type UpstreamObservation struct {
@@ -464,9 +466,6 @@ func policyRoutes(s model.Site) []PolicyRoute {
 	routes := make([]PolicyRouteEntry, 0, len(zones))
 	for _, zone := range zones {
 		entry := PolicyRouteEntry{Destination: zone.Network, Interface: strings.ToLower(zone.Name) + "0"}
-		if zone.Type != model.ZoneTypeTransit {
-			entry.Gateway = zone.Gateway
-		}
 		routes = append(routes, entry)
 	}
 	result := make([]PolicyRoute, 0, len(sources))
@@ -474,7 +473,7 @@ func policyRoutes(s model.Site) []PolicyRoute {
 		result = append(result, PolicyRoute{
 			SourceCIDR:       source,
 			Table:            51820,
-			Priority:         10000 + index,
+			Priority:         10000 + index*2,
 			DefaultGateway:   model.AirVPNGuestAddress,
 			DefaultInterface: "transit0",
 			InternalRoutes:   append([]PolicyRouteEntry(nil), routes...),
@@ -513,7 +512,7 @@ func dhcpSubnets(s model.Site) []DHCPSubnet {
 		if zone.Type == model.ZoneTypeServers {
 			reservations = make([]DHCPReservation, 0, len(s.DHCPReservations))
 			for _, reservation := range s.Normalize().DHCPReservations {
-				reservations = append(reservations, DHCPReservation{Hostname: reservation.Hostname, Address: reservation.Address, MAC: reservation.MAC})
+				reservations = append(reservations, DHCPReservation{Hostname: reservation.Hostname, Address: reservation.Address, MAC: reservation.MAC, DNSOverride: reservation.DNSOverride, NTPOverride: reservation.NTPOverride})
 			}
 		}
 		forward := strings.ToLower(zone.Name) + "." + s.Network.Domain + "."
@@ -574,7 +573,7 @@ func policyRules(s model.Site) []PolicyRule {
 	// source-zone selectors keep this useful for operators without granting
 	// access to the rest of INFRA.
 	if monitor, ok := componentReference(s, "monitor"); ok && monitor.Module == "monitoring" && monitor.Address != "" {
-		for _, source := range []string{"TRANSIT", "SERVERS", "TRUSTED"} {
+		for _, source := range []string{"SERVERS", "TRUSTED"} {
 			for _, zone := range s.Network.Zones {
 				if zone.Name != source {
 					continue
@@ -631,10 +630,12 @@ func policyRules(s model.Site) []PolicyRule {
 	add("SANDBOX to SERVERS deny", "SANDBOX", "SERVERS", "deny", "any", nil, true, false)
 	add("SANDBOX to INFRA deny", "SANDBOX", "INFRA", "deny", "any", nil, true, false)
 	add("SANDBOX to MGMT deny", "SANDBOX", "MGMT", "deny", "any", nil, true, false)
-	add("TRUSTED DNS to INFRA", "TRUSTED", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
-	add("TRUSTED NTP to INFRA", "TRUSTED", "INFRA", "allow", "udp", []string{"123"}, false, false)
-	add("TRUSTED HTTPS to SERVERS", "TRUSTED", "SERVERS", "allow", "tcp", []string{"443"}, false, false)
-	add("TRUSTED administration to MGMT", "TRUSTED", "MGMT", "allow", "tcp", []string{"22", "443", "8006"}, false, false)
+	for _, service := range model.TrustedLabServices() {
+		add("TRUSTED "+service.Protocol+" services to "+service.Zone, "TRUSTED", service.Zone, "allow", service.Protocol, service.Ports, false, false)
+		if tailnet, ok := componentReference(s, "lab-tailnet-01"); ok {
+			rules = append(rules, PolicyRule{Sequence: len(rules) + 1, Name: "trusted Tailnet " + service.Protocol + " services to " + service.Zone, From: "TRANSIT", To: service.Zone, Action: "allow", Protocol: service.Protocol, Ports: service.Ports, SourceCIDR: tailnet.Address + "/32", SourceMAC: componentSourceMAC(s, tailnet), DestinationCIDR: service.Network})
+		}
+	}
 	add("SERVERS DNS to INFRA", "SERVERS", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
 	add("SERVERS NTP to INFRA", "SERVERS", "INFRA", "allow", "udp", []string{"123"}, false, false)
 	add("MGMT administration to SERVERS", "MGMT", "SERVERS", "allow", "tcp", []string{"22", "53", "80", "443"}, false, false)
@@ -653,19 +654,26 @@ func policyRules(s model.Site) []PolicyRule {
 	// TRANSIT appliance. Keep this management path narrower than the ordinary
 	// MGMT rules: only the host's fixed management address may reach the
 	// module's SSH port, and only while the module is declared.
-	if tailnet, ok := componentReference(s, "lab-tailnet-01"); ok {
+	for _, target := range []struct{ name, host, counter string }{
+		{"tailnet-router", "lab-tailnet-01", "tailnet_router"},
+		{"airvpn", "lab-airvpn-01", "airvpn"},
+	} {
+		appliance, ok := componentReference(s, target.host)
+		if !ok {
+			continue
+		}
 		rules = append(rules, PolicyRule{
 			Sequence:        len(rules) + 1,
-			Name:            "MGMT administration to tailnet-router",
+			Name:            "MGMT administration to " + target.name,
 			From:            "MGMT",
 			To:              "TRANSIT",
 			Action:          "allow",
 			Protocol:        "tcp",
 			Ports:           []string{"22"},
-			Counter:         "boetticher_mgmt_administration_to_tailnet_router",
-			Description:     "boetticher MGMT administration to tailnet-router",
+			Counter:         "boetticher_mgmt_administration_to_" + target.counter,
+			Description:     "boetticher MGMT administration to " + target.name,
 			SourceCIDR:      model.ProxmoxManagementAddress + "/32",
-			DestinationCIDR: tailnet.Address + "/32",
+			DestinationCIDR: appliance.Address + "/32",
 		})
 	}
 	// ARR is the one current module whose job includes arbitrary media
@@ -685,8 +693,18 @@ func policyRules(s model.Site) []PolicyRule {
 			Description:     "boetticher ARR media acquisition through AirVPN only",
 			SourceCIDR:      arr.Address + "/32",
 			SourceMAC:       componentSourceMAC(s, arr),
-			DestinationCIDR: model.AirVPNGuestAddress + "/32",
+			DestinationCIDR: "0.0.0.0/0",
 		})
+		if port := s.ModuleConfig["airvpn"].QBittorrentPort; port != 0 {
+			rules = append(rules, PolicyRule{
+				Sequence: len(rules) + 1, Name: "AirVPN forwarded qBittorrent peers",
+				From: "TRANSIT", To: arr.Zone, Action: "allow", Protocol: "tcp/udp",
+				Ports: []string{strconv.Itoa(port)}, Counter: "boetticher_arr_forwarded_peer",
+				SourceCIDR: model.AirVPNGuestAddress + "/32", SourceMAC: networkmodel.ManagedModuleMAC(model.AirVPNGuestVMID), DestinationCIDR: arr.Address + "/32",
+				Description: "AirVPN tunnel DNAT and SNAT to the fixed ARR peer port only",
+			})
+		}
+
 	}
 	for _, declaration := range s.Declarations {
 		for _, intent := range declaration.NetworkIntents {
@@ -965,11 +983,19 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 		fmt.Fprintf(&b, "  set module_guest_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(sources, ", "))
 	}
 	if len(plan.AirVPNSources) > 0 {
-		fmt.Fprintf(&b, "  set airvpn_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(plan.AirVPNSources, ", "))
+		fmt.Fprintf(&b, "  set airvpn_sources { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(plan.AirVPNSources, ", "))
 	}
+	var dnsUpstreams []string
+	if len(plan.AirVPNSources) > 0 {
+		dnsUpstreams, err = resolveDNSUpstreamAddresses(lookup)
+		if err != nil {
+			return "", err
+		}
+	}
+	renderIsolation(&b, plan, destinationSets, dnsUpstreams)
 	telemetrySource := strings.TrimSuffix(plan.Telemetry.AllowedSources[0], "/32")
-	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } ip protocol icmp icmp type echo-request counter accept comment \"boetticher:allow:input-diagnostic-icmp\"\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\" } udp dport 67 counter accept comment \"boetticher:allow:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:allow:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:allow:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:allow:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:allow:input-mgmt-ssh\"\n    iifname \"infra0\" ip saddr " + telemetrySource + " tcp dport 9765 counter accept comment \"boetticher:allow:input-firewall-telemetry\"\n  }\n")
-	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
+	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    jump restricted_input\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } ip protocol icmp icmp type echo-request counter accept comment \"boetticher:allow:input-diagnostic-icmp\"\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\" } udp dport 67 counter accept comment \"boetticher:allow:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:allow:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:allow:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:allow:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:allow:input-mgmt-ssh\"\n    iifname \"infra0\" ip saddr " + telemetrySource + " tcp dport 9765 counter accept comment \"boetticher:allow:input-firewall-telemetry\"\n  }\n")
+	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    jump restricted_forward\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
 	if len(plan.AirVPNSources) > 0 {
 		b.WriteString("    ip saddr @airvpn_sources oifname \"wan0\" counter log prefix \"boetticher AIRVPN-DIRECT-DROP \" drop comment \"boetticher:drop:airvpn-direct-wan\"\n")
 	}
@@ -1052,15 +1078,11 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	b.WriteString("    iifname \"transit0\" tcp dport { 22, 8006 } counter log prefix \"boetticher TRANSIT-ADMIN-DROP \" drop comment \"boetticher:drop:forward-transit-admin\"\n")
 	b.WriteString("    iifname \"transit0\" oifname \"wan0\" counter log prefix \"boetticher TRANSIT-INTERNET-DROP \" drop comment \"boetticher:drop:forward-transit-internet\"\n")
 	b.WriteString("    ip daddr @transit_net counter log prefix \"boetticher TO-TRANSIT-DROP \" drop comment \"boetticher:drop:forward-to-transit\"\n")
-	// The state rule above is deliberately the first forward rule after the
-	// chain declaration. It keeps return traffic working without weakening the
-	// ordered SANDBOX deny rules below.
+	// Mandatory isolation runs before state acceptance and service permissions.
 	moduleSourceCondition := moduleSourceCondition(plan)
-	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "ip daddr @servers_net tcp dport { 53, 443 } counter accept comment \"boetticher:allow:forward-trusted-servers-tcp\"\n")
-	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:allow:forward-trusted-servers-udp\"\n")
-	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "ip daddr @infra_net tcp dport { 53, 443 } counter accept comment \"boetticher:allow:forward-trusted-infra-tcp\"\n")
-	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "ip daddr @infra_net udp dport { 53, 123 } counter accept comment \"boetticher:allow:forward-trusted-infra-udp\"\n")
-	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "ip daddr @mgmt_net tcp dport { 22, 443, 8006 } counter accept comment \"boetticher:allow:forward-trusted-mgmt\"\n")
+	for _, service := range model.TrustedLabServices() {
+		fmt.Fprintf(&b, "    iifname %q %sip daddr %s %s dport %s counter accept comment %q\n", "trusted0", moduleSourceCondition, service.Network, service.Protocol, nftPortSet(service.Ports), "boetticher:allow:forward-trusted-"+strings.ToLower(service.Zone)+"-"+service.Protocol)
+	}
 	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @infra_net tcp dport 53 counter accept comment \"boetticher:allow:forward-servers-infra-tcp\"\n")
 	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @infra_net udp dport { 53, 123 } counter accept comment \"boetticher:allow:forward-servers-infra-udp\"\n")
 	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @servers_net tcp dport 53 counter accept comment \"boetticher:allow:forward-servers-dns-tcp\"\n")
@@ -1094,7 +1116,7 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	sort.Strings(transitNATSourceList)
 	b.WriteString("table ip " + NATTable + " {\n")
 	if len(plan.AirVPNSources) > 0 {
-		fmt.Fprintf(&b, "  set airvpn_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(plan.AirVPNSources, ", "))
+		fmt.Fprintf(&b, "  set airvpn_sources { type ipv4_addr; flags interval; elements = { %s } }\n", strings.Join(plan.AirVPNSources, ", "))
 	}
 	airvpnEndpointSet := ""
 	if plan.AirVPN != nil {

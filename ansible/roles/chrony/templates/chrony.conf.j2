@@ -1,4 +1,10 @@
+{% if inventory_hostname in groups.get('dns', []) or inventory_hostname in groups.get('firewall', []) %}
 pool pool.ntp.org iburst maxsources 4
+{% elif inventory_hostname in (airvpn_selected_guests | default([])) %}
+server 10.10.5.20 iburst
+{% else %}
+server 10.10.10.10 iburst
+{% endif %}
 
 {% if inventory_hostname in groups.get('dns', []) %}
 # DNS guests provide NTP only to the fixed V1 internal networks.
@@ -6,11 +12,14 @@ allow 10.10.10.0/24
 allow 10.10.20.0/24
 allow 10.10.30.0/24
 allow 10.10.99.0/24
+allow 10.10.5.20/32
 {% elif inventory_hostname in groups.get('firewall', []) %}
 # The managed gateway provides NTP only to SANDBOX.
 allow 10.10.40.0/24
-{% else %}
-server 10.10.10.10 iburst
+{% elif inventory_hostname in groups.get('airvpn', []) %}
+{% for source in firewall_plan.airvpn_source_cidrs | default([]) %}
+allow {{ source }}
+{% endfor %}
 {% endif %}
 
 makestep 1.0 3

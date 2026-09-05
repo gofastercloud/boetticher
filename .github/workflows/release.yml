@@ -191,7 +191,7 @@ jobs:
           jq -e --arg release "$RELEASE_VERSION" --arg source "$GITHUB_SHA" \
             --arg controller_sha "$(sha256sum "dist/boetticher-${RELEASE_VERSION}" | awk '{print $1}')" \
             --argjson controller_size "$(stat -c '%s' "dist/boetticher-${RELEASE_VERSION}")" \
-            '(.release_version == $release) and (.source_commit == $source) and (.controller_sha256 == $controller_sha) and (.controller_size_bytes == $controller_size) and (.artifacts | length == 13) and (.companion_binary != null) and (.files | length > 0)' \
+            '(.release_version == $release) and (.source_commit == $source) and (.controller_sha256 == $controller_sha) and (.controller_size_bytes == $controller_size) and (.artifacts | length == 13) and (.companion_binary != null) and (.companion_status_binary != null) and (.files | length > 0)' \
             "$manifest" >/dev/null
           sha256sum "$bundle" "$manifest"
 

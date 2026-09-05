@@ -20,10 +20,10 @@ boetticher status --site ./my-boetticher --details --live
 ## Normal command menu
 
 ```text
-boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]
+boetticher init [--site-dir DIR] [--age-identity PATH] [--root-age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]
 boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]
 boetticher plan [--site DIR] [--live] [--json]
-boetticher deploy [--plan DIGEST] [--site DIR] [--age-identity PATH] [--confirm]
+boetticher deploy [--plan DIGEST] [--site DIR] [--age-identity PATH] [--only-module NAME] [--confirm]
 boetticher status [--site DIR] [--live] [--details] [--json]
 boetticher module list|configure|enable|disable NAME [--site DIR] [--confirm] [--json]
 boetticher network reservation|record add|remove|list [--site DIR]

@@ -155,9 +155,9 @@ powerdns_key_sha256=efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923de
 powerdns_repo=https://repo.powerdns.com/debian
 powerdns_suite=trixie-auth-49
 powerdns_package_version=4.9.17-1pdns.trixie
-pulse_version=6.1.2
-pulse_release_url=https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz
-pulse_release_sha256=844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea
+pulse_version=6.4.1
+pulse_release_url=https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-v6.4.1-linux-amd64.tar.gz
+pulse_release_sha256=543e967718c6e71763b7a76d9c3c9c992157206810959750b4aa0aa0631bf1e0
 tailscale_package_version=1.76.6
 tailscale_key_url=https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
 tailscale_key_sha256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
@@ -184,7 +184,14 @@ sonarr_release_sha256=b691b3584c31c0b5514058dee81071c923f63d59a37d19e32f92fa13ea
 radarr_version=6.3.0.10514
 radarr_release_url=https://github.com/Radarr/Radarr/releases/download/v6.3.0.10514/Radarr.master.6.3.0.10514.linux-core-x64.tar.gz
 radarr_release_sha256=41d6455c037ff267c5ad5a0f0de4502cebe8f89ec3d051da97851933d48a4047
-firewall_package_names='nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent'
+lidarr_version=3.1.4.5029
+lidarr_release_url=https://github.com/Lidarr/Lidarr/releases/download/v3.1.4.5029/Lidarr.develop.3.1.4.5029.linux-core-x64.tar.gz
+lidarr_release_sha256=39e011bb43ed612e3e009b9280836e47bc53f6ee1439192a9e89384fc38216b1
+prowlarr_version=2.5.2.5491
+prowlarr_release_url=https://github.com/Prowlarr/Prowlarr/releases/download/v2.5.2.5491/Prowlarr.master.2.5.2.5491.linux-core-x64.tar.gz
+prowlarr_release_sha256=22fe95742869d7af5e16d420c7889185579152ea8324be6c6e4e3cd011f4c37b
+arr_qbittorrent_package_version=5.1.0-2
+firewall_package_names='nftables conntrack kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent'
 case "${BOETTICHER_LOCAL_FAST:-0}" in
   0|1) ;;
   *) echo 'HOLD: BOETTICHER_LOCAL_FAST must be 0 or 1' >&2; exit 2 ;;
@@ -260,6 +267,10 @@ artifact_for() {
 	version=1.0.0
 	if [ "$name" = boetticher-base ]; then
 		version=0.1.0
+	elif [ "$name" = boetticher-monitoring ]; then
+		version=1.0.1
+	elif [ "$name" = boetticher-arr ]; then
+		version=1.0.1
 	fi
 	printf '%s/%s/%s-%s-amd64.tar.zst' "$output_root" "$name" "$name" "$version"
 }
@@ -624,6 +635,9 @@ build_tailnet_router() {
     return 2
   fi
   rm -f "$rootfs/etc/apt/sources.list.d/tailscale.list" "$rootfs$tailscale_keyring"
+  install -D -m 0644 images/tailnet-router/runtime/boetticher-tailnet-firewall.service "$rootfs/etc/systemd/system/boetticher-tailnet-firewall.service"
+  install -D -m 0600 images/tailnet-router/runtime/bootstrap.nft "$rootfs/etc/nftables.d/tailnet.nft"
+  chroot "$rootfs" systemctl enable boetticher-tailnet-firewall.service
   write_artifact_identity "$rootfs" tailnet-router
   package_lxc boetticher-tailnet-router
 }
@@ -631,8 +645,13 @@ build_tailnet_router() {
 build_airvpn() {
   printf '%s\n' 'boetticher build stage: airvpn'
   rootfs=$(prepare_rootfs boetticher-airvpn)
-  install_packages "$rootfs" wireguard-tools wireguard-go nftables iproute2
+  install_packages "$rootfs" wireguard-tools wireguard-go nftables iproute2 dnsmasq
+  install -d -m 0700 "$rootfs/run/boetticher"
   install -D -m 0644 images/airvpn/runtime/boetticher-airvpn.service "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+  install -D -m 0644 images/airvpn/runtime/boetticher-airvpn-firewall.service "$rootfs/etc/systemd/system/boetticher-airvpn-firewall.service"
+  install -D -m 0600 images/airvpn/runtime/bootstrap.nft "$rootfs/etc/nftables.d/airvpn.nft"
+  install -D -m 0644 images/airvpn/runtime/99-boetticher-airvpn.conf "$rootfs/etc/sysctl.d/99-boetticher-airvpn.conf"
+  chroot "$rootfs" systemctl enable boetticher-airvpn-firewall.service
   install -D -m 0755 images/airvpn/runtime/airvpn-prepare "$rootfs/usr/lib/boetticher/airvpn-prepare"
   install -D -m 0755 images/airvpn/runtime/airvpn-routes-up "$rootfs/usr/lib/boetticher/airvpn-routes-up"
   install -D -m 0755 images/airvpn/runtime/airvpn-routes-down "$rootfs/usr/lib/boetticher/airvpn-routes-down"
@@ -677,28 +696,37 @@ build_printer() {
 build_arr() {
   printf '%s\n' 'boetticher build stage: arr'
   rootfs=$(prepare_rootfs boetticher-arr)
-  install_packages "$rootfs" "nginx=$arr_nginx_package_version" ca-certificates
-  sonarr_archive="$cache_root/downloads/Sonarr.main.$sonarr_version.linux-x64.tar.gz"
-  radarr_archive="$cache_root/downloads/Radarr.master.$radarr_version.linux-core-x64.tar.gz"
-  download_cached "$sonarr_archive" "$sonarr_release_url" "$sonarr_release_sha256" sha256sum
-  download_cached "$radarr_archive" "$radarr_release_url" "$radarr_release_sha256" sha256sum
-  sonarr_root="$work_root/sonarr-$sonarr_version"; radarr_root="$work_root/radarr-$radarr_version"
-  rm -rf "$sonarr_root" "$radarr_root"
-  mkdir -p "$sonarr_root" "$radarr_root"
-  tar -xzf "$sonarr_archive" -C "$sonarr_root" --strip-components=1
-  tar -xzf "$radarr_archive" -C "$radarr_root" --strip-components=1
-  install -d -m 0755 "$rootfs/opt/sonarr" "$rootfs/opt/radarr"
-  cp -a "$sonarr_root/." "$rootfs/opt/sonarr/"
-  cp -a "$radarr_root/." "$rootfs/opt/radarr/"
+  install_packages "$rootfs" "nginx=$arr_nginx_package_version" "qbittorrent-nox=$arr_qbittorrent_package_version" ca-certificates libicu76 libsqlite3-0
   chroot "$rootfs" groupadd --system --gid 2200 arr
-  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/arr/sonarr --create-home --shell /usr/sbin/nologin sonarr
-  chroot "$rootfs" useradd --system --uid 2201 --gid 2200 --home-dir /var/lib/arr/radarr --create-home --shell /usr/sbin/nologin radarr
-  chroot "$rootfs" install -d -o sonarr -g arr -m 0750 /var/lib/arr/sonarr
-  chroot "$rootfs" install -d -o radarr -g arr -m 0750 /var/lib/arr/radarr
-  chroot "$rootfs" chown -R root:root /opt/sonarr /opt/radarr
-  chroot "$rootfs" chmod -R u+rwX,go+rX,go-w /opt/sonarr /opt/radarr
-  install -D -m 0644 images/arr/runtime/sonarr.service "$rootfs/etc/systemd/system/sonarr.service"
-  install -D -m 0644 images/arr/runtime/radarr.service "$rootfs/etc/systemd/system/radarr.service"
+  # Fixed native applications, not a runtime installer or selectable catalog.
+  # Dependency layout checked against community-scripts/ProxmoxVE
+  # 9996ed71ba50500b7156cfcf2ef519415d9e0187; binaries remain official pinned releases.
+  while IFS='|' read -r app binary uid version url digest; do
+    archive="$cache_root/downloads/$binary.$version.tar.gz"
+    download_cached "$archive" "$url" "$digest" sha256sum
+    app_root="$work_root/$app-$version"
+    rm -rf "$app_root"
+    mkdir -p "$app_root"
+    tar -xzf "$archive" -C "$app_root" --strip-components=1
+    install -d -m 0755 "$rootfs/opt/$app"
+    cp -a "$app_root/." "$rootfs/opt/$app/"
+    chroot "$rootfs" useradd --system --uid "$uid" --gid 2200 --home-dir "/var/lib/arr/$app" --create-home --shell /usr/sbin/nologin "$app"
+    chroot "$rootfs" install -d -o "$app" -g arr -m 0750 "/var/lib/arr/$app"
+    chroot "$rootfs" chown -R root:root "/opt/$app"
+    chroot "$rootfs" chmod -R u+rwX,go+rX,go-w "/opt/$app"
+    install -D -m 0644 "images/arr/runtime/$app.service" "$rootfs/etc/systemd/system/$app.service"
+  done <<EOF
+sonarr|Sonarr|2200|$sonarr_version|$sonarr_release_url|$sonarr_release_sha256
+radarr|Radarr|2201|$radarr_version|$radarr_release_url|$radarr_release_sha256
+lidarr|Lidarr|2202|$lidarr_version|$lidarr_release_url|$lidarr_release_sha256
+prowlarr|Prowlarr|2204|$prowlarr_version|$prowlarr_release_url|$prowlarr_release_sha256
+EOF
+  # UID 2203 remains reserved for retained Readarr data.
+  chroot "$rootfs" useradd --system --uid 2205 --gid 2200 --home-dir /var/lib/arr/qbittorrent --create-home --shell /usr/sbin/nologin qbittorrent
+  chroot "$rootfs" install -d -o qbittorrent -g arr -m 0750 /var/lib/arr/qbittorrent
+  install -D -m 0644 images/arr/runtime/qbittorrent.service "$rootfs/etc/systemd/system/qbittorrent.service"
+  install -D -m 0644 images/arr/runtime/boetticher-arr-peer-firewall.service "$rootfs/etc/systemd/system/boetticher-arr-peer-firewall.service"
+  install -D -m 0755 images/arr/runtime/configure.py "$rootfs/usr/local/libexec/boetticher-arr-configure"
   rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
   chroot "$rootfs" apt-get clean
   rm -rf "$rootfs/var/lib/apt/lists/"*
@@ -780,6 +808,8 @@ build_firewall() {
   go run ./cmd/artifact-identity -module firewall > "$artifact_identity"
   prepare_firewall_package_cache "$input"
   package_cache="$cache_root/apt/boetticher-firewall"
+  step_cli_archive="$cache_root/downloads/step_linux_${step_cli_version}_amd64.tar.gz"
+  download_cached "$step_cli_archive" "$step_cli_url" "$step_cli_sha256" sha256sum
   package_archive_tar="$work_root/firewall-package-archives.tar"
   package_lists_tar="$work_root/firewall-package-lists.tar"
   rm -f -- "$package_archive_tar" "$package_lists_tar"
@@ -796,9 +826,12 @@ build_firewall() {
     --tar-in "$package_lists_tar":/var/lib/apt/lists \
     --upload images/firewall/build/process-supervisor.sh:/tmp/boetticher-firewall-process-supervisor \
     --upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages \
+    --upload "$step_cli_archive:/tmp/boetticher-step-cli.tar.gz" \
     --run-command "sh /tmp/boetticher-firewall-install-packages $firewall_package_names" \
+    --run-command "tar -xOf /tmp/boetticher-step-cli.tar.gz step_${step_cli_version}/bin/step > /usr/local/bin/step && chmod 0755 /usr/local/bin/step && /usr/local/bin/step version | grep -F 'Smallstep CLI/${step_cli_version}'" \
     --delete /tmp/boetticher-firewall-process-supervisor \
     --delete /tmp/boetticher-firewall-install-packages \
+    --delete /tmp/boetticher-step-cli.tar.gz \
     --mkdir /etc/boetticher \
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \

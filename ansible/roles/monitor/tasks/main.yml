@@ -91,11 +91,33 @@
       - --not-after
       - 5m
   delegate_to: lab-dns-01
-  register: monitor_step_ca_token
+  register: monitor_step_ca_token_raw
   changed_when: false
   no_log: true
   environment:
     STEPPATH: /var/lib/boetticher/step-ca
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Keep only the Smallstep Pulse certificate token
+  ansible.builtin.set_fact:
+    monitor_step_ca_token_value: "{{ monitor_step_ca_token_raw.stdout_lines | last }}"
+  no_log: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Require a clean Smallstep Pulse certificate token
+  ansible.builtin.assert:
+    that:
+      - monitor_step_ca_token_value is match('^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$')
+    fail_msg: "Smallstep returned an invalid Pulse certificate token"
+  no_log: true
   when:
     - inventory_hostname == 'lab-monitor-01'
     - step_ca_root_cert_pem is defined
@@ -112,14 +134,32 @@
       - /etc/boetticher/tls/monitor.crt.pem.new
       - /etc/boetticher/tls/monitor.key.pem.new
       - --token
-      - "{{ monitor_step_ca_token.stdout }}"
+      - "{{ monitor_step_ca_token_value }}"
       - --ca-url
       - https://lab-dns-01.{{ domain }}:9443
       - --root
       - /etc/boetticher/tls/step-ca-root.crt
-      - --bundle
       - --force
   register: monitor_step_ca_issue
+  changed_when: true
+  no_log: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Bundle the Pulse certificate chain
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/step
+      - certificate
+      - bundle
+      - /etc/boetticher/tls/monitor.crt.pem.new
+      - /etc/boetticher/tls/step-ca-intermediate.crt
+      - /etc/boetticher/tls/monitor.crt.pem.bundle
+      - --force
+  register: monitor_step_ca_bundle
   changed_when: true
   no_log: true
   when:
@@ -132,11 +172,11 @@
   ansible.builtin.shell: >-
     set -eu;
     /usr/local/bin/step certificate verify
-    /etc/boetticher/tls/monitor.crt.pem.new
+    /etc/boetticher/tls/monitor.crt.pem.bundle
     --roots /etc/boetticher/tls/step-ca-root.crt;
     test -s /etc/boetticher/tls/monitor.key.pem.new;
     chmod 0600 /etc/boetticher/tls/monitor.key.pem.new;
-    mv -f /etc/boetticher/tls/monitor.crt.pem.new /etc/boetticher/tls/monitor.crt.pem;
+    mv -f /etc/boetticher/tls/monitor.crt.pem.bundle /etc/boetticher/tls/monitor.crt.pem;
     mv -f /etc/boetticher/tls/monitor.key.pem.new /etc/boetticher/tls/monitor.key.pem;
     install -o root -g root -m 0644 /dev/null /etc/boetticher/tls/monitor.step-ca
   args:
@@ -206,7 +246,7 @@
 
 - name: Install the current client certificate revocation list for Pulse mTLS
   ansible.builtin.copy:
-    content: "{{ client_crl_pem }}"
+    content: "{{ client_crl_bundle_pem }}"
     dest: /etc/boetticher/tls/client-ca.crl.pem
     owner: root
     group: root
@@ -235,8 +275,8 @@
 
 - name: Refuse an unsupported Pulse release
   ansible.builtin.assert:
-    that: "'6.1.2' in pulse_version.stdout"
-    fail_msg: "The installed Pulse server is not the qualified 6.1.2 release"
+    that: "'6.4.1' in pulse_version.stdout"
+    fail_msg: "The installed Pulse server is not the qualified 6.4.1 release"
   when: inventory_hostname == 'lab-monitor-01'
 
 - name: Create the persistent Pulse state directory

@@ -879,7 +879,9 @@ func ParseProfile(data []byte) (Profile, error) {
 	for _, allowed := range strings.Split(peer["AllowedIPs"], ",") {
 		allowed = strings.TrimSpace(allowed)
 		if strings.Contains(allowed, ":") {
-			return Profile{}, errors.New("AirVPN profile must be IPv4-only")
+			// Keep the module's explicit IPv4-only routing contract even
+			// when the provider returns a dual-stack AllowedIPs list.
+			continue
 		}
 		if allowed != "0.0.0.0/0" {
 			return Profile{}, errors.New("AirVPN profile must use only AllowedIPs=0.0.0.0/0")
@@ -945,8 +947,15 @@ func validateAddresses(value string) ([]string, string, error) {
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		ip, _, err := net.ParseCIDR(part)
-		if err != nil || ip.To4() == nil {
-			return nil, "", errors.New("AirVPN profile must contain IPv4 interface addresses")
+		if err != nil {
+			return nil, "", errors.New("AirVPN profile contains an invalid interface address")
+		}
+		if ip.To4() == nil {
+			// AirVPN may return a dual-stack interface even when the
+			// generator request selects IPv4. Boetticher is intentionally
+			// IPv4-only; omit the IPv6 address from the normalized profile
+			// so it cannot create an unmodeled IPv6 path.
+			continue
 		}
 		if first == "" {
 			first = part

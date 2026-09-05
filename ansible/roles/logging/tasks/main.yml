@@ -12,8 +12,8 @@
       - step_ca_intermediate_cert_pem is defined
       - client_ca_pem is defined
       - client_ca_pem | length > 0
-      - client_crl_pem is defined
-      - client_crl_pem | length > 0
+      - client_crl_bundle_pem is defined
+      - client_crl_bundle_pem | length > 0
     fail_msg: "Logging TLS requires Smallstep server trust and retained client CA/CRL"
   no_log: true
   when: inventory_hostname == logging_plan.collector
@@ -82,7 +82,7 @@
 
 - name: Install the current client certificate revocation list for journal upload
   ansible.builtin.copy:
-    content: "{{ client_crl_pem }}"
+    content: "{{ client_crl_bundle_pem }}"
     dest: /var/lib/boetticher/identity/logging/client-ca.crl.pem
     owner: root
     group: root
@@ -191,6 +191,9 @@
       {% endfor %}
           if ($boetticher_logging_client_allowed = 0) { return 403; }
           location = /upload {
+              client_max_body_size 0;
+              proxy_request_buffering off;
+              proxy_http_version 1.1;
               proxy_pass http://127.0.0.1:{{ logging_plan.collector_backend_port }};
               proxy_pass_request_headers on;
               proxy_set_header Host $host;
@@ -329,7 +332,7 @@
     mode: '0640'
   loop:
     - {dest: /etc/boetticher/pki/client-ca.crt, content: "{{ client_ca_pem | default('') }}", group: boetticher-log-query}
-    - {dest: /etc/boetticher/pki/client-ca.crl.pem, content: "{{ client_crl_pem | default('') }}", group: boetticher-log-query}
+    - {dest: /etc/boetticher/pki/client-ca.crl.pem, content: "{{ client_crl_bundle_pem | default('') }}", group: boetticher-log-query}
   no_log: true
   notify: restart journal query
   when:

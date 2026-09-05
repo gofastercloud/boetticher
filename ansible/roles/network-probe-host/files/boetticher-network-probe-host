@@ -53,6 +53,10 @@ for line in config_text.splitlines():
         config_fields[key.strip()] = value.strip()
 description_fields = set(config_fields.get("description", "").split())
 expected_hostname = "boetticher-netprobe-" + zone.lower()
+if vmid == 916:
+    if zone != "SANDBOX":
+        fail("peer probe VMID is reserved for SANDBOX")
+    expected_hostname += "-peer"
 expected_description_fields = {
     "boetticher-network-probe",
     "installation=" + installation,

@@ -1,0 +1,61 @@
+---
+- name: Resolve the bounded selected-client contract
+  ansible.builtin.set_fact:
+    airvpn_client: '{{ host_isolation.selected | selectattr("name", "equalto", inventory_hostname) | first }}'
+
+- name: Create the selected-client firewall directory
+  ansible.builtin.file:
+    path: /etc/nftables.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Persist the selected-client default-deny boundary
+  ansible.builtin.template:
+    src: client.nft.j2
+    dest: /etc/nftables.d/airvpn-client.nft
+    owner: root
+    group: root
+    mode: '0600'
+    validate: '/usr/sbin/nft -c -f %s'
+
+- name: Persist selected-client IPv6 bypass prevention
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-boetticher-airvpn-client.conf
+    content: |
+      net.ipv6.conf.all.disable_ipv6=1
+      net.ipv6.conf.default.disable_ipv6=1
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the selected-client firewall boot unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/boetticher-airvpn-client.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=boetticher AirVPN-selected client boundary
+      DefaultDependencies=no
+      After=nftables.service
+      Before=network-pre.target shutdown.target
+      Wants=network-pre.target
+      Conflicts=shutdown.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/nftables.d/airvpn-client.nft
+
+      [Install]
+      WantedBy=network-pre.target
+
+- name: Apply selected-client restrictions before application services
+  ansible.builtin.systemd_service:
+    name: boetticher-airvpn-client
+    enabled: true
+    state: restarted
+    daemon_reload: true

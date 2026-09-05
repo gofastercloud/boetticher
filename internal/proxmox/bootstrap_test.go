@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ type fakeRunner struct {
 type staleScopedTokenRunner struct {
 	commands []string
 	removed  bool
+	scoped   bool
 }
 
 type stalePulseMonitoringTokenRunner struct {
@@ -48,6 +50,16 @@ func (r *staleScopedTokenRunner) Run(_ context.Context, _ string, _ string, comm
 		}
 		return []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`), nil
 	case "pvesh get /access/acl --output-format json":
+		if r.scoped {
+			acls := []scopedCredentialACLEntry{}
+			for _, subject := range []struct{ value, typ string }{{"labadmin@pve", "user"}, {"labadmin@pve!boetticher", "token"}} {
+				for _, path := range scopedProvisionerACLPaths("node") {
+					acls = append(acls, scopedCredentialACLEntry{Path: path, Propagate: scopedProvisionerACLPropagate(path), RoleID: "BoetticherProvisioner", Type: subject.typ, UGID: subject.value})
+				}
+			}
+			data, _ := json.Marshal(acls)
+			return data, nil
+		}
 		return []byte(`[{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"user","ugid":"labadmin@pve"},{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"token","ugid":"labadmin@pve!boetticher"}]`), nil
 	case "pvesh delete /access/acl --path / --users 'labadmin@pve' --roles 'BoetticherProvisioner'", "pvesh delete /access/acl --path / --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner'":
 		return nil, nil
@@ -292,7 +304,7 @@ func TestSSHRunnerUsesInMemoryIdentityOnInheritedDescriptor(t *testing.T) {
 
 func TestSSHRunnerIsolatesTargetIdentityButPreservesProxyJumpIdentity(t *testing.T) {
 	path := t.TempDir() + "/boetticher.conf"
-	config := "Host lab-bastion\n    IdentityFile /tmp/operator\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
+	config := "Host lab-bastion\n    IdentityFile /tmp/operator\n    ControlMaster auto\n    ControlPersist 60\n    ControlPath ~/.ssh/control-%C\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
 	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +316,9 @@ func TestSSHRunnerIsolatesTargetIdentityButPreservesProxyJumpIdentity(t *testing
 	text := string(filtered)
 	if strings.Count(text, "IdentityFile /tmp/operator") != 1 || !strings.Contains(text, "Host lab-bastion") || !strings.Contains(text, "ProxyJump lab-bastion") {
 		t.Fatalf("isolated SSH configuration lost the bastion identity or retained the target identity: %s", text)
+	}
+	if !strings.Contains(text, "ControlMaster no") || !strings.Contains(text, "ControlPath none") || strings.Contains(text, "ControlPersist 60") {
+		t.Fatalf("isolated SSH configuration retained bastion multiplexing: %s", text)
 	}
 }
 
@@ -546,6 +561,14 @@ func TestRemoveExactScopedCredentialTokenDeletesOnlyTheOwnedToken(t *testing.T) 
 	}
 }
 
+func TestRemoveExactScopedCredentialTokenAcceptsNonPropagatingStorageCollection(t *testing.T) {
+	runner := &staleScopedTokenRunner{scoped: true}
+	removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
+	if err != nil || !removed || !runner.removed {
+		t.Fatalf("RemoveExactScopedCredentialToken() with scoped ACLs = %t, %v", removed, err)
+	}
+}
+
 func TestRemoveExactScopedCredentialTokenRefusesUnexpectedOwnership(t *testing.T) {
 	role := []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`)
 	for _, test := range []struct {
@@ -700,7 +723,7 @@ func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
 		typ   string
 	}{{"labadmin@pve", "user"}, {"labadmin@pve!boetticher", "token"}} {
 		for _, path := range scopedProvisionerACLPaths("node") {
-			acls = append(acls, scopedCredentialACLEntry{Path: path, Propagate: 1, RoleID: "BoetticherProvisioner", Type: subject.typ, UGID: subject.value})
+			acls = append(acls, scopedCredentialACLEntry{Path: path, Propagate: scopedProvisionerACLPropagate(path), RoleID: "BoetticherProvisioner", Type: subject.typ, UGID: subject.value})
 		}
 	}
 	aclData, err := json.Marshal(acls)
@@ -718,14 +741,41 @@ func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
 	}
 	want := []string{"pvesh get /access/roles --output-format json", "pvesh get /access/users --output-format json", "pvesh get /access/users/'labadmin@pve'/token --output-format json", "pvesh get /access/acl --output-format json"}
 	for _, path := range scopedProvisionerACLPaths("node") {
-		want = append(want, "pvesh set /access/acl --path '"+path+"' --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate 1")
+		want = append(want, "pvesh set /access/acl --path '"+path+"' --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate "+strconv.Itoa(scopedProvisionerACLPropagate(path)))
 	}
 	for _, path := range scopedProvisionerACLPaths("node") {
-		want = append(want, "pvesh set /access/acl --path '"+path+"' --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate 1")
+		want = append(want, "pvesh set /access/acl --path '"+path+"' --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate "+strconv.Itoa(scopedProvisionerACLPropagate(path)))
 	}
 	want = append(want, "pvesh get /access/acl --output-format json")
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("scoped credential ACL repair commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
+func TestScopedProvisionerACLPathsIncludeStorageCollection(t *testing.T) {
+	paths := scopedProvisionerACLPaths("node")
+	for _, want := range []string{"/storage", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"} {
+		found := false
+		for _, path := range paths {
+			if path == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("scoped ACL paths omit %q: %v", want, paths)
+		}
+	}
+}
+
+func TestStorageCollectionACLDoesNotPropagate(t *testing.T) {
+	if got := scopedProvisionerACLPropagate("/storage"); got != 0 {
+		t.Fatalf("storage collection propagation = %d, want 0", got)
+	}
+	for _, path := range []string{"/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"} {
+		if got := scopedProvisionerACLPropagate(path); got != 1 {
+			t.Fatalf("owned storage %s propagation = %d, want 1", path, got)
+		}
 	}
 }
 
@@ -1009,7 +1059,7 @@ func TestInactivateRetainedModuleUsesBoundedGuestServiceContract(t *testing.T) {
 	}{
 		{kind: KindQEMU, module: "tailnet-router", want: "/usr/sbin/qm guest exec 200 -- /bin/sh -c", services: []string{"tailscaled"}},
 		{kind: KindLXC, module: "airvpn", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"boetticher-airvpn.service"}},
-		{kind: KindLXC, module: "arr", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"sonarr", "radarr", "nginx"}},
+		{kind: KindLXC, module: "arr", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"sonarr", "radarr", "lidarr", "readarr", "prowlarr", "qbittorrent", "boetticher-arr-peer-firewall", "nginx", "LoadState", "not-found"}},
 	} {
 		t.Run(string(guest.kind)+"/"+guest.module, func(t *testing.T) {
 			runner := &fakeRunner{output: []byte("{\"exitcode\":0,\"exited\":1}")}

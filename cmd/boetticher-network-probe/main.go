@@ -33,6 +33,7 @@ type request struct {
 }
 
 type response struct {
+	Completed    bool              `json:"completed"`
 	OK           bool              `json:"ok"`
 	ExitCode     int               `json:"exit_code,omitempty"`
 	Output       string            `json:"output,omitempty"`
@@ -69,6 +70,12 @@ func run(req request) response {
 	}
 	args := []string{}
 	switch req.Kind {
+	case "ntp":
+		port := req.Port
+		if port == 0 {
+			port = 123
+		}
+		return ntpProbe(req.Target, port)
 	case "identity":
 		args = []string{"-j", "address", "show"}
 	case "ping":
@@ -120,6 +127,11 @@ func run(req request) response {
 			return response{Error: "ARP probe requires a target"}
 		}
 		args = []string{"-D", "-I", "eth0", "-S", "0.0.0.0", "-c", "2", "-w", "3", req.Target}
+	case "arp-peer":
+		if net.ParseIP(req.Target).To4() == nil {
+			return response{Error: "ARP peer probe requires IPv4"}
+		}
+		args = []string{"-I", "eth0", "-c", "2", "-w", "3", req.Target}
 	case "configure":
 		var err error
 		args, err = networkConfigurationArguments(req.Kind, req.Target)
@@ -136,6 +148,9 @@ func run(req request) response {
 		return response{Error: "unsupported probe case"}
 	}
 	tool := map[string]string{"identity": "ip", "ping": "ping", "tcp": "nc", "dns": "dig", "http": "curl", "mtls": "curl", "nmap": "nmap", "iperf-client": "iperf3", "iperf-server": "iperf3", "capture": "tcpdump", "arping": "arping", "configure": "ip", "route": "ip"}[req.Kind]
+	if req.Kind == "arp-peer" {
+		tool = "arping"
+	}
 	if tool == "" {
 		return response{Error: "unsupported probe tool"}
 	}
@@ -172,7 +187,7 @@ func run(req request) response {
 		exitCode = command.ProcessState.ExitCode()
 	}
 	ok := commandSucceeded(req.Kind, exitCode, output, err)
-	result := response{OK: ok, Output: string(output), ExitCode: exitCode}
+	result := response{Completed: command.ProcessState != nil && ctx.Err() == nil, OK: ok, Output: string(output), ExitCode: exitCode}
 	if err != nil && !ok {
 		result.Error = err.Error()
 	}
@@ -228,6 +243,18 @@ func networkConfigurationArguments(kind, target string) ([]string, error) {
 }
 
 func commandSucceeded(kind string, exitCode int, output []byte, err error) bool {
+	if kind == "http" {
+		if err != nil {
+			return false
+		}
+		for _, field := range strings.Fields(string(output)) {
+			if strings.HasPrefix(field, "http_code=") {
+				code, e := strconv.Atoi(strings.TrimPrefix(field, "http_code="))
+				return e == nil && code >= 200 && code < 300
+			}
+		}
+		return false
+	}
 	if kind == "arping" {
 		// arping -D returns 1 when no peer answers, which is the successful
 		// duplicate-address check result for a candidate address. A reply

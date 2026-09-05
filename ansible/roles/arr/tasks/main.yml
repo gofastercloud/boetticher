@@ -4,7 +4,7 @@
     that:
       - boetticher_appliance_artifact | default(false) | bool
       - module_configs.arr is defined
-    fail_msg: "arr requires a qualified pinned Sonarr/Radarr appliance artifact"
+    fail_msg: "arr requires a qualified pinned Sonarr/Radarr/Lidarr/Prowlarr/qBittorrent appliance artifact"
 
 - name: Create the arr TLS identity directory
   ansible.builtin.file:
@@ -33,7 +33,7 @@
       - step_ca_root_cert_pem | default('') | length > 0
       - step_ca_intermediate_cert_pem | default('') | length > 0
       - client_ca_pem | default('') | length > 0
-      - client_crl_pem | default('') | length > 0
+      - client_crl_bundle_pem | default('') | length > 0
     fail_msg: arr nginx requires Smallstep server trust and retained client CA material
   no_log: true
 
@@ -42,7 +42,7 @@
   vars:
     step_ca_endpoint_name: Arr
     step_ca_endpoint_subject: "sonarr.{{ domain }}"
-    step_ca_endpoint_sans: ["sonarr.{{ domain }}", "radarr.{{ domain }}", "lab-arr-01.{{ domain }}"]
+    step_ca_endpoint_sans: ["sonarr.{{ domain }}", "radarr.{{ domain }}", "lidarr.{{ domain }}", "prowlarr.{{ domain }}", "qbittorrent.{{ domain }}", "lab-arr-01.{{ domain }}"]
     step_ca_endpoint_root_path: /var/lib/boetticher/identity/tls/step-ca-root.crt
     step_ca_endpoint_intermediate_path: /var/lib/boetticher/identity/tls/step-ca-intermediate.crt
     step_ca_endpoint_certificate_path: /var/lib/boetticher/identity/tls/arr.crt.pem
@@ -67,12 +67,17 @@
 - name: Install the arr client certificate revocation list
   ansible.builtin.copy:
     dest: /var/lib/boetticher/identity/tls/client-ca.crl.pem
-    content: "{{ client_crl_pem }}"
+    content: "{{ client_crl_bundle_pem }}"
     owner: root
     group: root
     mode: '0644'
   no_log: true
   when: step_ca_root_cert_pem | default('') | length > 0
+
+- name: Require the Core-mounted retained media volume
+  ansible.builtin.command:
+    argv: [mountpoint, -q, /var/lib/arr/downloads]
+  changed_when: false
 
 - name: Create persistent arr application state directories
   ansible.builtin.file:
@@ -84,39 +89,114 @@
   loop:
     - {path: /var/lib/arr/sonarr, owner: sonarr, mode: '0750'}
     - {path: /var/lib/arr/radarr, owner: radarr, mode: '0750'}
+    - {path: /var/lib/arr/lidarr, owner: lidarr, mode: '0750'}
+    - {path: /var/lib/arr/prowlarr, owner: prowlarr, mode: '0750'}
+    - {path: /var/lib/arr/qbittorrent, owner: qbittorrent, mode: '0750'}
+    - {path: /var/lib/arr/qbittorrent/qBittorrent, owner: qbittorrent, mode: '0750'}
+    - {path: /var/lib/arr/qbittorrent/qBittorrent/config, owner: qbittorrent, mode: '0750'}
     - {path: /var/lib/arr/downloads, owner: root, mode: '2770'}
 
-- name: Bind Sonarr and Radarr to loopback with no native login
-  ansible.builtin.copy:
-    dest: "{{ item.dest }}"
-    owner: "{{ item.owner }}"
+- name: Create shared media directories on the retained data volume
+  ansible.builtin.file:
+    path: "/var/lib/arr/downloads/{{ item }}"
+    state: directory
+    owner: root
     group: arr
-    mode: '0640'
-    force: false
-    content: |
-      <Config>
-        <BindAddress>127.0.0.1</BindAddress>
-        <Port>{{ item.port }}</Port>
-        <EnableSsl>False</EnableSsl>
-        <LaunchBrowser>False</LaunchBrowser>
-        <AuthenticationMethod>None</AuthenticationMethod>
-        <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
-      </Config>
-  loop:
-    - {dest: /var/lib/arr/sonarr/config.xml, owner: sonarr, port: 8989}
-    - {dest: /var/lib/arr/radarr/config.xml, owner: radarr, port: 7878}
-  when: step_ca_root_cert_pem | default('') | length > 0
+    mode: '2770'
+  loop: [incoming, incoming/tv, incoming/movies, incoming/music, library, library/tv, library/movies, library/music]
 
-- name: Configure nginx as the only arr network listener
+- name: Inspect native service availability
+  ansible.builtin.service_facts:
+
+- name: Stop retired Readarr without deleting its state
+  ansible.builtin.systemd_service:
+    name: readarr
+    state: stopped
+    enabled: false
+  when: "'readarr.service' in ansible_facts.services"
+
+- name: Check bounded ARR listener and authentication configuration
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/boetticher-arr-configure, check, --domain, "{{ domain }}", --peer-port, "{{ module_configs.airvpn.qbittorrent_port | default(0) }}"]
+  register: arr_config_check
+  changed_when: false
+
+- name: Stop native services before changing their configuration
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+  loop: [sonarr, radarr, lidarr, prowlarr, qbittorrent]
+  when:
+    - arr_config_check.stdout == 'changed'
+    - "item + '.service' in ansible_facts.services"
+
+- name: Prepare bounded ARR configuration without replacing application state
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/boetticher-arr-configure, prepare, --domain, "{{ domain }}", --peer-port, "{{ module_configs.airvpn.qbittorrent_port | default(0) }}"]
+  when: arr_config_check.stdout == 'changed'
+  register: arr_config_prepare
+  changed_when: arr_config_prepare.stdout == 'changed'
+
+- name: Create the ARR peer firewall directory
+  ansible.builtin.file:
+    path: /etc/nftables.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the bounded ARR peer ingress policy
+  ansible.builtin.copy:
+    dest: /etc/nftables.d/arr-peers.nft
+    owner: root
+    group: root
+    mode: '0644'
+    validate: /usr/sbin/nft -c -f %s
+    content: |
+      destroy table inet boetticher_arr_peers
+      table inet boetticher_arr_peers {
+        chain input {
+          type filter hook input priority filter; policy accept;
+          iifname "lo" accept
+          ct state established,related accept
+          iifname "eth0" ip saddr 10.10.5.20 accept
+          meta l4proto { tcp, udp } th dport {{ (module_configs.airvpn.qbittorrent_port | default(0) | int) or 6881 }} drop
+        }
+      }
+  register: arr_peer_policy
+
+- name: Apply the ARR peer ingress policy before starting downloads
+  ansible.builtin.systemd_service:
+    name: boetticher-arr-peer-firewall
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if arr_peer_policy.changed else 'started' }}"
+
+- name: Start native ARR backends
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [sonarr, radarr, lidarr, prowlarr, qbittorrent]
+
+- name: Reconcile local application connections and library paths
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/boetticher-arr-configure, wire]
+  register: arr_wiring
+  changed_when: arr_wiring.stdout == 'changed'
+
+- name: Configure nginx as the only ARR web frontend
   ansible.builtin.copy:
     dest: /etc/nginx/sites-available/arr.conf
     owner: root
     group: root
     mode: '0644'
     content: |
+      {% for app, port in [('sonarr', 8989), ('radarr', 7878), ('lidarr', 8686), ('prowlarr', 9696), ('qbittorrent', 8080)] %}
       server {
           listen 10.10.20.110:443 ssl;
-          server_name sonarr.{{ domain }};
+          server_name {{ app }}.{{ domain }};
           ssl_certificate /var/lib/boetticher/identity/tls/arr.crt.pem;
           ssl_certificate_key /var/lib/boetticher/identity/tls/arr.key.pem;
           ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;
@@ -125,27 +205,13 @@
           ssl_protocols TLSv1.2 TLSv1.3;
           if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }
           location / {
-              proxy_pass http://127.0.0.1:8989;
+              proxy_pass http://127.0.0.1:{{ port }};
               proxy_set_header Host $host;
               proxy_set_header X-Forwarded-Proto https;
           }
       }
-      server {
-          listen 10.10.20.110:443 ssl;
-          server_name radarr.{{ domain }};
-          ssl_certificate /var/lib/boetticher/identity/tls/arr.crt.pem;
-          ssl_certificate_key /var/lib/boetticher/identity/tls/arr.key.pem;
-          ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;
-          ssl_crl /var/lib/boetticher/identity/tls/client-ca.crl.pem;
-          ssl_verify_client on;
-          ssl_protocols TLSv1.2 TLSv1.3;
-          if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }
-          location / {
-              proxy_pass http://127.0.0.1:7878;
-              proxy_set_header Host $host;
-              proxy_set_header X-Forwarded-Proto https;
-          }
-      }
+      {% endfor %}
+  register: arr_nginx_config
   when: step_ca_root_cert_pem | default('') | length > 0
 
 - name: Enable arr nginx site
@@ -155,10 +221,13 @@
     state: link
   when: step_ca_root_cert_pem | default('') | length > 0
 
-- name: Enable and start the arr services behind nginx
-  ansible.builtin.service:
-    name: "{{ item }}"
+- name: Validate the arr frontend configuration
+  ansible.builtin.command:
+    argv: [nginx, -t]
+  changed_when: false
+
+- name: Enable and start the arr frontend
+  ansible.builtin.systemd_service:
+    name: nginx
     enabled: true
-    state: started
-  loop: [sonarr, radarr, nginx]
-  when: step_ca_root_cert_pem | default('') | length > 0
+    state: "{{ 'restarted' if arr_nginx_config.changed else 'started' }}"

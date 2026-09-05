@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
+	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/networktest"
@@ -40,6 +41,7 @@ const (
 )
 
 type probeResponse struct {
+	Completed    bool              `json:"completed"`
 	OK           bool              `json:"ok"`
 	ExitCode     int               `json:"exit_code,omitempty"`
 	Output       string            `json:"output,omitempty"`
@@ -393,18 +395,42 @@ func runNetworkProbeCases(ctx context.Context, siteDir string, s model.Site, pol
 	add := func(name, kind, target string, port int, expected bool, payload map[string]any) {
 		started := time.Now().UTC()
 		response, err := executeNetworkProbe(ctx, runner, s, *source, digest, runID, payload)
-		status := "PASS"
-		if (err != nil || !response.OK) == expected {
-			status = "FAIL"
-		}
+		status := probeOutcome(response, expected)
 		report.Results = append(report.Results, networktest.Result{Name: name, Kind: kind, Source: source.Zone, Target: target, Status: status, Detail: responseDetail(response, err), Started: started.Format(time.RFC3339), Finished: time.Now().UTC().Format(time.RFC3339)})
 	}
-	if gatewayProbeExpected(source.Zone) {
-		add("gateway/"+source.Zone, "ping", source.Gateway, 0, true, map[string]any{"version": 1, "kind": "ping", "target": source.Gateway})
-	}
+	add("gateway/"+source.Zone, "ping", source.Gateway, 0, gatewayProbeExpected(source.Zone), map[string]any{"version": 1, "kind": "ping", "target": source.Gateway})
 	dnsName := probeDNSName(source.Zone, s.Network.Domain)
 	for _, dnsServer := range zoneDNS(s, source.Zone) {
 		add("dns/"+source.Zone+"/"+dnsServer, "dns", dnsServer, 53, true, map[string]any{"version": 1, "kind": "dns", "target": dnsServer, "name": dnsName, "type": "A"})
+	}
+	if source.Zone == "SANDBOX" {
+		add("sandbox/public-internet", "http", "example.com", 443, true, map[string]any{"version": 1, "kind": "http", "url": "https://example.com"})
+		add("sandbox/dedicated-ntp", "ntp", source.Gateway, 123, true, map[string]any{"version": 1, "kind": "ntp", "target": source.Gateway})
+		for _, query := range []struct{ name, typ string }{{"monitor." + s.Network.Domain, "A"}, {"localhost", "A"}, {"20.10.10.10.in-addr.arpa", "PTR"}, {"monitor." + s.Network.Domain, "AAAA"}} {
+			add("sandbox/private-dns/"+query.name, "dns", source.Gateway, 53, false, map[string]any{"version": 1, "kind": "dns", "target": source.Gateway, "name": query.name, "type": query.typ})
+		}
+		for _, zone := range s.Network.Zones {
+			add("sandbox/gateway-admin/"+zone.Name, "tcp", zone.Gateway, 22, false, map[string]any{"version": 1, "kind": "tcp", "target": zone.Gateway, "port": 22})
+			add("sandbox/gateway-icmp/"+zone.Name, "ping", zone.Gateway, 0, false, map[string]any{"version": 1, "kind": "ping", "target": zone.Gateway})
+		}
+		for _, address := range zoneDNS(s, "INFRA") {
+			add("sandbox/primary-dns/"+address, "dns", address, 53, false, map[string]any{"version": 1, "kind": "dns", "target": address, "name": "monitor." + s.Network.Domain, "type": "A"})
+			add("sandbox/primary-ntp/"+address, "ntp", address, 123, false, map[string]any{"version": 1, "kind": "ntp", "target": address})
+		}
+		for _, address := range []string{s.BootstrapAddress} {
+			if net.ParseIP(address) != nil {
+				for _, port := range []int{22, 443, 8006} {
+					add(fmt.Sprintf("sandbox/home/%s/%d", address, port), "tcp", address, port, false, map[string]any{"version": 1, "kind": "tcp", "target": address, "port": port})
+				}
+			}
+		}
+		for _, peer := range probes {
+			if peer.Zone != "SANDBOX" || peer.VMID == source.VMID || peer.Address == "" {
+				continue
+			}
+			add("sandbox/peer-icmp/"+peer.Name, "ping", peer.Address, 0, false, map[string]any{"version": 1, "kind": "ping", "target": peer.Address})
+			add("sandbox/peer-arp/"+peer.Name, "arp-peer", peer.Address, 0, false, map[string]any{"version": 1, "kind": "arp-peer", "target": peer.Address})
+		}
 	}
 	for _, component := range s.PlatformComponents() {
 		if component.Address == "" || component.URL == "" {
@@ -432,7 +458,7 @@ func runNetworkProbeCases(ctx context.Context, siteDir string, s model.Site, pol
 			started = time.Now().UTC()
 			positive, positiveErr := executeNetworkProbe(ctx, runner, s, *source, digest, runID, map[string]any{"version": 1, "kind": "mtls", "target": component.Address, "url": component.URL, "ca": ca, "cert": cert.ChainPEM, "key": cert.KeyPEM})
 			positiveStatus := "PASS"
-			if positiveErr != nil || !positive.OK || strings.Contains(positive.Output, "http_code=000") {
+			if positiveErr != nil || !positive.Completed || !positive.OK || !probeHTTPAuthorized(positive.Output) {
 				positiveStatus = "FAIL"
 			}
 			report.Results = append(report.Results, networktest.Result{Name: "mtls/client/" + component.Name, Kind: "mtls", Source: source.Zone, Target: component.Name, Status: positiveStatus, Detail: responseDetail(positive, positiveErr), Started: started.Format(time.RFC3339), Finished: time.Now().UTC().Format(time.RFC3339)})
@@ -458,7 +484,7 @@ func gatewayProbeExpected(zone string) bool {
 	// does not accept diagnostic ICMP from transit0; the other client-facing
 	// zones do. The probe still validates the TRANSIT route through its
 	// modeled downstream cases.
-	return zone != "TRANSIT"
+	return zone != "TRANSIT" && zone != "SANDBOX"
 }
 
 func iperfNetworkProbe(ctx context.Context, runner proxmox.SSHRunner, s model.Site, source, target networktest.Probe, digest, runID string, port int, protocol string, report *networktest.Report) {
@@ -539,6 +565,9 @@ func probeDNSName(zone, domain string) string {
 }
 
 func policyAllows(policy firewall.Plan, source, target, protocol string, port int, sourceAddress, destinationAddress string) bool {
+	if source == "SANDBOX" {
+		return false
+	}
 	if source == target {
 		return true
 	}
@@ -578,6 +607,23 @@ func mtlsDenied(output string) bool {
 	return strings.Contains(output, "http_code=400") || strings.Contains(output, "http_code=401") || strings.Contains(output, "http_code=403")
 }
 
+func probeHTTPAuthorized(output string) bool {
+	for _, field := range strings.Fields(output) {
+		if strings.HasPrefix(field, "http_code=") {
+			code, err := strconv.Atoi(strings.TrimPrefix(field, "http_code="))
+			return err == nil && code >= 200 && code < 300
+		}
+	}
+	return false
+}
+
+func probeOutcome(response probeResponse, expected bool) string {
+	if !response.Completed || response.OK != expected {
+		return "FAIL"
+	}
+	return "PASS"
+}
+
 func responseDetail(response probeResponse, err error) string {
 	details := make([]string, 0, 3)
 	if response.Error != "" {
@@ -597,16 +643,14 @@ func validateAirVPNNetworkTestSite(s model.Site) error {
 	for _, module := range s.Modules {
 		enabled[module.Name] = module.Enabled
 	}
-	if !enabled["airvpn"] || !enabled["arr"] {
-		return errors.New("--airvpn requires enabled airvpn and arr modules")
+	if !enabled["airvpn"] || len(model.AirVPNSelectedNames(s)) == 0 {
+		return errors.New("--airvpn requires AirVPN and at least one enabled AirVPN-selected module")
 	}
-	arrConfig, ok := s.ModuleConfig["arr"]
-	if !ok || arrConfig.Network != model.ModuleNetworkAirVPN {
-		return errors.New("--airvpn requires arr to use the AirVPN network mode")
-	}
-	arr, ok := findManagedEndpoint(s, "lab-arr-01")
-	if !ok || arr.VMID != model.ArrVMID || arr.Address != model.ArrGuestAddress || !arr.SSHManaged || !arr.JumpAllowed {
-		return errors.New("--airvpn requires the declared ARR guest management contract")
+	for _, name := range model.AirVPNSelectedNames(s) {
+		client, ok := findManagedEndpoint(s, name)
+		if !ok || !client.ProductOwned || client.VMID < 200 || client.VMID > 499 || !client.SSHManaged || !client.JumpAllowed {
+			return fmt.Errorf("--airvpn requires the managed client contract for %s", name)
+		}
 	}
 	airvpn, ok := findManagedEndpoint(s, "lab-airvpn-01")
 	if !ok || airvpn.VMID != model.AirVPNGuestVMID || airvpn.Address != model.AirVPNGuestAddress {
@@ -620,117 +664,187 @@ const (
 	arrProxmoxDeniedProbeCommand = "/usr/bin/curl --ipv4 --fail --silent --show-error --connect-timeout 3 --max-time 5 telnet://" + model.ProxmoxManagementAddress + ":22 >/dev/null"
 )
 
-// runAirVPNNetworkProbe exercises the selected ARR source rather than a
-// generic SERVERS probe. It uses the normal restricted SSH route to the
-// declared guest and the scoped Proxmox API only to stop and restore its one
-// declared transit LXC. No generic guest command execution is available.
+// runAirVPNNetworkProbe checks every declared AirVPN-intent client. It uses
+// fixed read-only measurements on clients and a bounded stop/start of the
+// owned router; missing probe output can never count as a denied path.
 func runAirVPNNetworkProbe(ctx context.Context, client *proxmox.Client, node, siteDir string, s model.Site, report *networktest.Report) (runErr error) {
 	if client == nil || node == "" || report == nil {
-		return errors.New("AirVPN network probe requires a Proxmox client, node, and report")
+		return errors.New("AirVPN probe requires client, node and report")
 	}
 	if err := validateAirVPNNetworkTestSite(s); err != nil {
 		return err
 	}
-	arr, _ := findManagedEndpoint(s, "lab-arr-01")
-	airvpn, _ := findManagedEndpoint(s, "lab-airvpn-01")
+	router, _ := findManagedEndpoint(s, "lab-airvpn-01")
 	configPath, cleanupConfig, err := temporarySSHConfig(s, siteDir)
 	if err != nil {
-		return fmt.Errorf("prepare ARR AirVPN probe SSH configuration: %w", err)
+		return err
 	}
 	defer cleanupConfig()
-	runner := proxmox.SSHRunner{
-		ConfigFile: configPath, KnownHosts: deploymentKnownHosts(siteDir), StrictHostKey: "yes",
-		HostAlias: arr.Name, IdentityFile: operatorIdentityFile(s),
-	}.FreshConnection()
-
-	add := func(name, target, detail string, passed bool) {
-		status := "PASS"
-		if !passed {
-			status = "FAIL"
+	type clientChecks struct {
+		guest  model.Component
+		runner proxmox.SSHRunner
+		checks []networktest.AirVPNCheck
+	}
+	var clients []clientChecks
+	for _, name := range model.AirVPNSelectedNames(s) {
+		guest, _ := findManagedEndpoint(s, name)
+		runner := proxmox.SSHRunner{ConfigFile: configPath, KnownHosts: deploymentKnownHosts(siteDir), StrictHostKey: "yes", HostAlias: name, IdentityFile: operatorIdentityFile(s)}.FreshConnection()
+		checks := networktest.AirVPNChecks(s.BootstrapAddress, s.Network.Domain, zoneDNS(s, "INFRA"), dns.PublicUpstreams)
+		publicURL := ""
+		if guest.Module == "arr" {
+			publicURL = airVPNProbeURL
+		} else {
+			for _, declaration := range s.Declarations {
+				if declaration.Module != guest.Module {
+					continue
+				}
+				for _, intent := range declaration.NetworkIntents {
+					if intent.Source == name && intent.Endpoint != "" {
+						publicURL = intent.Endpoint
+						break
+					}
+				}
+			}
+		}
+		filtered := checks[:0]
+		for _, check := range checks {
+			if check.Kind == "http" {
+				if publicURL == "" {
+					continue
+				} // This module declares no public application destination.
+				u, parseErr := url.Parse(publicURL)
+				if parseErr != nil || u.Scheme != "https" || u.Hostname() == "" {
+					return errors.New("public probe endpoint must use HTTPS")
+				}
+				check.Kind, check.Target, check.Port, check.ServerName = "tls", u.Hostname(), 443, u.Hostname()
+				if u.Port() != "" {
+					check.Port, _ = strconv.Atoi(u.Port())
+				}
+				check.Name = "declared-public-tls"
+			}
+			if net.ParseIP(check.Target) == nil {
+				addresses, lookupErr := net.DefaultResolver.LookupIP(ctx, "ip4", check.Target)
+				if lookupErr != nil || len(addresses) == 0 {
+					return fmt.Errorf("resolve check target %s", check.Name)
+				}
+				check.Target = addresses[0].String() // Repeat fault probes without depending on DNS.
+			}
+			filtered = append(filtered, check)
+		}
+		clients = append(clients, clientChecks{guest, runner, filtered})
+	}
+	add := func(source, stage, name, target, detail string, passed bool) {
+		status := "FAIL"
+		if passed {
+			status = "PASS"
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		report.Results = append(report.Results, networktest.Result{Name: name, Kind: "airvpn", Source: arr.Name, Target: target, Status: status, Detail: detail, Started: now, Finished: now})
+		report.Results = append(report.Results, networktest.Result{Name: "airvpn/" + source + "/" + stage + "/" + name, Kind: "airvpn", Source: source, Target: target, Status: status, Detail: detail, Started: now, Finished: now})
 	}
-	probePublic := func() (string, string, error) {
-		return waitForAirVPNPublicEgress(ctx, runner, arr)
+	measure := func(c clientChecks, stage string, check networktest.AirVPNCheck) bool {
+		payload, _ := json.Marshal(map[string]any{"kind": check.Kind, "target": check.Target, "port": check.Port, "query": check.Query, "server_name": check.ServerName})
+		output, transportErr := c.runner.RunWithStdin(ctx, c.guest.Address, model.DefaultAdminSSHUser, "/usr/bin/python3 -c "+shellQuote(networktest.AirVPNProbeProgram), bytes.NewReader(payload))
+		var result struct {
+			Completed bool   `json:"completed"`
+			OK        bool   `json:"ok"`
+			Detail    string `json:"detail"`
+		}
+		decodeErr := json.Unmarshal(output, &result)
+		passed := transportErr == nil && decodeErr == nil && result.Completed && result.OK == check.Allowed
+		detail := result.Detail
+		if transportErr != nil || decodeErr != nil {
+			detail = "probe transport or response failed; not isolation evidence"
+		}
+		add(c.guest.Name, stage, check.Name, check.Target, detail, passed)
+		return passed
 	}
-
-	publicIP, detail, err := probePublic()
-	add("airvpn/arr/public-egress", airVPNProbeURL, detail, err == nil)
-	if err != nil {
-		return fmt.Errorf("ARR AirVPN public egress: %w", err)
+	baselinePassed := true
+	for _, c := range clients {
+		for _, check := range c.checks {
+			if !measure(c, "baseline", check) {
+				baselinePassed = false
+			}
+		}
+		if c.guest.Module == "arr" {
+			address, detail, err := waitForAirVPNPublicEgress(ctx, c.runner, c.guest)
+			add(c.guest.Name, "baseline", "public-exit-address", airVPNProbeURL, detail, err == nil && address != "")
+			if err != nil {
+				baselinePassed = false
+			}
+		}
 	}
-	if publicIP == "" {
-		return errors.New("ARR AirVPN public egress did not return an address")
+	if !baselinePassed {
+		return errors.New("AirVPN baseline HOME, resolver or permitted-service checks failed")
 	}
-
-	deniedOutput, deniedErr := runner.Run(ctx, arr.Address, model.DefaultAdminSSHUser, arrProxmoxDeniedProbeCommand)
-	add("airvpn/arr/proxmox-denied", model.ProxmoxManagementAddress+":22", strings.TrimSpace(string(deniedOutput)), deniedErr != nil)
-	if deniedErr == nil {
-		return errors.New("ARR unexpectedly reached the Proxmox management SSH port")
-	}
-
-	status, err := client.LXCStatus(ctx, node, airvpn.VMID)
-	if err != nil {
-		return fmt.Errorf("inspect AirVPN transit status: %w", err)
-	}
-	if status != "running" {
-		return fmt.Errorf("AirVPN transit LXC is %s, expected running before fail-closed probe", status)
+	status, err := client.LXCStatus(ctx, node, router.VMID)
+	if err != nil || status != "running" {
+		return errors.New("AirVPN router must be running before the bounded failure test")
 	}
 	stopped := false
 	defer func() {
 		if !stopped {
 			return
 		}
-		recoveryStarted := time.Now().UTC().Format(time.RFC3339)
-		recoveryCtx, cancelRecovery := context.WithTimeout(context.Background(), networkTestCleanupTimeout)
-		recoveryErr := client.StartLXC(recoveryCtx, node, airvpn.VMID)
-		if recoveryErr == nil {
-			recoveryErr = waitForLXCStatus(recoveryCtx, client, node, airvpn.VMID, "running")
+		recoveryCtx, cancel := context.WithTimeout(context.Background(), networkTestCleanupTimeout)
+		defer cancel()
+		err := client.StartLXC(recoveryCtx, node, router.VMID)
+		if err == nil {
+			err = waitForLXCStatus(recoveryCtx, client, node, router.VMID, "running")
 		}
-		cancelRecovery()
-		status := "PASS"
-		if recoveryErr != nil {
-			status = "FAIL"
-		}
-		report.Results = append(report.Results, networktest.Result{Name: "airvpn/arr/router-recovery", Kind: "airvpn", Source: arr.Name, Target: airvpn.Name, Status: status, Detail: compactError(recoveryErr), Started: recoveryStarted, Finished: time.Now().UTC().Format(time.RFC3339)})
-		if recoveryErr != nil {
-			if runErr == nil {
-				runErr = fmt.Errorf("restore AirVPN transit after probe: %w", recoveryErr)
-			} else {
-				runErr = fmt.Errorf("%w; restore AirVPN transit after probe: %v", runErr, recoveryErr)
-			}
+		add(router.Name, "cleanup", "restore-router", router.Name, compactError(err), err == nil)
+		if err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("router recovery failed: %w", err))
 		}
 	}()
-
-	if err := client.StopLXC(ctx, node, airvpn.VMID); err != nil {
-		return fmt.Errorf("stop exact AirVPN transit LXC: %w", err)
+	if err := client.StopLXC(ctx, node, router.VMID); err != nil {
+		return err
 	}
 	stopped = true
-	if err := waitForLXCStatus(ctx, client, node, airvpn.VMID, "stopped"); err != nil {
-		return fmt.Errorf("wait for AirVPN transit LXC to stop: %w", err)
+	if err := waitForLXCStatus(ctx, client, node, router.VMID, "stopped"); err != nil {
+		return err
 	}
-	downOutput, downErr := runner.Run(ctx, arr.Address, model.DefaultAdminSSHUser, arrAirVPNPublicProbeCommand)
-	add("airvpn/arr/tunnel-down-denied", airVPNProbeURL, strings.TrimSpace(string(downOutput)), downErr != nil)
-	if downErr == nil {
-		return errors.New("ARR retained public egress while the AirVPN transit LXC was stopped")
+	downPassed := true
+	for _, c := range clients {
+		for _, check := range c.checks {
+			check.Allowed = false
+			if !measure(c, "router-down", check) {
+				downPassed = false
+			}
+		}
 	}
-
-	if err := client.StartLXC(ctx, node, airvpn.VMID); err != nil {
-		return fmt.Errorf("restart exact AirVPN transit LXC: %w", err)
+	if err := client.StartLXC(ctx, node, router.VMID); err != nil {
+		return err
 	}
-	if err := waitForLXCStatus(ctx, client, node, airvpn.VMID, "running"); err != nil {
-		return fmt.Errorf("wait for AirVPN transit LXC to restart: %w", err)
+	if err := waitForLXCStatus(ctx, client, node, router.VMID, "running"); err != nil {
+		return err
 	}
 	stopped = false
-	recoveredIP, recoveredDetail, recoveredErr := probePublic()
-	add("airvpn/arr/router-recovery", airvpn.Name, recoveredDetail, recoveredErr == nil && recoveredIP != "")
-	if recoveredErr != nil {
-		return fmt.Errorf("ARR AirVPN egress after transit restart: %w", recoveredErr)
+	// Allow boot dependencies to start, but never weaken the expected result.
+	for attempt := 0; attempt < airVPNProbeAttempts; attempt++ {
+		output, err := clients[0].runner.RunWithStdin(ctx, clients[0].guest.Address, model.DefaultAdminSSHUser, "/usr/bin/python3 -c "+shellQuote(networktest.AirVPNProbeProgram), strings.NewReader("{\"kind\":\"dns\",\"target\":\"10.10.5.20\",\"port\":53,\"query\":\"example.com\"}"))
+		var result probeResponse
+		if err == nil && json.Unmarshal(output, &result) == nil && result.Completed && result.OK {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(airVPNProbeInterval):
+		}
+	}
+	recoveredPassed := true
+	for _, c := range clients {
+		for _, check := range c.checks {
+			if !measure(c, "recovered", check) {
+				recoveredPassed = false
+			}
+		}
+	}
+	if !downPassed || !recoveredPassed {
+		return errors.New("AirVPN stopped-router isolation or post-restart service checks failed")
 	}
 	return nil
 }
-
 func waitForAirVPNPublicEgress(ctx context.Context, runner proxmox.SSHRunner, arr model.Component) (string, string, error) {
 	var lastDetail string
 	for attempt := 0; attempt < airVPNProbeAttempts; attempt++ {

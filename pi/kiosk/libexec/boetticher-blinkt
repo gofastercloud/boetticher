@@ -1,0 +1,109 @@
+#!/usr/bin/python3
+"""Eight fixed, low-brightness status LEDs; no network credentials or controls."""
+import datetime
+import http.client
+import json
+import math
+import signal
+import socket
+import time
+
+import lgpio
+
+SOCKET = '/run/boetticher-companion/control.sock'
+RUNNING = True
+
+
+class LocalConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(2)
+        self.sock.connect(SOCKET)
+
+
+def request(path, body=None):
+    connection = LocalConnection('companion', timeout=2)
+    try:
+        connection.request('GET' if body is None else 'POST', path, body)
+        response = connection.getresponse()
+        data = response.read(1048577)
+        if response.status not in (200, 204) or len(data) > 1048576:
+            raise ValueError('Invalid local status response')
+        return json.loads(data) if data else None
+    finally:
+        connection.close()
+
+
+def frame(snapshot, now):
+    items = snapshot.get('leds', snapshot.get('items', []))
+    try:
+        updated = datetime.datetime.fromisoformat(snapshot['updated_at'].replace('Z', '+00:00')).timestamp()
+        if len(items) != 8 or not 0 <= now - updated < 10:
+            items = []
+    except (KeyError, TypeError, ValueError):
+        items = []
+    colours = {'healthy': (0, 160, 35), 'warning': (210, 95, 0), 'failure': (220, 0, 0), 'disabled': (0, 0, 0)}
+    waiting = (0, 12, int(35 + 80 * (1 + math.sin(now * math.pi)) / 2))
+    return [colours.get(item.get('status'), waiting) for item in items] if items else [waiting] * 8
+
+
+def show(chip, colours, brightness):
+    def bit(value):
+        lgpio.gpio_write(chip, 23, int(bool(value)))
+        lgpio.gpio_write(chip, 24, 1)
+        lgpio.gpio_write(chip, 24, 0)
+    for _ in range(32):
+        bit(0)
+    for red, green, blue in colours:
+        for value in (224 | brightness, blue, green, red):
+            for index in range(7, -1, -1):
+                bit(value & (1 << index))
+    for _ in range(36):
+        bit(0)
+
+
+def stop(_signal, _frame):
+    global RUNNING
+    RUNNING = False
+
+
+def main():
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    chip = lgpio.gpiochip_open(0)
+    claimed = []
+    try:
+        for pin in (23, 24):
+            lgpio.gpio_claim_output(chip, pin, 0)
+            claimed.append(pin)
+        snapshot = {}
+        next_poll = 0
+        previous = None
+        while RUNNING:
+            if time.monotonic() >= next_poll:
+                try:
+                    snapshot = request('/api/status')
+                except (OSError, ValueError, http.client.HTTPException):
+                    snapshot = {}
+                next_poll = time.monotonic() + 1
+            brightness = 2 if snapshot.get('brightness', 'normal') == 'normal' else 1
+            current = (frame(snapshot, time.time()), brightness)
+            if current != previous:
+                show(chip, *current)
+                previous = current
+            if next_poll - time.monotonic() > 0.85:
+                try:
+                    request('/heartbeat', json.dumps({'action': 'blinkt'}))
+                except (OSError, ValueError, http.client.HTTPException):
+                    pass
+            time.sleep(0.1)
+    finally:
+        if len(claimed) == 2:
+            show(chip, [(0, 0, 0)] * 8, 1)
+        for pin in claimed:
+            lgpio.gpio_free(chip, pin)
+        lgpio.gpiochip_close(chip)
+
+
+if __name__ == '__main__':
+    main()

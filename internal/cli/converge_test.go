@@ -41,10 +41,14 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := deploymentModuleNames(resolved)
+	got := deploymentModuleNames(resolved, "")
 	want := []string{"dns", "monitoring"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("managed deployment order = %v, want %v", got, want)
+	}
+	scoped := deploymentModuleNames(resolved, "monitoring")
+	if strings.Join(scoped, ",") != "monitoring" {
+		t.Fatalf("scoped deployment order = %v, want monitoring", scoped)
 	}
 }
 
@@ -240,6 +244,12 @@ func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
 	if !strings.Contains(string(data), "runtimeVariables[\"client_ca_pem\"] = authority.RootCertPEM + authority.IssuingCertPEM") {
 		t.Fatal("endpoint mTLS trust projection does not include the complete platform CA chain")
 	}
+	if !strings.Contains(string(data), "runtimeVariables[\"client_crl_bundle_pem\"] = clientCRL + rootCRL") {
+		t.Fatal("Pulse nginx mTLS projection does not include the root CRL")
+	}
+	if !strings.Contains(string(data), "site.LoadRootCRL") || strings.Contains(string(data), "site.LoadAuthorityWithRootKey") {
+		t.Fatal("deploy does not use a persisted public root CRL without decrypting the root key")
+	}
 }
 
 func TestAIOpsCanaryUsesCompleteControllerCertificateChain(t *testing.T) {
@@ -383,6 +393,34 @@ func TestTemporaryRootCleanupFallsBackThroughIndependentHost(t *testing.T) {
 	}
 	if directCalls != 1 || hostFallbackCalls != 1 || hostCleanupCalls != 1 {
 		t.Fatalf("temporary root cleanup calls = direct:%d fallback:%d host:%d", directCalls, hostFallbackCalls, hostCleanupCalls)
+	}
+}
+
+func TestTemporaryRootCleanupIgnoresAbsentPlannedGuest(t *testing.T) {
+	operatorKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator"
+	guests := []proxmox.GuestPlan{{VMID: 140, Name: "lab-log-01", Kind: proxmox.KindLXC, Address: "10.10.10.40", Owner: "boetticher/module/logging"}}
+	direct := func(_ context.Context, _ proxmox.CommandRunner, _ string, _ string, _ string, host bool) error {
+		if host {
+			return nil
+		}
+		return errors.New("guest SSH unavailable")
+	}
+	hostFallback := func(_ context.Context, _ proxmox.CommandRunner, _ string, _ string, _ proxmox.GuestKind, _ int, _ string) error {
+		return errors.New("Configuration file 'nodes/lab-proxmox-01/lxc/140.conf' does not exist")
+	}
+	if err := revokeTemporaryRootAccessForGuestsWithFallback(context.Background(), model.Site{BootstrapAddress: "192.0.2.10"}, t.TempDir(), guests, operatorKey, true, direct, hostFallback); err != nil {
+		t.Fatalf("absent planned guest cleanup = %v", err)
+	}
+}
+
+func TestRetainedGuestInactivationIgnoresAbsentGuest(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "inactivate retained %s guest %s through Proxmox") || !strings.Contains(text, "configuration file") || !strings.Contains(text, "does not exist") {
+		t.Fatal("retained guest inactivation does not handle an exact absent Proxmox guest")
 	}
 }
 
@@ -601,6 +639,7 @@ func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
 		t.Fatal("temporary Apply identity is not retained for the bounded Apply lifecycle")
 	}
 	for _, required := range []string{
+		`proxmox.EnsureScopedCredentialACL(ctx, rootRunner, s.BootstrapAddress, "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", node)`,
 		"proxmoxPlan.OperatorPublicKey = durableOperatorPublicKey",
 		"RenderFirewallCloudInitWithKey(guest, durableOperatorPublicKey)",
 		"firewallGuest, deploymentPublicKey",
@@ -709,6 +748,7 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"readTokenRefreshed := false",
+		`pki.IssueClient(authority, "operator"`,
 		"pulse.NewReadClient(pulse.ClientConfig{",
 		"CAPEM:",
 		"pulseRead.StateSummary(ctx)",
@@ -720,6 +760,9 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Pulse read-token recovery is missing %q", required)
 		}
+	}
+	if !strings.Contains(text, "ClientCertPEM: pulseOperatorCertificate.ChainPEM") || !strings.Contains(text, "ClientKeyPEM: pulseOperatorCertificate.KeyPEM") {
+		t.Fatal("Pulse admin client does not use the operator mTLS certificate")
 	}
 	if strings.Contains(text, "pulseAdmin.ValidateReadToken(ctx, readToken)") {
 		t.Fatal("AIOps Pulse token validation must use the dedicated read client")
@@ -757,7 +800,7 @@ func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := deploymentModuleNames(resolved)
+	got := deploymentModuleNames(resolved, "")
 	want := []string{"dns", "monitoring"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("external deployment order = %v, want %v", got, want)
@@ -948,5 +991,40 @@ func TestPlanDigestFromOutputRequiresCanonicalSHA256Digest(t *testing.T) {
 		if _, err := planDigestFromOutput(output); err == nil {
 			t.Fatalf("plan digest parser accepted invalid output %q", output)
 		}
+	}
+}
+
+func TestScopedModuleDeployDoesNotCallGlobalMutationBoundaries(t *testing.T) {
+	data, err := os.ReadFile("converge.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "func runScopedModuleDeploy(")
+	end := strings.Index(text[start:], "\nfunc waitForDeploymentRoot(")
+	if start < 0 || end < 0 {
+		t.Fatal("scoped deployment implementation is missing")
+	}
+	scoped := text[start : start+end]
+	for _, forbidden := range []string{
+		"ConfigureBastionPolicy", "ConfigureIdentities", "EnsureLVMThinStorageWithMutation",
+		"EnsureDirectoryStorageContentWithMutation", "EnsureFirewallVM", "ApplyBackupJobWithRunner",
+		"writeModelProjections", "ConfigureProxmox", "StorePlatformSecret", "PurgeModule",
+	} {
+		if strings.Contains(scoped, forbidden) {
+			t.Fatalf("scoped deployment still reaches global mutation %s", forbidden)
+		}
+	}
+	for _, required := range []string{"ProvisionModule", "installModuleRuntimeConfigs", "runTrackedAnsible", "SaveOperationState", "ClearOperationState"} {
+		if !strings.Contains(scoped, required) {
+			t.Fatalf("scoped deployment omitted required target lifecycle action %s", required)
+		}
+	}
+	if !strings.Contains(scoped, "plan.OperatorPublicKey = durableOperatorPublicKey") || strings.Contains(scoped, "plan.OperatorPublicKey = publicKey") {
+		t.Fatal("scoped deployment can install its temporary key as durable labadmin access")
+	}
+	entry := strings.Index(text, "if *onlyModule != \"\" {")
+	if entry < 0 || !strings.Contains(text[entry:start], "recoverInterruptedDeployment") {
+		t.Fatal("scoped deployment can overwrite an interrupted deployment journal before recovery")
 	}
 }

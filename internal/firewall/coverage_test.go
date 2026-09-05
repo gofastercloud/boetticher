@@ -47,7 +47,7 @@ func TestValidateNetworkIntentCoverageMatchesManagedGeneratedPolicy(t *testing.T
 func TestTailnetCoverageIgnoresDisabledOptionalDestinations(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("tailnet-only", "age1tailnetonly", model.GatewayModeManaged))
 	enabled := true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &enabled}
 	site, _, err := modules.Compose(config)
 	if err != nil {
 		t.Fatal(err)

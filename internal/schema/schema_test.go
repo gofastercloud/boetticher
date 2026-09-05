@@ -75,7 +75,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if loggingRef.Ref != "#/$defs/ToggleModuleConfig" {
 		t.Fatalf("logging module schema ref = %q", loggingRef.Ref)
 	}
-	for _, name := range []string{"monitoring", "firewall", "tailnet-router"} {
+	for _, name := range []string{"monitoring", "firewall"} {
 		var ref struct {
 			Ref string `json:"$ref"`
 		}
@@ -85,6 +85,15 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 		if ref.Ref != "#/$defs/ToggleModuleConfig" {
 			t.Fatalf("%s module schema ref = %q", name, ref.Ref)
 		}
+	}
+	var tailnetRef struct {
+		Ref string `json:"$ref"`
+	}
+	if err := json.Unmarshal(modules.Properties["tailnet-router"], &tailnetRef); err != nil {
+		t.Fatal(err)
+	}
+	if tailnetRef.Ref != "#/$defs/TailnetRouterConfig" {
+		t.Fatalf("tailnet-router module schema ref = %q", tailnetRef.Ref)
 	}
 	for _, name := range []string{"printer", "gatus"} {
 		var ref struct {

@@ -61,7 +61,7 @@ type ModulesConfig struct {
 	Monitoring    *ToggleModuleConfig        `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
 	Firewall      *ToggleModuleConfig        `yaml:"firewall,omitempty" json:"firewall,omitempty"`
 	Logging       *ToggleModuleConfig        `yaml:"logging,omitempty" json:"logging,omitempty"`
-	TailnetRouter *ToggleModuleConfig        `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
+	TailnetRouter *TailnetRouterConfig       `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	Bifrost       *BifrostModuleConfig       `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
 	Printer       *NetworkToggleModuleConfig `yaml:"printer,omitempty" json:"printer,omitempty"`
 	AIOps         *AIOpsModuleConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
@@ -74,11 +74,13 @@ type ModulesConfig struct {
 // capability types are intentionally added here rather than through a generic
 // daemon or plugin mechanism.
 type CompanionConfig struct {
-	Enabled     *bool                      `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	EthernetMAC string                     `yaml:"ethernet_mac,omitempty" json:"ethernet_mac,omitempty" jsonschema_description:"Physical Ethernet MAC used for the fixed SERVERS reservation."`
-	Display     *CompanionCapabilityConfig `yaml:"display,omitempty" json:"display,omitempty"`
-	StreamDeck  *CompanionCapabilityConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
-	PulseAgent  *CompanionCapabilityConfig `yaml:"pulse_agent,omitempty" json:"pulse_agent,omitempty"`
+	Enabled          *bool                      `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	EthernetMAC      string                     `yaml:"ethernet_mac,omitempty" json:"ethernet_mac,omitempty" jsonschema_description:"Physical Ethernet MAC used for the fixed SERVERS reservation."`
+	Display          *CompanionCapabilityConfig `yaml:"display,omitempty" json:"display,omitempty"`
+	StreamDeck       *CompanionCapabilityConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
+	PulseAgent       *CompanionCapabilityConfig `yaml:"pulse_agent,omitempty" json:"pulse_agent,omitempty"`
+	Blinkt           *CompanionCapabilityConfig `yaml:"blinkt,omitempty" json:"blinkt,omitempty"`
+	StreamDeckSerial string                     `yaml:"streamdeck_serial,omitempty" json:"streamdeck_serial,omitempty"`
 }
 
 type CompanionCapabilityConfig struct {
@@ -90,6 +92,7 @@ type CompanionCapabilities struct {
 	Display    bool
 	StreamDeck bool
 	PulseAgent bool
+	Blinkt     bool
 }
 
 // Capabilities applies one simple rule: a disabled or omitted companion
@@ -105,6 +108,7 @@ func (c *CompanionConfig) Capabilities() CompanionCapabilities {
 		Display:    enabled && capabilityEnabled(c.Display),
 		StreamDeck: enabled && capabilityEnabled(c.StreamDeck),
 		PulseAgent: enabled && capabilityEnabled(c.PulseAgent),
+		Blinkt:     enabled && capabilityEnabled(c.Blinkt),
 	}
 }
 
@@ -177,6 +181,14 @@ type ToggleModuleConfig struct {
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 }
 
+// TailnetRouterConfig keeps the locally enforced allow-set separate from
+// external Tailnet grants. Empty remains deny-all until an operator records
+// the exact approved Tailnet client addresses.
+type TailnetRouterConfig struct {
+	Enabled        *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	TrustedClients []string `yaml:"trusted_clients,omitempty" json:"trusted_clients,omitempty"`
+}
+
 // NetworkToggleModuleConfig is the on/off setting for an optional module that
 // declares an external egress path.
 type NetworkToggleModuleConfig struct {
@@ -230,10 +242,27 @@ type AIOpsModuleConfig struct {
 // AirVPNModuleConfig controls the controller-side AirVPN profile generator.
 // The API key lives at the controller-only secret path, never in site.yml.
 type AirVPNModuleConfig struct {
+	// QBittorrentPort is the AirVPN-reserved TCP/UDP peer port; zero disables forwarding.
+	QBittorrentPort int `yaml:"qbittorrent_port,omitempty" json:"qbittorrent_port,omitempty"`
 	// Enabled turns the optional AirVPN transit guest on or off.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Servers is the AirVPN server selector, such as europe.
 	Servers string `yaml:"servers" json:"servers"`
+}
+
+// ValidQBittorrentPort excludes local application listeners from provider reservations.
+func ValidQBittorrentPort(port int) bool {
+	if port == 0 {
+		return true
+	}
+	if port < 2049 || port > 65535 {
+		return false
+	}
+	switch port {
+	case 7878, 8080, 8686, 8989, 9696:
+		return false
+	}
+	return true
 }
 
 // Map returns the normalised internal lookup map. It is not written back as
@@ -268,7 +297,7 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 		result["gatus"] = ModuleConfig{Enabled: cloneBool(m.Gatus.Enabled), Network: m.Gatus.Network}
 	}
 	if m.AirVPN != nil {
-		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers}
+		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers, QBittorrentPort: m.AirVPN.QBittorrentPort}
 	}
 	if m.Arr != nil {
 		network := m.Arr.Network
@@ -295,7 +324,7 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 		result.Logging = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	if config, ok := input["tailnet-router"]; ok {
-		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.TailnetRouter = &TailnetRouterConfig{Enabled: cloneBool(config.Enabled), TrustedClients: append([]string(nil), config.TailnetTrustedClients...)}
 	}
 	if config, ok := input["bifrost"]; ok {
 		result.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
@@ -310,7 +339,7 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 		result.Gatus = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["airvpn"]; ok {
-		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers}
+		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers, QBittorrentPort: config.QBittorrentPort}
 	}
 	if config, ok := input["arr"]; ok {
 		result.Arr = &ArrModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
@@ -341,7 +370,7 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		if config.Network != "" {
 			return errors.New("modules.tailnet-router.network: module is not network-capable")
 		}
-		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		m.TailnetRouter = &TailnetRouterConfig{Enabled: cloneBool(config.Enabled), TrustedClients: append([]string(nil), config.TailnetTrustedClients...)}
 	case "bifrost":
 		upstreams := config.Upstreams
 		models := config.Models
@@ -362,10 +391,14 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		m.Gatus = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "airvpn":
 		servers := config.Servers
+		port := config.QBittorrentPort
 		if servers == "" && m.AirVPN != nil {
 			servers = m.AirVPN.Servers
+			if port == 0 {
+				port = m.AirVPN.QBittorrentPort
+			}
 		}
-		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers}
+		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers, QBittorrentPort: port}
 	case "arr":
 		network := config.Network
 		if network == "" && m.Arr != nil {
@@ -385,7 +418,7 @@ func cloneCompanionConfig(value *CompanionConfig) *CompanionConfig {
 	if value == nil {
 		return nil
 	}
-	result := &CompanionConfig{Enabled: cloneBool(value.Enabled), EthernetMAC: value.EthernetMAC}
+	result := &CompanionConfig{Enabled: cloneBool(value.Enabled), EthernetMAC: value.EthernetMAC, StreamDeckSerial: value.StreamDeckSerial}
 	if value.Display != nil {
 		result.Display = &CompanionCapabilityConfig{Enabled: cloneBool(value.Display.Enabled)}
 	}
@@ -394,6 +427,9 @@ func cloneCompanionConfig(value *CompanionConfig) *CompanionConfig {
 	}
 	if value.PulseAgent != nil {
 		result.PulseAgent = &CompanionCapabilityConfig{Enabled: cloneBool(value.PulseAgent.Enabled)}
+	}
+	if value.Blinkt != nil {
+		result.Blinkt = &CompanionCapabilityConfig{Enabled: cloneBool(value.Blinkt.Enabled)}
 	}
 	return result
 }
@@ -606,6 +642,7 @@ func (c SiteConfig) BaseSite() Site {
 	if c.SecretMetadata.AgeRecipient != "" {
 		s.SecretMetadata.AgeRecipient = c.SecretMetadata.AgeRecipient
 	}
+	s.SecretMetadata.RootAgeRecipient = c.SecretMetadata.RootAgeRecipient
 	if c.Ownership.PlatformGuestIDMin != 0 {
 		s.Ownership.PlatformGuestIDMin = c.Ownership.PlatformGuestIDMin
 	}
@@ -647,7 +684,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, ModelAlias: config.ModelAlias, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, QBittorrentPort: config.QBittorrentPort, TailnetTrustedClients: append([]string(nil), config.TailnetTrustedClients...), ModelAlias: config.ModelAlias, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
 	}
 	return output
 }

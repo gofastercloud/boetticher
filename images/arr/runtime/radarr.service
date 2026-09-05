@@ -8,6 +8,7 @@ Type=simple
 User=radarr
 Group=arr
 ExecStart=/opt/radarr/Radarr -nobrowser -data=/var/lib/arr/radarr
+UMask=0007
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true

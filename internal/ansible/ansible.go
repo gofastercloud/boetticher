@@ -38,19 +38,12 @@ var (
 )
 
 // The appliance inventory is small, but the network and services passes touch
-// several independent guests. Eight forks removes avoidable host batching
-// without creating unbounded load on a homelab controller or gateway. An
+// several independent guests. One fork keeps concurrent SSH handshakes bounded
+// while the temporary deployment key deliberately disables multiplexing. An
 // explicit operator setting remains authoritative.
-const defaultAnsibleForks = "8"
+const defaultAnsibleForks = "1"
 
-const (
-	// The converge orchestrator establishes the network foundation before its
-	// all-host bootstrap pass, and the services pass follows it. Both passes
-	// can progress independent guests without waiting at every task barrier.
-	// Full and health remain linear to preserve ordered limited gates.
-	defaultAnsibleStrategy  = "linear"
-	parallelAnsibleStrategy = "free"
-)
+const defaultAnsibleStrategy = "linear"
 
 const (
 	PhaseFull      = "full"
@@ -415,7 +408,13 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 		GatusConfig                    string                                           `json:"gatus_config"`
 		USBExportManifests             []usbexport.GuestManifest                        `json:"usb_export_manifests"`
 		NetworkProbeOperatorPublicKey  string                                           `json:"network_probe_operator_public_key,omitempty"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride, loggingUploads, s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
+		ApplianceResolvers             map[string][]string                              `json:"appliance_resolvers"`
+		AirVPNSelectedGuests           []string                                         `json:"airvpn_selected_guests"`
+		FirewallNonPublicIPv4          []string                                         `json:"firewall_non_public_ipv4"`
+		TrustedLabServices             []model.TrustedLabService                        `json:"trusted_lab_services"`
+		TailnetTrustedClients          []string                                         `json:"tailnet_trusted_clients"`
+		HostIsolation                  firewall.HostIsolation                           `json:"host_isolation"`
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride, loggingUploads, s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey, model.ApplianceResolverMap(s), model.AirVPNSelectedNames(s), firewall.NonPublicIPv4, model.TrustedLabServices(), s.ModuleConfig["tailnet-router"].TailnetTrustedClients, firewall.HostIsolationForSite(s)}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
@@ -695,16 +694,15 @@ func ansibleEnvironment(playbook, timingPath, phase string) []string {
 		environment = append(environment, entry)
 	}
 	environment = setEnvironmentValue(environment, "PATH", safeControllerPath)
-	environment = setEnvironmentValue(environment, "ANSIBLE_CONFIG", "/dev/null")
+	// Ansible 2.21 rejects configuration paths without a supported extension;
+	// this nonexistent .cfg path still disables discovery of ambient config.
+	environment = setEnvironmentValue(environment, "ANSIBLE_CONFIG", "/dev/null.cfg")
 	environment = setEnvironmentValue(environment, "ANSIBLE_FORKS", defaultAnsibleForks)
 	environment = setEnvironmentValue(environment, "PYTHONNOUSERSITE", "1")
+	// Keep the strategy deterministic and linear for every deploy phase. The
+	// bastion-routed targets deliberately avoid SSH multiplexing, so allowing
+	// free cross-host progression can saturate the small transport boundary.
 	strategy := defaultAnsibleStrategy
-	if phase == PhaseBootstrap || phase == PhaseServices {
-		strategy = parallelAnsibleStrategy
-	}
-	// Keep the strategy deterministic for every deploy phase. In particular,
-	// an ambient ANSIBLE_STRATEGY=free must not weaken ordering in the network
-	// foundation or health phases.
 	environment = setEnvironmentValue(environment, "ANSIBLE_STRATEGY", strategy)
 	environment = setEnvironmentValue(environment, "ANSIBLE_HOST_KEY_CHECKING", "True")
 	environment = setEnvironmentValue(environment, "ANSIBLE_SSH_PIPELINING", "True")

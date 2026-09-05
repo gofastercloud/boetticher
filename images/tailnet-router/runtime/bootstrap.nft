@@ -1,0 +1,4 @@
+destroy table inet boetticher_tailnet
+table inet boetticher_tailnet {
+  chain forward { type filter hook forward priority -10; policy drop; }
+}

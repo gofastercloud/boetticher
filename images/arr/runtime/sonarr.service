@@ -8,6 +8,7 @@ Type=simple
 User=sonarr
 Group=arr
 ExecStart=/opt/sonarr/Sonarr -nobrowser -data=/var/lib/arr/sonarr
+UMask=0007
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true

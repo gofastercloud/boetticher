@@ -15,7 +15,7 @@
     # baseline; do not make routine convergence depend on that repository's
     # authenticated index.
     update_cache: "{{ inventory_hostname not in groups.get('proxmox', []) }}"
-    cache_valid_time: 3600
+    cache_valid_time: "{{ 0 if inventory_hostname in groups.get('proxmox', []) else 3600 }}"
   when:
     - inventory_hostname in groups.get('proxmox', [])
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
@@ -111,7 +111,7 @@
 
 - name: Configure appliances to use the platform DNS pair
   ansible.builtin.copy:
-    content: "{% for nameserver in dns_plan.nameservers %}nameserver {{ nameserver }}\n{% endfor %}"
+    content: "{% for nameserver in appliance_resolvers.get(inventory_hostname, dns_plan.nameservers) %}nameserver {{ nameserver }}\n{% endfor %}"
     dest: /etc/resolv.conf
     owner: root
     group: root
@@ -131,6 +131,14 @@
     - inventory_hostname == 'lab-monitor-01'
     - proxmox_management_address is defined
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+
+- name: Pin the Core CA on the gateway without primary recursive DNS
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^.*\slab-dns-01\.{{ domain | regex_escape }}\s*# boetticher-core-ca$'
+    line: '10.10.10.10 lab-dns-01.{{ domain }} # boetticher-core-ca'
+    create: true
+  when: inventory_hostname in groups.get('firewall', [])
 
 - name: Pin the Proxmox collector hostname to the managed logging appliance
   ansible.builtin.lineinfile:
@@ -306,7 +314,7 @@
       - smartmontools
     state: present
     update_cache: "{{ inventory_hostname not in groups.get('proxmox', []) }}"
-    cache_valid_time: 3600
+    cache_valid_time: "{{ 0 if inventory_hostname in groups.get('proxmox', []) else 3600 }}"
   when:
     - pulse_agent_install_enabled | default(false) | bool
     - inventory_hostname in (pulse_agent_targets | default([]))

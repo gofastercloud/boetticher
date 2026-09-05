@@ -28,6 +28,36 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 }
 
+func TestGatusRoleInstallsBoetticherRootTrustForEndpointChecks(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "gatus", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"dest: /usr/local/share/ca-certificates/boetticher-gatus.crt",
+		"content: \"{{ step_ca_root_cert_pem }}\"",
+		"ansible.builtin.command: update-ca-certificates",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Gatus role is missing endpoint trust setup %q", required)
+		}
+	}
+}
+
+func TestAirVPNRoleCreatesRuntimeDirectoryBeforeSystemdStart(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "airvpn", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	directory := strings.Index(text, "path: /run/boetticher\n")
+	start := strings.Index(text, "name: Enable and start the AirVPN transit service")
+	if directory < 0 || start < 0 || directory > start {
+		t.Fatal("AirVPN role does not create /run/boetticher before systemd namespacing")
+	}
+}
+
 func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "gatus", "tasks", "main.yml"))
 	if err != nil {
@@ -35,6 +65,7 @@ func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
 	}
 	text := string(contents)
 	for _, required := range []string{
+		"path: /var/lib/boetticher/identity/tls, state: directory",
 		"include_tasks: ../../tasks/step-ca-endpoint.yml",
 		"step_ca_endpoint_subject: \"gatus.{{ domain }}\"",
 		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/gatus.key.pem",
@@ -97,17 +128,20 @@ func TestArrRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T)
 	}
 }
 
-func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.T) {
+func TestARRRoleUsesBoundedGuestLocalConfiguration(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	block := ansibleTaskBlock(string(contents), "Bind Sonarr and Radarr to loopback with no native login")
-	if block == "" {
-		t.Fatal("ARR role is missing its initial Sonarr/Radarr configuration task")
+	for _, required := range []string{"boetticher-arr-configure, check", "boetticher-arr-configure, prepare", "boetticher-arr-configure, wire", "state: stopped", "readarr.service", "loop: [sonarr, radarr, lidarr, prowlarr, qbittorrent]"} {
+		if !strings.Contains(string(contents), required) {
+			t.Fatalf("ARR lifecycle missing %q", required)
+		}
 	}
-	if !strings.Contains(block, "force: false") {
-		t.Fatal("ARR role overwrites application-managed configuration on every deploy")
+	for _, forbidden := range []string{"<ApiKey>", "ansible.builtin.slurp:", "ansible.builtin.fetch:", "apt:"} {
+		if strings.Contains(string(contents), forbidden) {
+			t.Fatalf("ARR role crosses guest-local artifact boundary: %q", forbidden)
+		}
 	}
 }
 
@@ -119,7 +153,7 @@ func TestCompanionStreamDeckUsesDirectUSBAndScopedRuntimeFiles(t *testing.T) {
 	if !strings.Contains(string(playbook), "    - kiosk") {
 		t.Fatal("companion playbook does not use the companion role")
 	}
-	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "main.yml"))
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "streamdeck.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,10 +167,8 @@ func TestCompanionStreamDeckUsesDirectUSBAndScopedRuntimeFiles(t *testing.T) {
 		"dest: /usr/local/libexec/boetticher-streamdeck",
 		"dest: /etc/boetticher/streamdeck.json",
 		"ATTR{idVendor}==\"0fd9\", ATTR{idProduct}==\"006d\"",
-		"LoadCredentialEncrypted=pulse-token:/var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred",
-		"companion-streamdeck-pulse-token.sha256",
-		"companion_streamdeck_credential_needs_update",
-		"/run/boetticher-companion/pulse-token.cred",
+		"SupplementaryGroups=companion",
+		"RestrictAddressFamilies=AF_UNIX",
 		"DevicePolicy=closed",
 		"DeviceAllow=char-usb_device rw",
 	} {
@@ -147,6 +179,12 @@ func TestCompanionStreamDeckUsesDirectUSBAndScopedRuntimeFiles(t *testing.T) {
 	if strings.Contains(text, "/dev/bus/usb/*/*") || strings.Contains(text, "ansible_user_id: root") {
 		t.Fatal("companion StreamDeck role contains broad USB or root-service handling")
 	}
+	// The approved local-dashboard design moves credential ownership to the
+	// status collector. TestCompanionNewCredentialBoundary verifies its
+	// encrypted delivery and drift guard; the USB process must have no token.
+	if strings.Contains(string(service), "LoadCredential") || strings.Contains(string(service), "pulse-token") {
+		t.Fatal("StreamDeck must consume local status without Pulse credentials")
+	}
 }
 
 func TestCompanionCapabilityPackagesAndCleanupAreIndependent(t *testing.T) {
@@ -155,24 +193,26 @@ func TestCompanionCapabilityPackagesAndCleanupAreIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(contents)
-	displayPackages := ansibleTaskBlock(text, "Install display-only companion packages")
-	if displayPackages == "" || !strings.Contains(displayPackages, "when: kiosk_display_enabled | default(true) | bool") {
+	displayPackages := ansibleTaskBlock(text, "Configure the Cage display")
+	if displayPackages == "" || !strings.Contains(displayPackages, "when: kiosk_display_enabled | bool") {
 		t.Fatal("display-only companion packages are not capability-gated")
 	}
-	if !strings.Contains(displayPackages, "- chromium") || !strings.Contains(displayPackages, "- libnss3-tools") {
+	packages := companionSource(t, "tasks/display.yml")
+	if !strings.Contains(packages, "cage, chromium, seatd") {
 		t.Fatal("display-only companion package set is incomplete")
 	}
-	if !strings.Contains(text, "Inspect optional companion capability unit files") || !strings.Contains(text, "companion_capability_units.results") {
+	disabled := companionSource(t, "tasks/disabled.yml")
+	if !strings.Contains(disabled, "companion_optional_unit.stat.exists") || !strings.Contains(disabled, "not (capability.enabled | bool)") {
 		t.Fatal("disabled companion cleanup can attempt to stop units that were never installed")
 	}
 	for _, expected := range []string{
-		"Remove disabled Pulse agent material",
-		"/var/lib/boetticher/credentials/pulse-agent-token.cred",
-		"Remove disabled display capability material",
+		"Configure the Pulse host agent",
+		"Configure the StreamDeck",
+		"Configure Blinkt",
+		"Remove superseded browser identity and telemetry assets after acceptance",
 		"/home/kiosk/.pki/nssdb",
-		"Remove disabled StreamDeck capability material",
 		"/var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred",
-		"Reload systemd after removing disabled companion units",
+		"ansible.builtin.meta: flush_handlers",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("disabled companion cleanup is missing %q", expected)
@@ -221,6 +261,19 @@ func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("site playbook is missing service-phase guard block %q", expected)
 		}
+	}
+}
+
+func TestFirewallRoleRunsBeforeBaseOnManagedPlay(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	firewallIndex := strings.Index(text, "- role: firewall")
+	baseIndex := strings.Index(text, "    - base")
+	if firewallIndex < 0 || baseIndex < 0 || firewallIndex > baseIndex {
+		t.Fatal("firewall role must run before base so a replacement gateway enables forwarding before delegated certificate work")
 	}
 }
 
@@ -417,9 +470,9 @@ func TestAnsibleVariablesPinPulseHostAgentAndExposeNoSecret(t *testing.T) {
 	for _, expected := range []string{
 		`"proxmox_management_address": "10.10.99.5"`,
 		"\"pulse_agent_targets\": [\n    \"lab-proxmox-01\"",
-		`"pulse_agent_version": "6.1.2"`,
-		`"pulse_agent_release_url": "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64"`,
-		`"pulse_agent_release_sha256": "1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75"`,
+		`"pulse_agent_version": "6.4.1"`,
+		`"pulse_agent_release_url": "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-agent-linux-amd64"`,
+		`"pulse_agent_release_sha256": "974708439f052136cac2a334ad790bf9da12b3f1c8e758ebe7bc0a8d2a505ce9"`,
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("Ansible variables missing Pulse host-agent contract %q", expected)
@@ -578,8 +631,8 @@ func TestAnsibleStrategyAllowsParallelConvergenceOnlyAfterFoundation(t *testing.
 		want  string
 	}{
 		{phase: PhaseFull, want: defaultAnsibleStrategy},
-		{phase: PhaseBootstrap, want: parallelAnsibleStrategy},
-		{phase: PhaseServices, want: parallelAnsibleStrategy},
+		{phase: PhaseBootstrap, want: defaultAnsibleStrategy},
+		{phase: PhaseServices, want: defaultAnsibleStrategy},
 		{phase: PhaseHealth, want: defaultAnsibleStrategy},
 	} {
 		environment := ansibleEnvironment("ansible/site.yml", "", test.phase)
@@ -615,7 +668,7 @@ func TestAnsibleEnvironmentClearsAmbientConfiguration(t *testing.T) {
 			values[key] = value
 		}
 	}
-	if values["ANSIBLE_CONFIG"] != "/dev/null" || values["ANSIBLE_FORKS"] != defaultAnsibleForks || values["PYTHONNOUSERSITE"] != "1" || values["PATH"] != safeControllerPath {
+	if values["ANSIBLE_CONFIG"] != "/dev/null.cfg" || values["ANSIBLE_FORKS"] != defaultAnsibleForks || values["PYTHONNOUSERSITE"] != "1" || values["PATH"] != safeControllerPath {
 		t.Fatalf("Ansible environment did not apply the bounded controller contract: %#v", values)
 	}
 	for _, key := range []string{"ANSIBLE_COLLECTIONS_PATH", "PYTHONPATH", "VIRTUAL_ENV"} {
@@ -1159,6 +1212,10 @@ func TestProxmoxBaseConvergenceDoesNotRequireEnterpriseRepositoryRefresh(t *test
 	if strings.Count(text, want) < 2 {
 		t.Fatalf("Proxmox base apt tasks do not avoid unauthenticated enterprise refreshes: %s", text)
 	}
+	cache := `cache_valid_time: "{{ 0 if inventory_hostname in groups.get('proxmox', []) else 3600 }}"`
+	if strings.Count(text, cache) < 2 {
+		t.Fatalf("Proxmox base apt tasks still force cache refreshes through cache_valid_time: %s", text)
+	}
 }
 
 func TestPulseAgentPinsTheMonitoringHostnameForTaggedTargets(t *testing.T) {
@@ -1435,6 +1492,9 @@ func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(tasks) + string(template)
+	if !strings.Contains(string(tasks), "content: \"{{ client_crl_bundle_pem }}\"") {
+		t.Fatal("Pulse nginx mTLS trust does not use the complete client CRL bundle")
+	}
 	for _, expected := range []string{"step_ca_root_cert_pem", "step_ca_intermediate_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "ssl_verify_depth 3;", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("monitoring role missing TLS/frontend contract %q", expected)
@@ -1451,6 +1511,9 @@ func TestMonitoringRoleUsesEndpointOwnedSmallstepRenewal(t *testing.T) {
 		"step-ca-root.crt",
 		"step-ca-intermediate.crt",
 		"Create a one-time Pulse certificate token on the online CA",
+		"monitor_step_ca_token_raw",
+		"stdout_lines | last",
+		"monitor_step_ca_token_value is match",
 		"Issue the Pulse certificate from Smallstep with an endpoint-owned key",
 		"monitor.crt.pem.new",
 		"monitor.key.pem.new",
@@ -1522,10 +1585,13 @@ func TestFirewallPolicyRoutingCleanupIsIdempotentWhenTableIsAbsent(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, text := range map[string]string{"firewall cleanup task": string(tasksData), "AirVPN down helper": string(templateData)} {
+	for name, text := range map[string]string{"firewall cleanup task": string(tasksData)} {
 		if !strings.Contains(text, "route_status=0") || !strings.Contains(text, "FIB table does not exist") || !strings.Contains(text, "exit \"$route_status\"") {
 			t.Fatalf("%s does not preserve idempotent route-table cleanup", name)
 		}
+	}
+	if !strings.Contains(string(templateData), "unreachable default") || strings.Contains(string(templateData), "rule del") || strings.Contains(string(templateData), "route flush") {
+		t.Fatal("stopping AirVPN policy routing must retain fail-closed fallback")
 	}
 }
 
@@ -1901,7 +1967,7 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"--advertise-routes=10.10.0.0/16",
 				"--snat-subnet-routes=true",
 			},
-			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
+			forbidden: []string{"--advertise-exit-node=true", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
 		},
 		{
 			role: "logging",
@@ -2052,8 +2118,8 @@ func TestSharedClientCAFrontendsRestrictClientIdentities(t *testing.T) {
 		required []string
 	}{
 		{role: "bifrost", required: []string{
-			`if ($ssl_client_s_dn !~ "^(?:CN=client-operator\\.{{ domain | regex_escape }}(?:,O=boetticher)?|CN=aiops-router-client(?:,O=boetticher)?)$") { return 403; }`,
-			`if ($ssl_client_s_dn ~ "CN=aiops-router-client(?:,|$)") { return 403; }`,
+			`if ($ssl_client_s_dn !~ "^(?:CN=client-operator\\.{{ domain | regex_escape }}(?:,O=boetticher)?|CN=client-aiops-router-client\\.{{ domain | regex_escape }}(?:,O=boetticher)?)$") { return 403; }`,
+			`if ($ssl_client_s_dn ~ "CN=client-aiops-router-client(?:\\.|,|$)") { return 403; }`,
 		}},
 		{role: "arr", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
 		{role: "printer", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
@@ -2107,93 +2173,37 @@ func TestLoggingUploadRetainsClientIdentityAndPulseWritesUseScopedTokens(t *test
 	}
 }
 
-func TestPiKioskUsesDedicatedPulseClientCertificate(t *testing.T) {
-	service, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "systemd", "pulse-kiosk.service"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dropIn, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "systemd", "pulse-kiosk.service.d", "20-pulse-dashboard.conf"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	serviceText := string(service)
-	dropInText := string(dropIn)
-	for _, required := range []string{
-		"User=kiosk",
-		"NoNewPrivileges=yes",
-		"ProtectSystem=strict",
-		"CapabilityBoundingSet=",
-		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
-		"https://monitor.lab.home.arpa",
-	} {
-		if !strings.Contains(serviceText, required) {
-			t.Fatalf("Pi kiosk service is missing %q", required)
-		}
-	}
-	for _, required := range []string{
-		"ExecStart=",
-		"--auto-select-certificate-for-urls=",
-		"ISSUER",
-		"boetticher Issuing CA",
-		"client-lab-display-01-kiosk.lab.home.arpa",
-		"https://monitor.lab.home.arpa",
-		"--disable-extensions-except=/home/kiosk/pulse-refresh-extension",
-		"--load-extension=/home/kiosk/pulse-refresh-extension",
-	} {
-		if !strings.Contains(dropInText, required) {
-			t.Fatalf("Pi kiosk Pulse drop-in is missing %q", required)
-		}
-	}
-	for _, text := range []string{serviceText, dropInText} {
-		for _, forbidden := range []string{"-----BEGIN", "private.key", "PKCS12", "X-API-Token"} {
-			if strings.Contains(text, forbidden) {
-				t.Fatalf("Pi kiosk source contains forbidden credential material %q", forbidden)
-			}
-		}
-	}
-	refreshManifest, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "pulse-refresh-extension", "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	refreshScript, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "pulse-refresh-extension", "reload.js"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifestText := string(refreshManifest)
-	scriptText := string(refreshScript)
-	for _, required := range []string{"manifest_version", "content_scripts", "https://monitor.lab.home.arpa/*", "reload.js"} {
-		if !strings.Contains(manifestText, required) {
-			t.Fatalf("Pi kiosk refresh extension is missing %q", required)
-		}
-	}
-	if !strings.Contains(scriptText, "30_000") || !strings.Contains(scriptText, "window.location.replace(window.location.href)") {
-		t.Fatal("Pi kiosk refresh extension does not reload after 30 seconds")
-	}
-	for _, forbidden := range []string{"<all_urls>", "permissions", "host_permissions", "X-API-Token", "-----BEGIN"} {
-		if strings.Contains(manifestText+scriptText, forbidden) {
-			t.Fatalf("Pi kiosk refresh extension contains forbidden capability or credential material %q", forbidden)
-		}
-	}
+func TestPiKioskUsesLocalCredentialFreeDashboard(t *testing.T) {
+	TestCompanionKioskIsCredentialFreeAndKeyboardFree(t)
+	TestCompanionCleanupFollowsFunctionalCheck(t)
 }
 
-func TestKioskRoleUpdatesCredentialsAndIdentityOnlyOnDrift(t *testing.T) {
-	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "main.yml"))
+func TestKioskRoleRequiresPrestreamedEncryptedCredentials(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "credential.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(contents)
 	for _, required := range []string{
-		"Calculate the desired Pulse agent credential revision",
-		"kiosk_pulse_agent_credential_needs_update",
-		"Record the applied Pulse agent credential revision",
-		"Read the kiosk client certificate serial from the NSS database",
-		"Remove an outdated kiosk client certificate from NSS",
-		"kiosk_nss_client_certificate_serial",
+		"separately streamed encrypted credential",
+		"installed_credential.stat.exists",
+		"installed_credential.stat.isreg",
+		"installed_credential.stat.pw_name == 'root'",
+		"installed_credential.stat.gr_name == 'root'",
+		"installed_credential.stat.mode == '0600'",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("kiosk role is missing idempotent update guard %q", required)
 		}
 	}
+	for _, forbidden := range []string{"credential_value", "systemd-creds", "ansible.builtin.tempfile", "ansible.builtin.copy"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("kiosk credential verification accepts plaintext transport %q", forbidden)
+		}
+	}
+	// Certificates are retired rather than reimported: the new kiosk has no
+	// remote credentials. Retain the migration check for old NSS material.
+	TestCompanionCleanupFollowsFunctionalCheck(t)
 }
 
 func TestAnsibleOutputChangedUsesRecapOnly(t *testing.T) {

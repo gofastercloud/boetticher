@@ -1,0 +1,16 @@
+interface=eth0
+interface=lo
+listen-address=127.0.0.1,10.10.5.20
+bind-interfaces
+no-dhcp-interface=eth0
+no-resolv
+no-hosts
+domain-needed
+bogus-priv
+stop-dns-rebind
+server=/{{ domain }}/10.10.10.10#5353
+server=/10.10.in-addr.arpa/10.10.10.10#5353
+rebind-domain-ok=/{{ domain }}/
+local=/local/
+local=/home.arpa/
+server=10.128.0.1@airvpn0

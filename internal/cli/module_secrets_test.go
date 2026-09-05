@@ -19,7 +19,7 @@ func TestModuleSecretMutationRejectsPlatformAndSharedNames(t *testing.T) {
 		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "root_key_pem_b64"}},
 		Models:    []model.BifrostModelConfig{{Alias: "qwen", Upstream: "openrouter", Model: "some/model"}},
 	}
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &tailnetEnabled}
 	if err := validateModuleSecretMutation(config, "bifrost", "root_key_pem_b64"); err == nil || !strings.Contains(err.Error(), "platform-owned") {
 		t.Fatalf("platform-owned module secret was accepted: %v", err)
 	}

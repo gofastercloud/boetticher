@@ -716,11 +716,11 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
-		"version: 6.1.2",
-		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz",
-		"release_sha256: 844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea",
-		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64",
-		"release_sha256: 1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75",
+		"version: 6.4.1",
+		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-v6.4.1-linux-amd64.tar.gz",
+		"release_sha256: 543e967718c6e71763b7a76d9c3c9c992157206810959750b4aa0aa0631bf1e0",
+		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-agent-linux-amd64",
+		"release_sha256: 974708439f052136cac2a334ad790bf9da12b3f1c8e758ebe7bc0a8d2a505ce9",
 	} {
 		if !strings.Contains(string(monitoring), required) {
 			t.Fatalf("monitoring image definition is missing Pulse qualification input %q", required)
@@ -1175,6 +1175,9 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	for _, required := range []string{
 		"--upload images/firewall/build/process-supervisor.sh:/tmp/boetticher-firewall-process-supervisor",
 		"--upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages",
+		"step_cli_archive=\"$cache_root/downloads/step_linux_${step_cli_version}_amd64.tar.gz\"",
+		"--upload \"$step_cli_archive:/tmp/boetticher-step-cli.tar.gz\"",
+		"tar -xOf /tmp/boetticher-step-cli.tar.gz step_${step_cli_version}/bin/step > /usr/local/bin/step",
 		"--run-command \"sh /tmp/boetticher-firewall-install-packages $firewall_package_names\"",
 		"--delete /tmp/boetticher-firewall-process-supervisor",
 		"--delete /tmp/boetticher-firewall-install-packages",
@@ -1605,7 +1608,7 @@ func TestEmbeddedCompanionSourceArchiveContainsOnlyProvisioningAssets(t *testing
 		"ansible/companion.yml",
 		"ansible/roles/kiosk/tasks/main.yml",
 		"ansible/roles/kiosk/templates/boetticher-streamdeck.service.j2",
-		"pi/kiosk/visualizer/index.html",
+		"pi/kiosk/libexec/boetticher-blinkt",
 	} {
 		if !entries[required] {
 			t.Fatalf("embedded companion archive omitted %s", required)
@@ -1641,6 +1644,7 @@ func TestEmbeddedAnsibleSourceArchiveContainsDeploymentRolesOnly(t *testing.T) {
 	}
 	for _, required := range []string{
 		"ansible/site.yml",
+		"ansible/tasks/step-ca-endpoint.yml",
 		"ansible/roles/base/tasks/main.yml",
 		"ansible/roles/monitor/templates/pulse-loopback.conf.j2",
 		"ansible/roles/kiosk/templates/boetticher-streamdeck.service.j2",

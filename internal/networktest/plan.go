@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	ArtifactName = "boetticher-network-probe"
-	VMIDMin      = 910
-	VMIDMax      = 919
-	HarnessTag   = "boetticher-network-probe"
+	ArtifactName    = "boetticher-network-probe"
+	VMIDMin         = 910
+	VMIDMax         = 919
+	SandboxPeerVMID = 916
+	HarnessTag      = "boetticher-network-probe"
 )
 
 var ZoneOrder = []string{"TRANSIT", "INFRA", "SERVERS", "TRUSTED", "SANDBOX", "MGMT"}
@@ -150,6 +151,17 @@ func Plans(s model.Site, zones []model.Zone, runID string) ([]Probe, error) {
 			return nil, fmt.Errorf("no collision-free static address remains for %s", zone.Name)
 		}
 		result = append(result, probe)
+	}
+	for _, probe := range result {
+		if probe.Zone == "SANDBOX" {
+			peer := probe
+			peer.VMID = SandboxPeerVMID
+			peer.Name += "-peer"
+			peer.Hostname += "-peer"
+			peer.MAC = MAC(s.SecretMetadata.InstallationID, "SANDBOX-peer")
+			result = append(result, peer)
+			break
+		}
 	}
 	return result, nil
 }

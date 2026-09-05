@@ -519,7 +519,12 @@ func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlia
 	aliases = uniqueStrings(append(append([]string{}, aliases...), hostName))
 	fmt.Fprintf(b, "Host %s\n", strings.Join(aliases, " "))
 	fmt.Fprintf(b, "    HostName %s\n", hostName)
-	b.WriteString("    ConnectTimeout 10\n    ControlMaster auto\n    ControlPersist 60\n    ControlPath ~/.ssh/boetticher-control-%C\n")
+	b.WriteString("    ConnectTimeout 10\n")
+	if bastion || throughBastion {
+		b.WriteString("    ControlMaster no\n    ControlPath none\n")
+	} else {
+		b.WriteString("    ControlMaster auto\n    ControlPersist 60\n    ControlPath ~/.ssh/boetticher-control-%C\n")
+	}
 	if user != "" {
 		fmt.Fprintf(b, "    User %s\n", user)
 	}

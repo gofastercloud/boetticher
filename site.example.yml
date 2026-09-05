@@ -12,7 +12,7 @@ physical_network:
   mode: virtual-only
 tested_versions:
   gateway: debian-13-genericcloud-amd64-20260327-2429
-  pulse: "6.1.2"
+  pulse: "6.4.1"
 network:
   domain: lab.home.arpa
   zones:
@@ -67,6 +67,7 @@ network:
 secret_metadata:
   installation_id: generated-by-boetticher-init
   age_recipient: generated-by-boetticher-init
+  root_age_recipient: generated-by-boetticher-init-root
 ownership:
   platform_guest_id_min: 100
   platform_guest_id_max: 199

@@ -28,6 +28,9 @@
         "enabled": {
           "type": "boolean"
         },
+        "qbittorrent_port": {
+          "type": "integer"
+        },
         "servers": {
           "type": "string"
         }
@@ -132,6 +135,9 @@
     "CompanionConfig": {
       "additionalProperties": false,
       "properties": {
+        "blinkt": {
+          "$ref": "#/$defs/CompanionCapabilityConfig"
+        },
         "display": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
         },
@@ -147,6 +153,9 @@
         },
         "streamdeck": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
+        },
+        "streamdeck_serial": {
+          "type": "string"
         }
       },
       "type": "object"
@@ -157,10 +166,16 @@
         "address": {
           "type": "string"
         },
+        "dns_override": {
+          "type": "string"
+        },
         "hostname": {
           "type": "string"
         },
         "mac": {
+          "type": "string"
+        },
+        "ntp_override": {
           "type": "string"
         },
         "vmid": {
@@ -279,7 +294,7 @@
           "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "tailnet-router": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/TailnetRouterConfig"
         }
       },
       "type": "object"
@@ -435,12 +450,31 @@
         },
         "installation_id": {
           "type": "string"
+        },
+        "root_age_recipient": {
+          "type": "string"
         }
       },
       "required": [
         "installation_id",
-        "age_recipient"
+        "age_recipient",
+        "root_age_recipient"
       ],
+      "type": "object"
+    },
+    "TailnetRouterConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "trusted_clients": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "TestedVersions": {

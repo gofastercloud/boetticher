@@ -288,15 +288,16 @@ func (b *Broker) queryEvidence(w http.ResponseWriter, r *http.Request) {
 }
 
 type completionRequest struct {
-	Model          string          `json:"model"`
-	Messages       json.RawMessage `json:"messages"`
-	Tools          json.RawMessage `json:"tools,omitempty"`
-	ToolChoice     json.RawMessage `json:"tool_choice,omitempty"`
-	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
-	Temperature    *float64        `json:"temperature,omitempty"`
-	MaxTokens      int             `json:"max_tokens,omitempty"`
-	MaxCompletion  int             `json:"max_completion_tokens,omitempty"`
-	Stream         bool            `json:"stream,omitempty"`
+	Model             string          `json:"model"`
+	Messages          json.RawMessage `json:"messages"`
+	Tools             json.RawMessage `json:"tools,omitempty"`
+	ToolChoice        json.RawMessage `json:"tool_choice,omitempty"`
+	ResponseFormat    json.RawMessage `json:"response_format,omitempty"`
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+	Temperature       *float64        `json:"temperature,omitempty"`
+	MaxTokens         int             `json:"max_tokens,omitempty"`
+	MaxCompletion     int             `json:"max_completion_tokens,omitempty"`
+	Stream            bool            `json:"stream,omitempty"`
 }
 
 func (b *Broker) routeCompletion(w http.ResponseWriter, r *http.Request) {

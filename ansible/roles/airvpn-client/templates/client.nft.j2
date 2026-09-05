@@ -1,0 +1,50 @@
+destroy table inet boetticher_airvpn_client
+table inet boetticher_airvpn_client {
+  set non_public_v4 { type ipv4_addr; flags interval; elements = { {{ firewall_non_public_ipv4 | join(', ') }} } }
+  chain input {
+    type filter hook input priority -10; policy drop;
+    iifname "lo" accept
+    meta nfproto ipv6 drop
+    ip saddr {{ airvpn_client.gateway }} udp sport 67 udp dport 68 accept
+    ip saddr 10.10.99.5 tcp dport 22 accept
+    ip saddr 10.10.10.10 tcp sport 9443 ct state established accept
+{% if logging_plan.enabled | default(false) %}
+    ip saddr {{ logging_plan.collector_address }} tcp sport 19532 ct state established accept
+{% endif %}
+{% if airvpn_client.https %}
+    ip saddr { 10.10.30.0/24, 10.10.5.10, 10.10.99.5 } tcp dport 443 accept
+{% endif %}
+{% for service in airvpn_client.services %}
+{% for protocol in service.protocol.split('/') if protocol in ['tcp', 'udp'] %}
+    ip saddr {{ service.address }} {{ protocol }} {% if service.incoming %}dport{% else %}sport{% endif %} { {{ service.ports | join(', ') }} } {% if not service.incoming %}ct state established{% endif %} accept
+{% endfor %}
+{% endfor %}
+    ip saddr {{ airvpn_client.gateway }} ct state related accept
+    ip saddr @non_public_v4 drop
+    ct direction reply ct state established,related accept
+  }
+  chain output {
+    type filter hook output priority -10; policy drop;
+    oifname "lo" accept
+    meta nfproto ipv6 drop
+    ip daddr { {{ airvpn_client.gateway }}, 255.255.255.255 } udp sport 68 udp dport 67 accept
+    ip daddr 10.10.99.5 tcp sport 22 ct state established accept
+    ip daddr 10.10.10.10 tcp dport 9443 accept
+{% if logging_plan.enabled | default(false) %}
+    ip daddr {{ logging_plan.collector_address }} tcp dport 19532 accept
+{% endif %}
+{% if airvpn_client.https %}
+    ip daddr { 10.10.30.0/24, 10.10.5.10, 10.10.99.5 } tcp sport 443 ct state established accept
+{% endif %}
+{% for service in airvpn_client.services %}
+{% for protocol in service.protocol.split('/') if protocol in ['tcp', 'udp'] %}
+    ip daddr {{ service.address }} {{ protocol }} {% if service.incoming %}sport{% else %}dport{% endif %} { {{ service.ports | join(', ') }} } {% if service.incoming %}ct state established{% endif %} accept
+{% endfor %}
+{% endfor %}
+    ip daddr @non_public_v4 drop
+    tcp dport { 53, 853 } drop
+    udp dport { 53, 853 } drop
+    oifname "eth0" accept
+  }
+  chain forward { type filter hook forward priority -10; policy drop; }
+}
