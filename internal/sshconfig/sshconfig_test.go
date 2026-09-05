@@ -43,6 +43,15 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 	if strings.Contains(content, "StrictHostKeyChecking no") {
 		t.Error("generated SSH config weakened host-key verification")
 	}
+	bastion := strings.Index(content, "Host lab-bastion")
+	end := strings.Index(content[bastion+1:], "\nHost ")
+	if end < 0 {
+		end = len(content) - bastion - 1
+	}
+	bastionBlock := content[bastion : bastion+1+end]
+	if bastion < 0 || !strings.Contains(bastionBlock, "ControlMaster no") || strings.Contains(bastionBlock, "ControlPersist 60") {
+		t.Error("generated bastion SSH config permits connection multiplexing")
+	}
 }
 
 func TestRenderWithKnownHostsUsesSiteScopedTrustFile(t *testing.T) {
