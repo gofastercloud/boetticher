@@ -61,10 +61,8 @@ diff-check:
 schema:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/schema -embedded-output internal/schema/site.schema.json
 
-schema-check: schema
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/schema -output /tmp/boetticher-site.schema.json -embedded-output /tmp/boetticher-embedded-site.schema.json
-	cmp -s /tmp/boetticher-site.schema.json schemas/site.schema.json
-	cmp -s /tmp/boetticher-site.schema.json internal/schema/site.schema.json
+schema-check:
+	tmpdir=$$(mktemp -d /tmp/boetticher-schema-check.XXXXXX) && trap 'rm -rf "$$tmpdir"' EXIT && GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/schema -output "$$tmpdir/site.schema.json" -embedded-output "$$tmpdir/embedded-site.schema.json" && cmp -s "$$tmpdir/site.schema.json" schemas/site.schema.json && cmp -s "$$tmpdir/embedded-site.schema.json" internal/schema/site.schema.json
 
 command-docs:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/command-docs > docs/commands.md
