@@ -879,7 +879,9 @@ func ParseProfile(data []byte) (Profile, error) {
 	for _, allowed := range strings.Split(peer["AllowedIPs"], ",") {
 		allowed = strings.TrimSpace(allowed)
 		if strings.Contains(allowed, ":") {
-			return Profile{}, errors.New("AirVPN profile must be IPv4-only")
+			// Keep the module's explicit IPv4-only routing contract even
+			// when the provider returns a dual-stack AllowedIPs list.
+			continue
 		}
 		if allowed != "0.0.0.0/0" {
 			return Profile{}, errors.New("AirVPN profile must use only AllowedIPs=0.0.0.0/0")

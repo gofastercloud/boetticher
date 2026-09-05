@@ -544,6 +544,7 @@ func TestParseProfileAcceptsUTF8BOM(t *testing.T) {
 
 func TestParseProfileNormalizesDualStackInterfaceToIPv4(t *testing.T) {
 	value := strings.Replace(testProfile(), "Address = 10.64.12.3/32", "Address = 10.64.12.3/32, fd7d::1234/128", 1)
+	value = strings.Replace(value, "AllowedIPs = 0.0.0.0/0", "AllowedIPs = 0.0.0.0/0, ::/0", 1)
 	profile, err := ParseProfile([]byte(value))
 	if err != nil {
 		t.Fatalf("dual-stack AirVPN profile was rejected: %v", err)
