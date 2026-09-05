@@ -11,14 +11,6 @@
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
         - firewall_plan.mode == 'managed'
 
-- name: Prepare the AirVPN host time base before managed appliance configuration
-  hosts: airvpn
-  become: false
-  gather_facts: false
-  roles:
-    - role: chrony
-      when: boetticher_deploy_phase | default('full') in ['full', 'services']
-
 - name: Configure managed appliance runtime state
   hosts: managed
   # Deployment connects as the temporary root SSH identity installed during

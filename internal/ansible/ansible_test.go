@@ -295,6 +295,9 @@ func TestAirVPNRoleRunsAfterBaseAndBeforeSelectedClients(t *testing.T) {
 	if strings.Count(text, "    - role: airvpn\n") != 1 {
 		t.Fatal("AirVPN role must run exactly once in the managed play")
 	}
+	if strings.Contains(text, "hosts: airvpn") {
+		t.Fatal("AirVPN must not have a pre-base host play")
+	}
 }
 
 func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
