@@ -147,7 +147,15 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.fail(err)
 		return err
 	}
-	artifact, evidence, err := artifacts.ResolveArtifactEvidence(*siteDir, wantedArtifact)
+	var artifact model.Artifact
+	var evidence artifacts.Evidence
+	if _, _, importedErr := artifacts.ImportedReleaseManifest(*siteDir); importedErr == nil {
+		artifact, evidence, err = artifacts.ResolveImportedArtifact(*siteDir, wantedArtifact)
+	} else if errors.Is(importedErr, os.ErrNotExist) {
+		artifact, evidence, err = artifacts.ResolveArtifactEvidence(*siteDir, wantedArtifact)
+	} else {
+		err = importedErr
+	}
 	if err != nil {
 		err = fmt.Errorf("network probe artifact is not qualified: %w", err)
 		progress.fail(err)
@@ -175,7 +183,17 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.fail(err)
 		return err
 	}
-	policy, err := firewall.PlanFromSite(s)
+	airvpnProfile, profileErr := prepareAirVPNProfile(context.Background(), *siteDir, s, *ageIdentity, true, false)
+	if profileErr != nil {
+		progress.fail(profileErr)
+		return profileErr
+	}
+	var policy firewall.Plan
+	if airvpnProfile == nil {
+		policy, err = firewall.PlanFromSite(s)
+	} else {
+		policy, err = firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)
+	}
 	if err != nil {
 		err = fmt.Errorf("plan network test policy: %w", err)
 		progress.fail(err)

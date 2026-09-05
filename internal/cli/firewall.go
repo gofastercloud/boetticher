@@ -28,6 +28,7 @@ func runFirewall(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("firewall "+command, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	live := fs.Bool("live", false, "inspect the managed gateway over the generated SSH path")
 	jsonOutput := fs.Bool("json", false, "write JSON output")
 	format := fs.String("format", "human", "show format: human or nft")
@@ -50,7 +51,7 @@ func runFirewall(args []string, out io.Writer) error {
 	case "show":
 		return firewallShow(s, plan, *format, *jsonOutput, out)
 	case "diff":
-		return firewallDiff(*siteDir, s, plan, *live, *jsonOutput, out)
+		return firewallDiff(*siteDir, s, plan, *ageIdentity, *live, *jsonOutput, out)
 	case "counters":
 		return firewallCounters(*siteDir, s, *live, *jsonOutput, out)
 	case "logs":
@@ -63,7 +64,7 @@ func runFirewall(args []string, out io.Writer) error {
 		}
 		return firewallLiveRead(*siteDir, s, []string{"sudo", "/usr/lib/boetticher/inspect-firewall", "kernel-logs", fmt.Sprint(*limit), zoneName}, *live, false, out, "Kernel log entries for boetticher firewall drops.")
 	case "verify":
-		return firewallVerify(*siteDir, s, plan, *live, *jsonOutput, out)
+		return firewallVerify(*siteDir, s, plan, *ageIdentity, *live, *jsonOutput, out)
 	default:
 		return fmt.Errorf("unknown firewall command %q", command)
 	}
@@ -282,7 +283,7 @@ func firewallShow(s model.Site, plan firewall.Plan, format string, jsonOutput bo
 	return nil
 }
 
-func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out io.Writer) error {
+func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, ageIdentity string, live, jsonOutput bool, out io.Writer) error {
 	if err := firewall.ValidateNetworkIntentCoverage(s, plan); err != nil {
 		if !jsonOutput {
 			fmt.Fprintf(out, "Firewall diff: FAIL %v\n", err)
@@ -297,7 +298,7 @@ func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOu
 		return nil
 	}
 	var err error
-	if live && len(plan.Publications) > 0 {
+	if live {
 		data, commandErr := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
 		if commandErr != nil {
 			return commandErr
@@ -306,7 +307,7 @@ func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOu
 		if parseErr != nil {
 			return parseErr
 		}
-		plan, err = firewall.PlanFromSiteWithUpstream(s, liveStatus.Upstream)
+		plan, err = planFromLiveUpstream(siteDir, s, ageIdentity, liveStatus.Upstream)
 		if err != nil {
 			return err
 		}
@@ -415,7 +416,7 @@ func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out i
 	return nil
 }
 
-func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out io.Writer) error {
+func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, ageIdentity string, live, jsonOutput bool, out io.Writer) error {
 	results := map[string]string{}
 	if err := firewall.ValidateNetworkIntentCoverage(s, plan); err != nil {
 		if !jsonOutput {
@@ -424,7 +425,7 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 		return fmt.Errorf("firewall network contract failed: %w", err)
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		if live && len(plan.Publications) > 0 {
+		if live {
 			data, commandErr := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
 			if commandErr != nil {
 				return commandErr
@@ -434,7 +435,7 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 				return parseErr
 			}
 			var planErr error
-			plan, planErr = firewall.PlanFromSiteWithUpstream(s, liveStatus.Upstream)
+			plan, planErr = planFromLiveUpstream(siteDir, s, ageIdentity, liveStatus.Upstream)
 			if planErr != nil {
 				return planErr
 			}

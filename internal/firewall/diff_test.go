@@ -55,6 +55,25 @@ func TestCompareNFTIgnoresUnrelatedTablesAndFindsOwnedDrift(t *testing.T) {
 	if len(diff.UnexpectedRules) != 1 || diff.UnexpectedRules[0] != "boetticher:unexpected" {
 		t.Fatalf("unexpected owned rule was not reported: %#v", diff)
 	}
+	objects = append(objects, map[string]any{"rule": map[string]any{"family": "inet", "table": FilterTable, "chain": "forward"}})
+	data, err = json.Marshal(map[string]any{"nftables": objects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err = CompareNFT(plan, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundUncommented := false
+	for _, unexpected := range diff.UnexpectedRules {
+		if unexpected == "inet/boetticher_filter/forward:<uncommented>" {
+			foundUncommented = true
+			break
+		}
+	}
+	if !foundUncommented {
+		t.Fatalf("uncommented owned rule was not reported: %#v", diff)
+	}
 }
 
 func TestCompareNFTReportsMissingOwnedObjects(t *testing.T) {

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -23,10 +25,11 @@ import (
 )
 
 type healthOptions struct {
-	siteDir    string
-	sshPath    string
-	sshJourney bool
-	live       bool
+	siteDir     string
+	sshPath     string
+	sshJourney  bool
+	live        bool
+	ageIdentity string
 }
 
 // collectHealthResults is the single result path shared by all status views.
@@ -34,6 +37,9 @@ type healthOptions struct {
 // require an operator, an independent copy, or a separate network journey do
 // not belong in this normal health report.
 func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.CheckResult, string, error) {
+	if options.ageIdentity == "" {
+		options.ageIdentity = model.DefaultAgeIdentity
+	}
 	results := offlineVerificationResultsWithResolver(options.siteDir, s, net.LookupIP)
 	results = append(results, deploymentOperationHealthResult(options.siteDir))
 
@@ -59,7 +65,7 @@ func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.Ch
 		results = append(results, journey)
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged && options.live {
-		results = append(results, liveGatewayHealthResults(options.siteDir, s)...)
+		results = append(results, liveGatewayHealthResults(options.siteDir, s, options.ageIdentity)...)
 		results = append(results, liveSmallstepHealthResults(options.siteDir, s)...)
 	} else if s.Gateway.Mode == model.GatewayModeExternal {
 		results = append(results, statusmodel.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
@@ -84,19 +90,28 @@ func liveSmallstepHealthResults(siteDir string, s model.Site) []statusmodel.Chec
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	dnsRunner := applianceSSHRunner(s, siteDir, dns.Hostname)
+	monitorRunner := applianceSSHRunner(s, siteDir, monitor.Hostname)
 	caResult := statusmodel.CheckResult{Name: "Smallstep CA service", Tier: statusmodel.TierDeployed}
-	if _, err := dnsRunner.RunArgs(ctx, dns.Address, model.DefaultAdminSSHUser, []string{"/usr/bin/systemctl", "is-active", "--quiet", "boetticher-step-ca"}); err != nil {
+	healthURL := "https://lab-dns-01." + s.Network.Domain + ":9443/health"
+	resolve := "lab-dns-01." + s.Network.Domain + ":9443:" + dns.Address
+	healthData, err := monitorRunner.RunArgs(ctx, monitor.Address, model.DefaultAdminSSHUser, []string{"/usr/bin/curl", "--silent", "--show-error", "--fail", "--max-time", "5", "--cacert", "/etc/ssl/certs/ca-certificates.crt", "--resolve", resolve, healthURL})
+	var health struct {
+		Status string `json:"status"`
+	}
+	if err != nil || json.Unmarshal(bytes.TrimSpace(healthData), &health) != nil || health.Status != "ok" {
 		caResult.Status = "FAIL"
-		caResult.Detail = fmt.Sprintf("online CA service is not active: %v", err)
+		if err != nil {
+			caResult.Detail = fmt.Sprintf("online CA health endpoint failed: %v", err)
+		} else {
+			caResult.Detail = "online CA health endpoint did not report status ok"
+		}
 	} else {
 		caResult.Status = "PASS"
-		caResult.Detail = "online intermediate service is active on the DNS endpoint"
+		caResult.Detail = "online CA health endpoint is active on the DNS endpoint"
 	}
 
-	monitorRunner := applianceSSHRunner(s, siteDir, monitor.Hostname)
 	leafResult := statusmodel.CheckResult{Name: "Pulse leaf certificate", Tier: statusmodel.TierDeployed}
-	data, err := monitorRunner.Run(ctx, monitor.Address, model.DefaultAdminSSHUser, "/usr/bin/openssl x509 -in /etc/boetticher/tls/monitor.crt.pem -noout -issuer -enddate")
+	data, err := monitorRunner.Run(ctx, monitor.Address, model.DefaultAdminSSHUser, "/usr/bin/openssl s_client -connect 10.10.10.20:443 -servername monitor."+shellQuote(s.Network.Domain)+" -CAfile /etc/ssl/certs/ca-certificates.crt -verify_return_error </dev/null 2>/dev/null | /usr/bin/openssl x509 -noout -issuer -enddate")
 	if err != nil {
 		leafResult.Status = "FAIL"
 		leafResult.Detail = fmt.Sprintf("read Pulse leaf certificate: %v", err)
@@ -111,6 +126,20 @@ func liveSmallstepHealthResults(siteDir string, s model.Site) []statusmodel.Chec
 		leafResult.Detail = fmt.Sprintf("Pulse leaf certificate valid until %s (%s)", expiry.UTC().Format(time.RFC3339), strings.TrimSpace(string(data)))
 	}
 	return []statusmodel.CheckResult{caResult, leafResult}
+}
+
+func planFromLiveUpstream(siteDir string, s model.Site, ageIdentity string, upstream firewall.UpstreamObservation) (firewall.Plan, error) {
+	if ageIdentity == "" {
+		ageIdentity = model.DefaultAgeIdentity
+	}
+	profile, err := prepareAirVPNProfile(context.Background(), siteDir, s, ageIdentity, true, false)
+	if err != nil {
+		return firewall.Plan{}, err
+	}
+	if profile == nil {
+		return firewall.PlanFromSiteWithUpstream(s, upstream)
+	}
+	return firewall.PlanFromSiteWithUpstreamAndAirVPN(s, upstream, profile.Metadata)
 }
 
 func platformComponentByName(s model.Site, name string) (model.Component, bool) {
@@ -164,7 +193,7 @@ func deploymentOperationHealthResult(siteDir string) statusmodel.CheckResult {
 	return result
 }
 
-func liveGatewayHealthResults(siteDir string, s model.Site) []statusmodel.CheckResult {
+func liveGatewayHealthResults(siteDir string, s model.Site, ageIdentity string) []statusmodel.CheckResult {
 	upstreamName := "managed gateway upstream DHCP"
 	publicationName := "published service mapping"
 	servicesName := "managed gateway services"
@@ -205,7 +234,7 @@ func liveGatewayHealthResults(siteDir string, s model.Site) []statusmodel.CheckR
 		publication.Detail = "upstream observation is not safe for publication"
 		return []statusmodel.CheckResult{upstream, publication, services}
 	}
-	livePlan, err := firewall.PlanFromSiteWithUpstream(s, liveStatus.Upstream)
+	livePlan, err := planFromLiveUpstream(siteDir, s, ageIdentity, liveStatus.Upstream)
 	if err != nil {
 		publication.Status = "FAIL"
 		publication.Detail = err.Error()

@@ -77,3 +77,53 @@ func TestSelectedAirVPNClientCanRenewItsServersDHCPLease(t *testing.T) {
 		t.Fatalf("selected-client DHCP renewal is not allowed before the deny: %s", rules)
 	}
 }
+
+func TestRenderedIsolationRulesCarryOwnershipComments(t *testing.T) {
+	tests := []struct {
+		name string
+		plan Plan
+	}{
+		{
+			name: "default",
+			plan: func() Plan {
+				plan, err := PlanFromSite(model.NewDefaultSite("default", "age1example"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return plan
+			}(),
+		},
+		{
+			name: "airvpn",
+			plan: func() Plan {
+				plan, err := PlanFromSiteWithAirVPN(isolationSite(t), AirVPNProfile{EndpointHost: "vpn.example", EndpointPort: 1637, TunnelAddress: "10.1.2.3", SHA256: strings.Repeat("a", 64)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return plan
+			}(),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rules, err := RenderNFTWithResolver(test.plan, func(string) ([]net.IP, error) {
+				return []net.IP{net.ParseIP("8.8.4.4")}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range strings.Split(rules, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "type ") || strings.HasPrefix(trimmed, "policy ") || strings.HasPrefix(trimmed, "chain ") {
+					continue
+				}
+				if !strings.Contains(line, " accept") && !strings.Contains(line, " drop") && !strings.Contains(line, " return") && !strings.Contains(line, " jump ") {
+					continue
+				}
+				if !strings.Contains(line, `comment "boetticher:`) {
+					t.Fatalf("owned isolation rule has no ownership comment: %s", line)
+				}
+			}
+		})
+	}
+}

@@ -22,6 +22,7 @@ func runStatus(args []string, out io.Writer) error {
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	sshPath := fs.String("ssh-config", sshconfig.DefaultPath(), "generated SSH configuration to inspect")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	sshJourney := fs.Bool("ssh-journey", false, "run an authenticated internal SSH journey through the bastion")
 	live := fs.Bool("live", false, "inspect the managed gateway over the generated SSH path")
 	details := fs.Bool("details", false, "include reasons and safe next actions")
@@ -30,18 +31,19 @@ func runStatus(args []string, out io.Writer) error {
 		return err
 	}
 	return runStatusRequest(statusRequest{
-		siteDir: *siteDir, sshPath: *sshPath, sshJourney: *sshJourney,
+		siteDir: *siteDir, sshPath: *sshPath, ageIdentity: *ageIdentity, sshJourney: *sshJourney,
 		live: *live, verbose: *details, json: *jsonOutput,
 	}, out)
 }
 
 type statusRequest struct {
-	siteDir    string
-	sshPath    string
-	sshJourney bool
-	live       bool
-	verbose    bool
-	json       bool
+	siteDir     string
+	sshPath     string
+	ageIdentity string
+	sshJourney  bool
+	live        bool
+	verbose     bool
+	json        bool
 }
 
 func runStatusRequest(request statusRequest, out io.Writer) error {
@@ -75,7 +77,7 @@ func evaluateStatusRequest(request statusRequest) (statusmodel.Report, error) {
 		return statusmodel.Report{}, fmt.Errorf("Problem: calculate model revision: %w", err)
 	}
 	results, observedAt, err := collectHealthResults(healthOptions{
-		siteDir: siteDir, sshPath: sshPath, sshJourney: request.sshJourney, live: request.live,
+		siteDir: siteDir, sshPath: sshPath, ageIdentity: request.ageIdentity, sshJourney: request.sshJourney, live: request.live,
 	}, s)
 	if err != nil {
 		return statusmodel.Report{}, fmt.Errorf("collect health results: %w", err)

@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -89,6 +91,23 @@ func TestAirVPNNetworkTestRequiresDeclaredARRAndAirVPNContracts(t *testing.T) {
 	}
 	if err := validateAirVPNNetworkTestSite(site); err != nil {
 		t.Fatalf("AirVPN test rejected the declared ARR and AirVPN contracts: %v", err)
+	}
+}
+
+func TestNetworkTestUsesImportedArtifactAndRetainedAirVPNPolicy(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "networkprobe.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"artifacts.ResolveImportedArtifact(*siteDir, wantedArtifact)",
+		"prepareAirVPNProfile(context.Background(), *siteDir, s, *ageIdentity, true, false)",
+		"firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("network test is missing qualification path %q", required)
+		}
 	}
 }
 
