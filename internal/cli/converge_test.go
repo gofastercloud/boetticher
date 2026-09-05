@@ -639,6 +639,7 @@ func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
 		t.Fatal("temporary Apply identity is not retained for the bounded Apply lifecycle")
 	}
 	for _, required := range []string{
+		`proxmox.EnsureScopedCredentialACL(ctx, rootRunner, s.BootstrapAddress, "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", node)`,
 		"proxmoxPlan.OperatorPublicKey = durableOperatorPublicKey",
 		"RenderFirewallCloudInitWithKey(guest, durableOperatorPublicKey)",
 		"firewallGuest, deploymentPublicKey",
