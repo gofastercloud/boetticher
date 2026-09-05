@@ -116,3 +116,8 @@
 - name: Require an active AirVPN transit service
   ansible.builtin.command: systemctl is-active boetticher-airvpn.service
   changed_when: false
+
+- name: Enable forwarding after AirVPN tunnel verification
+  ansible.builtin.command:
+    argv: [sysctl, -w, net.ipv4.ip_forward=1]
+  changed_when: false
