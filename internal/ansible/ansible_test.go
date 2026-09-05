@@ -35,6 +35,7 @@ func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
 	}
 	text := string(contents)
 	for _, required := range []string{
+		"path: /var/lib/boetticher/identity/tls, state: directory",
 		"include_tasks: ../../tasks/step-ca-endpoint.yml",
 		"step_ca_endpoint_subject: \"gatus.{{ domain }}\"",
 		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/gatus.key.pem",

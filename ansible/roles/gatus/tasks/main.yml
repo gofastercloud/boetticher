@@ -5,6 +5,8 @@
 - name: Install generated Gatus configuration
   ansible.builtin.copy: {dest: /etc/boetticher/gatus/config.yaml, content: "{{ gatus_config }}", owner: root, group: gatus, mode: '0640'}
   notify: restart gatus
+- name: Create Gatus identity TLS directory
+  ansible.builtin.file: {path: /var/lib/boetticher/identity/tls, state: directory, owner: root, group: root, mode: '0750'}
 - name: Issue and renew the Gatus endpoint certificate from Smallstep
   ansible.builtin.include_tasks: ../../tasks/step-ca-endpoint.yml
   vars:
