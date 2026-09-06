@@ -41,6 +41,11 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runController(args[1:], out, errOut)
 	case "host":
 		return runHost(args[1:], input, out, errOut)
+	case "foundation":
+		if len(args) == 1 && args[0] == "status" {
+			return runFoundation(nil, out)
+		}
+		return fmt.Errorf("usage: boetticher foundation status")
 	case "init":
 		return runInit(args[1:], out)
 	case "tui":
@@ -70,7 +75,7 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	case "config":
 		return runConfig(args[1:], out)
 	case "network":
-		return runNetwork(args[1:], out)
+		return runNetworkWithInput(args[1:], input, out)
 	case "hardware":
 		return runHardware(args[1:], out)
 	case "companion":

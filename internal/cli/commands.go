@@ -21,6 +21,8 @@ type helpSpec struct {
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher controller bootstrap|status [--operator USER] [--confirm-key-login]"},
 	{Usage: "boetticher host identity|trust|enroll|status|prepare ..."},
+	{Usage: "boetticher network plan|configure|status"},
+	{Usage: "boetticher foundation status"},
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--root-age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]"},
 	{Usage: "boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]"},
 	{Usage: "boetticher plan [--site DIR] [--live] [--json]"},
@@ -86,6 +88,12 @@ var helpSpecs = map[string]helpSpec{
 	},
 	"host prepare": {
 		Usage: "boetticher host prepare [--yes]", Purpose: "Apply the small idempotent Proxmox host baseline.", Arguments: "No positional arguments.", Options: "--yes approves the displayed bounded preparation without an interactive prompt.", Safety: "Changes only known Proxmox repository policy, prerequisite packages, and headless power behavior. It does not upgrade, reboot, re-network, reconfigure storage, or touch guests.", Examples: "boetticher host prepare; boetticher host prepare --yes", Related: "host status",
+	},
+	"network foundation": {
+		Usage: "boetticher network plan|configure|status", Purpose: "Create and inspect the virtual-only VLAN-aware internal bridge foundation.", Arguments: "plan and status are read-only; configure adds only vmbr1 after the protected HOME path is checked.", Options: "configure accepts --yes for deliberate scripted use. The fixed logical VLANs are 5, 10, 20, 30, 40, and 99.", Safety: "vmbr0, 192.168.4.5, its physical member, default route, guests, storage, firewall, and second NIC are protected. No host VLAN subinterfaces, IP forwarding, routing, DHCP, DNS, or physical trunk are configured.", Examples: "boetticher network plan; boetticher network configure --yes; boetticher network status", Related: "foundation status, host status",
+	},
+	"foundation": {
+		Usage: "boetticher foundation status", Purpose: "Aggregate local controller, enrolled Proxmox, storage, and internal-network readiness.", Arguments: "No positional arguments.", Options: "Read-only; it does not run Ansible, repair state, or deploy guests.", Safety: "Missing physical LAB trunk and platform guests are informational during this phase. Only the qualified foundation components gate readiness.", Examples: "boetticher foundation status", Related: "controller status, host status, storage status, network status",
 	},
 	"tui": {
 		Usage: "boetticher tui [--site DIR] [--offline]", Purpose: "Open the experimental interactive dashboard.", Arguments: "No positional arguments.", Options: "--site selects your private site directory; --offline skips live refresh and shows saved settings.", Safety: "The dashboard launches the same commands as the CLI, so changes still ask for their normal confirmation. Secrets are never command arguments. Use the direct CLI when you need zones, packet captures, JSON, or probe cleanup.", Examples: "boetticher tui --site ./my-boetticher", Related: "status --details, deploy, module, firewall, network test",
@@ -206,6 +214,11 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"network trunk status":    helpSpecs["network"],
 	"network trunk attach":    helpSpecs["network"],
 	"network trunk detach":    helpSpecs["network"],
+	"network plan":            helpSpecs["network foundation"],
+	"network configure":       helpSpecs["network foundation"],
+	"network status":          helpSpecs["network foundation"],
+	"foundation":              helpSpecs["foundation"],
+	"foundation status":       helpSpecs["foundation"],
 	"network test":            helpSpec{Usage: "boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--airvpn] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Check routes, DNS, policy, mTLS, and speed from temporary probes in selected zones.", Arguments: "No positional arguments. By default it visits all six modeled zones.", Options: "--zones selects a comma-separated subset; --capture adds a short tcpdump from a probe; --airvpn also checks the declared ARR source through AirVPN; --cleanup-only removes a stale Boetticher probe; --json is for tools; connection options select the Proxmox certificate path.", Safety: "Advanced and live. It creates only recognised unprivileged LXC probes in VMIDs 910-919 and never changes firewall policy. --airvpn requires enabled ARR and AirVPN, stops and restarts only the declared AirVPN LXC to prove ARR has no direct escape, and restores it even after a failed check. It tries cleanup after every run; resolve a cleanup failure before retrying. It leaves your saved settings alone.", Examples: "boetticher network test --site ./my-boetticher; boetticher network test --airvpn --site ./my-boetticher", Related: "network trunk status, firewall diff, dhcp leases, status --details"},
 	"hardware usb list":       helpSpecs["hardware"],
 	"hardware usb status":     helpSpecs["hardware"],

@@ -22,6 +22,8 @@ boetticher status --site ./my-boetticher --details --live
 ```text
 boetticher controller bootstrap|status [--operator USER] [--confirm-key-login]
 boetticher host identity|trust|enroll|status|prepare ...
+boetticher network plan|configure|status
+boetticher foundation status
 boetticher init [--site-dir DIR] [--age-identity PATH] [--root-age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]
 boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]
 boetticher plan [--site DIR] [--live] [--json]

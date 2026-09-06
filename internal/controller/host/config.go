@@ -29,6 +29,7 @@ type LabConfig struct {
 	Name    string         `yaml:"name"`
 	Proxmox ProxmoxConfig  `yaml:"proxmox"`
 	Storage *StorageConfig `yaml:"storage,omitempty"`
+	Network *NetworkConfig `yaml:"network,omitempty"`
 }
 
 func LoadConfig() (LabConfig, error) {
@@ -65,6 +66,11 @@ func ValidateConfig(config LabConfig) error {
 	if config.Storage != nil {
 		if config.Storage.Profile != "dedicated-data-disk" || config.Storage.GuestStorage != "boetticher-data" || !strings.HasPrefix(config.Storage.Device, "/dev/disk/by-id/") {
 			return errors.New("lab configuration contains an invalid dedicated storage selection")
+		}
+	}
+	if config.Network != nil {
+		if err := ValidateNetworkConfig(*config.Network); err != nil {
+			return err
 		}
 	}
 	return nil

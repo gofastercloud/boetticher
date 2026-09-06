@@ -143,3 +143,33 @@ func TestExactOwnedStorageCanRecoverSelectionWithoutMutation(t *testing.T) {
 		t.Fatal("exact owned storage was not recognized")
 	}
 }
+
+func TestValidateNetworkConfigRequiresFixedVLANTopology(t *testing.T) {
+	config := DefaultNetworkConfig()
+	if err := ValidateNetworkConfig(config); err != nil {
+		t.Fatal(err)
+	}
+	config.InternalBridge = "vmbr9"
+	if err := ValidateNetworkConfig(config); err == nil {
+		t.Fatal("arbitrary internal bridge was accepted")
+	}
+	config = DefaultNetworkConfig()
+	config.VLANs.Mgmt = config.VLANs.Servers
+	if err := ValidateNetworkConfig(config); err == nil {
+		t.Fatal("duplicate VLAN IDs were accepted")
+	}
+}
+
+func TestBridgeStateRecognizesExactVirtualOnlyBridge(t *testing.T) {
+	state := bridgeState(
+		[]ipLink{{IfName: "vmbr1", LinkType: "bridge"}},
+		[]ipAddress{{IfName: "vmbr1"}},
+		[]ipRoute{},
+		"",
+		"vmbr1: vlan_filtering 1",
+		"auto vmbr1\niface vmbr1 inet manual\n\tbridge-ports none\n\tbridge-vlan-aware yes\n\tbridge-vids 2-4094\n",
+	)
+	if !state.Exists || !state.VLANAware || !state.Configured || len(state.HostAddresses) != 0 || len(state.PhysicalMembers) != 0 {
+		t.Fatalf("exact bridge state = %#v", state)
+	}
+}

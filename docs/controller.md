@@ -238,3 +238,52 @@ allocation smoke test is run without creating a guest. Rebooting Proxmox is a
 separate explicit approval gate, followed by rechecking the PV, VG, thin pool,
 storage registration, guests, and management network. Independent Mac/root
 access remains the recovery path if a storage step fails.
+
+## Phase 3B: virtual network foundation
+
+Phase 3B adds only the internal virtual bridge. It preserves the proven HOME
+management path and does not configure a physical trunk or any routing policy:
+
+```text
+HOME
+  |
+  +-- physical HOME NIC
+         |
+       vmbr0
+         |
+         +-- Proxmox 192.168.4.5
+
+Virtual LAB
+  |
+  +-- vmbr1   VLAN-aware, no host address, no physical members
+       |
+       +-- VLAN 5   TRANSIT
+       +-- VLAN 10  INFRA
+       +-- VLAN 20  SERVERS
+       +-- VLAN 30  TRUSTED
+       +-- VLAN 40  SANDBOX
+       +-- VLAN 99  MGMT
+```
+
+Review the protected path before configuration:
+
+```sh
+sudo boetticher network plan
+sudo boetticher network configure --yes
+sudo boetticher network status
+sudo boetticher foundation status
+```
+
+`network plan` and `network status` are read-only. `network configure` adds
+only an absent, exact `vmbr1` stanza with VLAN awareness and no address,
+gateway, or physical port. It never rewrites `vmbr0`, changes `192.168.4.5`,
+changes the default route, attaches the second NIC, creates host VLAN
+subinterfaces, enables forwarding, or configures DHCP, DNS, firewall, guests,
+or switches. An existing conflicting `vmbr1` is reported and not adopted.
+
+The six VLAN numbers remain logical desired configuration for later guest
+deployment. They do not claim zone isolation in this phase. Configuration is
+revalidated through a fresh strict Controller SSH session, and repeat runs on
+an exact bridge report that no changes are required. Proxmox reboot is a
+separate explicit gate; the independent Mac/root path is the recovery method
+if management verification fails. Phase 3B stops before firewall deployment.

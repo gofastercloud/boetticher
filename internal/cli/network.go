@@ -15,7 +15,10 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runNetwork(args []string, out io.Writer) error {
+func runNetworkWithInput(args []string, input io.Reader, out io.Writer) error {
+	if shouldRunControllerNetwork(args) {
+		return runControllerNetwork(args, input, out)
+	}
 	if len(args) > 0 && args[0] == "test" {
 		return runNetworkTest(args[1:], out)
 	}
