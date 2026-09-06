@@ -103,6 +103,9 @@ func runControllerStorageInitialize(args []string, transport controllerhost.Tran
 		return err
 	}
 	if plan.State == "exact" {
+		if *device != "" && (plan.Selected == nil || !hasStableID(plan.Selected.StableIDs, *device)) {
+			return errors.New("--device does not match the exact owned storage identity")
+		}
 		if config.Storage == nil && plan.Selected != nil {
 			config.Storage = &controllerhost.StorageConfig{Profile: controllerhost.StorageProfile, Device: firstStableID(*plan.Selected), GuestStorage: controllerhost.GuestStorageID}
 			if err := controllerhost.SaveConfig(config); err != nil {
@@ -161,6 +164,9 @@ func renderStoragePlan(out io.Writer, plan controllerhost.StoragePlan) {
 		}
 	} else {
 		fmt.Fprintf(out, "\nNo empty candidate: %s\n", plan.Detail)
+		if plan.State == "exact" && plan.Selected != nil {
+			fmt.Fprintf(out, "  Existing owned disk: %s\n", firstStableID(*plan.Selected))
+		}
 	}
 	fmt.Fprintln(out, "\nProposed storage\n  ID:        boetticher-data\n  Type:      LVM-thin\n  VG:        boetticher-vg\n  Thin pool: data")
 	if plan.Selected != nil && plan.State == "empty" {
