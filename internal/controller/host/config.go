@@ -19,9 +19,16 @@ type ProxmoxConfig struct {
 	Repository string `yaml:"repository"`
 }
 
+type StorageConfig struct {
+	Profile      string `yaml:"profile"`
+	Device       string `yaml:"device"`
+	GuestStorage string `yaml:"guest_storage"`
+}
+
 type LabConfig struct {
-	Name    string        `yaml:"name"`
-	Proxmox ProxmoxConfig `yaml:"proxmox"`
+	Name    string         `yaml:"name"`
+	Proxmox ProxmoxConfig  `yaml:"proxmox"`
+	Storage *StorageConfig `yaml:"storage,omitempty"`
 }
 
 func LoadConfig() (LabConfig, error) {
@@ -54,6 +61,11 @@ func ValidateConfig(config LabConfig) error {
 	}
 	if config.Proxmox.Repository != "no-subscription" {
 		return errors.New("lab configuration requires the no-subscription repository policy")
+	}
+	if config.Storage != nil {
+		if config.Storage.Profile != "dedicated-data-disk" || config.Storage.GuestStorage != "boetticher-data" || !strings.HasPrefix(config.Storage.Device, "/dev/disk/by-id/") {
+			return errors.New("lab configuration contains an invalid dedicated storage selection")
+		}
 	}
 	return nil
 }

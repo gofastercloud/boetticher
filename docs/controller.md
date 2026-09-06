@@ -200,3 +200,41 @@ The controller keeps the private key at
 the imported host key at `known_hosts` in the same directory. Independent
 Mac/root access remains the recovery path. This phase inventories the dual-disk
 host only; disk initialization belongs to a later, explicitly authorized phase.
+
+## Phase 3A: dedicated data storage
+
+Storage qualification is a separate destructive boundary. Start with both
+controller and host readiness passing, then review the read-only plan:
+
+```sh
+sudo boetticher storage plan
+```
+
+The plan traces the running Proxmox root/LVM stack to protect the boot disk and
+identifies candidates only through stable `/dev/disk/by-id` paths. Capacity,
+enumeration order, and `/dev/sdX` names are not identity. An empty, uniquely
+identified Timetec disk is eligible; mounted, partitioned, LVM-backed,
+guest-used, Proxmox-used, changed, or ambiguous state fails closed.
+
+First initialization requires the exact freshly rediscovered stable path and
+explicit confirmation:
+
+```sh
+sudo boetticher storage initialize \
+  --device /dev/disk/by-id/<exact-timetec-id> \
+  --confirm
+```
+
+The operation creates only one LVM PV, `boetticher-vg`, thin pool `data`, and
+the Proxmox `boetticher-data` `lvmthin` store with `images,rootdir` content. It
+does not create a filesystem or mount, move guests, alter existing storage,
+change networking, or begin Phase 3B. The selected stable identity is written
+to `/etc/boetticher/lab.yml` only after successful verification.
+
+`storage status` is read-only. Repeating `storage initialize --confirm` on the
+exact healthy layout reports that no changes are required; conflicting or
+partial layouts are never wiped automatically. A small reversible Proxmox
+allocation smoke test is run without creating a guest. Rebooting Proxmox is a
+separate explicit approval gate, followed by rechecking the PV, VG, thin pool,
+storage registration, guests, and management network. Independent Mac/root
+access remains the recovery path if a storage step fails.

@@ -13,6 +13,9 @@ import (
 )
 
 func runStorage(args []string, out io.Writer) error {
+	if shouldRunControllerStorage(args) {
+		return runControllerStorage(args, out)
+	}
 	if len(args) == 0 {
 		return errors.New("usage: boetticher storage status|initialize|recover")
 	}
