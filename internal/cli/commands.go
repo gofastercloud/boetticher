@@ -21,41 +21,23 @@ type helpSpec struct {
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher controller bootstrap|status [--operator USER] [--confirm-key-login]"},
 	{Usage: "boetticher host identity|trust|enroll|status|prepare ..."},
+	{Usage: "boetticher storage plan|initialize|status [--device PATH] [--confirm]"},
 	{Usage: "boetticher network plan|configure|status"},
-	{Usage: "boetticher foundation status"},
-	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--root-age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]"},
-	{Usage: "boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]"},
-	{Usage: "boetticher plan [--site DIR] [--live] [--json]"},
-	{Usage: "boetticher deploy [--plan DIGEST] [--site DIR] [--age-identity PATH] [--only-module NAME] [--confirm]"},
-	{Usage: "boetticher status [--site DIR] [--live] [--details] [--json]"},
-	{Usage: "boetticher module list|configure|enable|disable NAME [--site DIR] [--confirm] [--json]"},
-	{Usage: "boetticher network reservation|record add|remove|list [--site DIR]"},
-	{Usage: "boetticher update [--bundle PATH] [--site DIR] [--dry-run] [--confirm]"},
-	{Usage: "boetticher help --advanced"},
+	{Usage: "boetticher foundation status|converge"},
 }
 
 var advancedCommandSpecs = []commandSpec{
-	{Usage: "boetticher bundle inspect|import PATH [--site DIR] [--json]"},
-	{Usage: "boetticher recover storage ..."},
-	{Usage: "boetticher companion add|setup|status|migrate ..."},
-	{Usage: "boetticher tui [--site DIR] [--offline]"},
+	{Usage: "boetticher host status --details"},
+	{Usage: "boetticher storage status"},
+	{Usage: "boetticher network status"},
 	{Usage: "boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]"},
 	{Usage: "boetticher aiops status [--site DIR] [--live] [--json]"},
-	{Usage: "boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--identity-file PATH] [--install-include]"},
-	{Usage: "boetticher access [--site DIR]"},
-	{Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
-	{Usage: "boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--airvpn] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
+	{Usage: "boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--cleanup-only] [--json]"},
 	{Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
-	{Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]"},
-	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--format pem|apple] [--age-identity PATH]"},
-	{Usage: "boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]"},
 	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
 	{Usage: "boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]"},
-	{Usage: "boetticher storage plan|initialize|status [--device PATH] [--confirm]"},
 	{Usage: "boetticher module list|configure|enable|disable NAME [--site DIR] [--dry-run] [--json] [--confirm] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
-	{Usage: "boetticher module secrets MODULE list|set|remove|rotate [--site DIR] [--age-identity PATH] [--confirm]"},
-	{Usage: "boetticher config validate|show|schema [--site DIR]"},
 }
 
 // helpSpecs is keyed by the command path before -h/--help. Keeping nested
@@ -90,10 +72,10 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher host prepare [--yes]", Purpose: "Apply the small idempotent Proxmox host baseline.", Arguments: "No positional arguments.", Options: "--yes approves the displayed bounded preparation without an interactive prompt.", Safety: "Changes only known Proxmox repository policy, prerequisite packages, and headless power behavior. It does not upgrade, reboot, re-network, reconfigure storage, or touch guests.", Examples: "boetticher host prepare; boetticher host prepare --yes", Related: "host status",
 	},
 	"network foundation": {
-		Usage: "boetticher network plan|configure|status", Purpose: "Create and inspect the virtual-only VLAN-aware internal bridge foundation.", Arguments: "plan and status are read-only; configure adds only vmbr1 after the protected HOME path is checked.", Options: "configure accepts --yes for deliberate scripted use. The fixed logical VLANs are 5, 10, 20, 30, 40, and 99.", Safety: "vmbr0, 192.168.4.5, its physical member, default route, guests, storage, firewall, and second NIC are protected. No host VLAN subinterfaces, IP forwarding, routing, DHCP, DNS, or physical trunk are configured.", Examples: "boetticher network plan; boetticher network configure --yes; boetticher network status", Related: "foundation status, host status",
+		Usage: "boetticher network plan|configure|status", Purpose: "Create and inspect the virtual-only VLAN-aware internal bridge foundation.", Arguments: "plan and status are read-only; configure adds only vmbr1 after the protected HOME path is checked.", Options: "configure accepts --adopt-existing for explicit adoption of a compatible portless bridge and --yes for deliberate scripted use. The fixed logical VLANs are 5, 10, 20, 30, 40, and 99.", Safety: "vmbr0, 192.168.4.5, its physical member, default route, guests, storage, firewall, and second NIC are protected. No host VLAN subinterfaces, IP forwarding, routing, DHCP, DNS, or physical trunk are configured.", Examples: "boetticher network plan; boetticher network configure --yes; boetticher network status", Related: "foundation status, host status",
 	},
 	"foundation": {
-		Usage: "boetticher foundation status", Purpose: "Aggregate local controller, enrolled Proxmox, storage, and internal-network readiness.", Arguments: "No positional arguments.", Options: "Read-only; it does not run Ansible, repair state, or deploy guests.", Safety: "Missing physical LAB trunk and platform guests are informational during this phase. Only the qualified foundation components gate readiness.", Examples: "boetticher foundation status", Related: "controller status, host status, storage status, network status",
+		Usage: "boetticher foundation status|converge", Purpose: "Aggregate or safely converge local controller, enrolled Proxmox, storage, and internal-network readiness.", Arguments: "status is read-only. converge repeats the same native checks and stops at trust, preparation, network adoption, or destructive storage decisions.", Options: "No flags. Use the explicit host, storage, and network commands shown by Next when approval is required.", Safety: "Never initializes a disk, changes trust, reloads networking, or deploys guests implicitly.", Examples: "boetticher foundation status; boetticher foundation converge", Related: "controller status, host status, storage status, network status",
 	},
 	"tui": {
 		Usage: "boetticher tui [--site DIR] [--offline]", Purpose: "Open the experimental interactive dashboard.", Arguments: "No positional arguments.", Options: "--site selects your private site directory; --offline skips live refresh and shows saved settings.", Safety: "The dashboard launches the same commands as the CLI, so changes still ask for their normal confirmation. Secrets are never command arguments. Use the direct CLI when you need zones, packet captures, JSON, or probe cleanup.", Examples: "boetticher tui --site ./my-boetticher", Related: "status --details, deploy, module, firewall, network test",
@@ -219,6 +201,7 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"network status":          helpSpecs["network foundation"],
 	"foundation":              helpSpecs["foundation"],
 	"foundation status":       helpSpecs["foundation"],
+	"foundation converge":     helpSpecs["foundation"],
 	"network test":            helpSpec{Usage: "boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--airvpn] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Check routes, DNS, policy, mTLS, and speed from temporary probes in selected zones.", Arguments: "No positional arguments. By default it visits all six modeled zones.", Options: "--zones selects a comma-separated subset; --capture adds a short tcpdump from a probe; --airvpn also checks the declared ARR source through AirVPN; --cleanup-only removes a stale Boetticher probe; --json is for tools; connection options select the Proxmox certificate path.", Safety: "Advanced and live. It creates only recognised unprivileged LXC probes in VMIDs 910-919 and never changes firewall policy. --airvpn requires enabled ARR and AirVPN, stops and restarts only the declared AirVPN LXC to prove ARR has no direct escape, and restores it even after a failed check. It tries cleanup after every run; resolve a cleanup failure before retrying. It leaves your saved settings alone.", Examples: "boetticher network test --site ./my-boetticher; boetticher network test --airvpn --site ./my-boetticher", Related: "network trunk status, firewall diff, dhcp leases, status --details"},
 	"hardware usb list":       helpSpecs["hardware"],
 	"hardware usb status":     helpSpecs["hardware"],
@@ -267,8 +250,8 @@ func CommandReferenceMarkdown() string {
 	var document strings.Builder
 	document.WriteString("---\nlayout: default\ntitle: Command reference\nsection: commands\ndescription: A generated menu of every public Boetticher command form.\n---\n\n")
 	document.WriteString("# Command reference\n\n")
-	document.WriteString("This page is generated from the same usage menu as `boetticher help`. Most days you will change the site, deploy the reviewed live plan, and check status. Add `--help` to any command for the friendly, full explanation.\n\n")
-	document.WriteString("## The usual loop\n\n```text\nboetticher bundle import ./boetticher-0.1.0.tar.gz --site ./my-boetticher\nboetticher deploy --site ./my-boetticher\nboetticher status --site ./my-boetticher --details --live\n```\n\n")
+	document.WriteString("This page is generated from the same usage menu as `boetticher help`. The foundation lifecycle is Controller-driven and uses native Linux and Proxmox state. Add `--help` to any command for the full explanation. Healthy repeat convergence reports `No changes required.`\n\n")
+	document.WriteString("## The usual loop\n\n```text\nboetticher controller status\nboetticher host status\nboetticher storage status\nboetticher network status\nboetticher foundation converge\n```\n\n")
 	document.WriteString("## Normal command menu\n\n```text\n")
 	for _, spec := range commandSpecs {
 		document.WriteString(spec.Usage + "\n")
@@ -279,6 +262,6 @@ func CommandReferenceMarkdown() string {
 	}
 	document.WriteString("```\n\n")
 	document.WriteString("## Need a hand?\n\n")
-	document.WriteString("```text\nboetticher help\nboetticher help --advanced\nboetticher deploy --help\nboetticher module configure --help\n```\n")
+	document.WriteString("```text\nboetticher help\nboetticher help --advanced\nboetticher foundation converge --help\nboetticher network configure --help\n```\n")
 	return strings.TrimRight(document.String(), "\n") + "\n"
 }

@@ -15,11 +15,6 @@ func shouldRunControllerNetwork(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	for _, arg := range args {
-		if arg == "--site" || strings.HasPrefix(arg, "--site=") {
-			return false
-		}
-	}
 	return args[0] == "plan" || args[0] == "configure" || args[0] == "status"
 }
 
@@ -56,7 +51,7 @@ func runControllerNetwork(args []string, input io.Reader, out io.Writer) error {
 		}
 		return renderNetworkStatus(out, plan)
 	case "configure":
-		yes, err := parseYesFlag(args[1:])
+		yes, adopt, err := parseNetworkConfigureFlags(args[1:])
 		if err != nil {
 			return err
 		}
@@ -68,7 +63,7 @@ func runControllerNetwork(args []string, input io.Reader, out io.Writer) error {
 			fmt.Fprintln(out, "\nInternal network already configured and healthy.\nNo changes required.")
 			return nil
 		}
-		if plan.State != "absent" {
+		if plan.State != "absent" && !(plan.State == "adoptable" && adopt) {
 			return fmt.Errorf("network configuration is not eligible: %s", plan.Detail)
 		}
 		if !yes {
@@ -85,48 +80,63 @@ func runControllerNetwork(args []string, input io.Reader, out io.Writer) error {
 		}
 		fresh, err := controllerhost.DiscoverNetwork(ctx, transport, config)
 		if err != nil {
+			renderNetworkFailure(out, "Network configuration was not started.", err.Error(), "No network change was applied.", "sudo boetticher network status")
 			return err
 		}
-		if fresh.State != "absent" {
+		if fresh.State != plan.State || !sameManagementPath(plan.Management, fresh.Management) {
 			return fmt.Errorf("network state changed during validation: %s", fresh.Detail)
 		}
-		command, err := controllerhost.NetworkConfigurationCommand(fresh)
+		command, err := controllerhost.NetworkConfigurationCommand(fresh, adopt)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintln(out, "\nConfiguring internal network...")
 		if _, err := transport.Run(ctx, command); err != nil {
+			renderNetworkFailure(out, "Network configuration failed.", err.Error(), "No verified network change was applied.", "sudo boetticher network status")
 			return fmt.Errorf("network configuration failed: %w", err)
 		}
 		post, err := controllerhost.DiscoverNetwork(ctx, transport, config)
 		if err != nil {
+			renderNetworkFailure(out, "Network configuration applied, but verification did not complete.", err.Error(), "vmbr1 configuration and host IPv6 suppression were applied.", "sudo boetticher network status")
 			return fmt.Errorf("network configuration applied, but verification did not complete: %w", err)
 		}
 		if post.State != "exact" || !sameManagementPath(fresh.Management, post.Management) {
+			renderNetworkFailure(out, "Network configuration applied, but verification failed.", "protected management-path verification failed", "vmbr1 configuration and host IPv6 suppression were applied.", "sudo boetticher network status")
 			return errors.New("network configuration applied, but protected management-path verification failed")
 		}
-		config.Network = &post.Config
 		if err := persistNetworkConfig(config, post.Config); err != nil {
+			renderNetworkFailure(out, "Network configuration applied, but desired configuration was not saved.", err.Error(), "vmbr1 configuration and host IPv6 suppression were applied.", "sudo boetticher network status")
 			return fmt.Errorf("network configured but desired network choices could not be saved: %w", err)
 		}
-		fmt.Fprintln(out, "  HOME management path   protected\n  vmbr1                   created\n  VLAN awareness          enabled\n  Fresh SSH verification  passed\nDone.")
+		fmt.Fprintln(out, "  HOME management path   protected\n  vmbr1                   configured\n  VLAN awareness          enabled\n  Fresh SSH verification  passed\nDone.")
 		return nil
 	default:
 		return fmt.Errorf("unknown controller network command %q", args[0])
 	}
 }
 
-func parseYesFlag(args []string) (bool, error) {
-	if len(args) == 0 {
-		return false, nil
+func renderNetworkFailure(out io.Writer, heading, failed, applied, next string) {
+	fmt.Fprintf(out, "\n%s\n\nApplied:\n  %s\n\nFailure detail:\n  %s\n\nPreserved:\n  vmbr0\n  192.168.4.5\n  default route\n  storage\n\nNext:\n  %s\n", heading, applied, failed, next)
+}
+
+func parseNetworkConfigureFlags(args []string) (yes, adopt bool, err error) {
+	for _, arg := range args {
+		switch {
+		case arg == "--yes" && !yes:
+			yes = true
+		case arg == "--adopt-existing" && !adopt:
+			adopt = true
+		default:
+			return false, false, errors.New("usage: boetticher network configure [--adopt-existing] [--yes]")
+		}
 	}
-	if len(args) == 1 && args[0] == "--yes" {
-		return true, nil
-	}
-	return false, errors.New("usage: boetticher network configure [--yes]")
+	return yes, adopt, nil
 }
 
 func persistNetworkConfig(config controllerhost.LabConfig, network controllerhost.NetworkConfig) error {
+	if config.Network != nil && *config.Network == network {
+		return nil
+	}
 	config.Network = &network
 	return controllerhost.SaveConfig(config)
 }
@@ -146,9 +156,13 @@ func sameManagementPath(left, right controllerhost.ManagementPath) bool {
 func renderNetworkPlan(out io.Writer, plan controllerhost.NetworkPlan) {
 	fmt.Fprintln(out, "Internal network foundation")
 	fmt.Fprintf(out, "\nProtected HOME management\n  Address:        %s\n  Bridge:         %s\n  Physical path:  %s\n  Default route:  %s via %s\n", plan.Management.Address, plan.Management.Bridge, strings.Join(plan.Management.Members, ", "), plan.Management.EgressDevice, plan.Management.Gateway)
-	fmt.Fprintln(out, "\nWill create:\n  Bridge:         vmbr1\n  VLAN aware:     yes\n  Host address:   none\n  Physical ports: none")
+	fmt.Fprintln(out, "\nDesired bridge state:\n  Bridge:         vmbr1\n  VLAN aware:     yes\n  Host address:   none\n  Host IPv6:      disabled\n  Physical ports: none")
 	fmt.Fprintln(out, "\nLogical VLANs:\n  5   TRANSIT\n  10  INFRA\n  20  SERVERS\n  30  TRUSTED\n  40  SANDBOX\n  99  MGMT")
 	fmt.Fprintln(out, "\nWill NOT change:\n  vmbr0\n  HOME address\n  HOME default route\n  physical NIC membership\n  guests\n  storage\n  firewall rules")
+	if plan.State == "adoptable" {
+		fmt.Fprintf(out, "\nExisting internal bridge found: vmbr1\n  VLAN aware:       yes\n  Physical members: none\n  Configured IP:    none\n  Runtime address:  %s\n  Gateway:          none\n", strings.Join(plan.Bridge.HostAddresses, ", "))
+		fmt.Fprintln(out, "Boetticher can adopt this bridge and disable host IPv6 on vmbr1.\nRequires --adopt-existing and confirmation.\nWill change:\n  Persist Boetticher ownership of vmbr1\n  Disable the Proxmox host IPv6 stack on vmbr1")
+	}
 	if plan.State == "conflict" {
 		fmt.Fprintf(out, "\nNetwork state: conflict — %s\n", plan.Detail)
 	}
@@ -169,6 +183,7 @@ func renderNetworkStatus(out io.Writer, plan controllerhost.NetworkPlan) error {
 		fmt.Fprintln(out, "PASS  Internal bridge   vmbr1")
 		fmt.Fprintln(out, "PASS  VLAN awareness    enabled")
 		fmt.Fprintln(out, "PASS  Host IP           none")
+		fmt.Fprintln(out, "PASS  Host IPv6         disabled (persistent and live)")
 		fmt.Fprintln(out, "PASS  Physical member   none")
 		fmt.Fprintln(out, "Logical VLANs:\n  5,10,20,30,40,99")
 		fmt.Fprintln(out, "\nNetwork foundation: PASS")

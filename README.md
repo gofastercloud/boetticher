@@ -15,9 +15,10 @@ VMs and Linux Containers remain yours.
 The name is a tiny chemistry-show wink. The result is less *Breaking Bad* and
 more *breaking out the good gear*.
 
-Version 0.1.0 keeps the everyday rhythm small: import a signed release bundle,
-make a live plan, deploy that exact plan, and check the lab. StreamDeck now
-lives on the external companion Pi rather than in a Proxmox guest.
+The supported lifecycle is Controller-driven: bootstrap the Controller, enroll
+and prepare Proxmox, recognize or initialize dedicated storage, configure the
+virtual network, and check the foundation. Application deployment and the
+physical LAB trunk are later phases.
 
 ## Start here
 
@@ -27,41 +28,34 @@ generated command menu.
 
 ## Quickstart
 
-On a fresh host, replace `PROXMOX_HOME_IP` and the certificate path with your
-real values:
+On the Controller, use the following sequence. Replace the Proxmox address and
+the verified host-key material with the values from the independent Mac trust
+ceremony:
 
 ```text
-boetticher init --site-dir my-boetticher
-boetticher enroll --site my-boetticher --bootstrap-address PROXMOX_HOME_IP --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
-boetticher bundle import ./boetticher-0.1.0.tar.gz --site my-boetticher
-boetticher deploy --site my-boetticher
-boetticher status --site my-boetticher --live
+boetticher controller bootstrap --operator pi --confirm-key-login
+boetticher controller status
+boetticher host identity create
+boetticher host trust import --address PROXMOX_HOME_IP --key 'ssh-ed25519 VERIFIED_HOST_KEY'
+boetticher host enroll root@PROXMOX_HOME_IP
+boetticher host status
+boetticher host prepare
+boetticher storage plan
+boetticher storage initialize --device /dev/disk/by-id/ata-Timetec_MS21_PL220510SCC1TB0785 --confirm
+boetticher network plan
+boetticher network configure --adopt-existing
+boetticher foundation status
 ```
 
-Keep an independent copy of the age recovery identity created during setup.
-The guide has the calm version of the rest.
-
-The optional Companion is deliberately added after the core lab is healthy and
-the guarded physical trunk is attached. Give Boetticher the Pi's physical
-`eth0` MAC, deploy the derived SERVERS reservation and bastion route, then
-configure the Pi at its fixed lab address:
-
-```text
-boetticher companion add --mac COMPANION_ETH0_MAC --confirm --site my-boetticher
-boetticher deploy --site my-boetticher
-boetticher companion setup --host-key 'ssh-ed25519 VERIFIED_HOST_KEY' --confirm --site my-boetticher
-boetticher companion status --site my-boetticher
-```
-
-The fixed identity is `lab-display-01` at `10.10.20.50`; a HOME-side address is
-not saved as the managed Companion endpoint.
+Use `boetticher foundation converge` after the first explicit approvals. It
+repeats the native checks and reports `No changes required.` once the
+foundation is established. It never approves trust or erases a disk for you.
 
 ## Built with a lot of excellent open source
 
 Boetticher is the small connector between a pile of brilliant projects. Huge
 thanks to [Proxmox VE](https://www.proxmox.com/), [Debian](https://www.debian.org/),
-[Ansible](https://www.ansible.com/), [SOPS](https://github.com/getsops/sops),
-[age](https://github.com/FiloSottile/age), [Pulse](https://github.com/rcourtman/Pulse),
+[Ansible](https://www.ansible.com/), [Pulse](https://github.com/rcourtman/Pulse),
 [Blocky](https://github.com/0xERR0R/blocky), [PowerDNS](https://www.powerdns.com/),
 [Chrony](https://chrony-project.org/), [WireGuard](https://www.wireguard.com/),
 and every project named in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

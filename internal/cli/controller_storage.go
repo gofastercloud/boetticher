@@ -15,15 +15,7 @@ func shouldRunControllerStorage(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "plan" {
-		return true
-	}
-	for _, arg := range args {
-		if arg == "--site" || strings.HasPrefix(arg, "--site=") {
-			return false
-		}
-	}
-	return args[0] == "status" || args[0] == "initialize"
+	return args[0] == "plan" || args[0] == "status" || args[0] == "initialize"
 }
 
 func runControllerStorage(args []string, out io.Writer) error {
@@ -66,6 +58,7 @@ func runControllerStorage(args []string, out io.Writer) error {
 func runControllerStorageStatus(ctx context.Context, transport controllerhost.Transport, config controllerhost.LabConfig, out io.Writer) error {
 	plan, err := controllerhost.DiscoverStorage(ctx, transport, config)
 	if err != nil {
+		renderStorageFailure(out, "Storage discovery failed.", err.Error(), "No storage change was applied.", "sudo boetticher storage status")
 		return err
 	}
 	fmt.Fprintln(out, "Dedicated storage")
@@ -76,7 +69,13 @@ func runControllerStorageStatus(ctx context.Context, transport controllerhost.Tr
 	}
 	disk := plan.Selected
 	fmt.Fprintf(out, "PASS  Data disk       %s\n", diskLabel(*disk))
-	fmt.Fprintf(out, "PASS  Stable identity %s\n", config.Storage.Device)
+	identity := "unknown"
+	if config.Storage != nil {
+		identity = config.Storage.Device
+	} else if len(disk.StableIDs) == 1 {
+		identity = disk.StableIDs[0]
+	}
+	fmt.Fprintf(out, "PASS  Stable identity %s\n", identity)
 	fmt.Fprintln(out, "PASS  LVM PV          Active")
 	fmt.Fprintln(out, "PASS  Volume group    boetticher-vg")
 	fmt.Fprintln(out, "PASS  Thin pool       data")
@@ -109,6 +108,7 @@ func runControllerStorageInitialize(args []string, transport controllerhost.Tran
 		if config.Storage == nil && plan.Selected != nil {
 			config.Storage = &controllerhost.StorageConfig{Profile: controllerhost.StorageProfile, Device: firstStableID(*plan.Selected), GuestStorage: controllerhost.GuestStorageID}
 			if err := controllerhost.SaveConfig(config); err != nil {
+				renderStorageFailure(out, "Storage is initialized, but controller configuration was not saved.", err.Error(), "Native storage was preserved.", "sudo boetticher storage status")
 				return fmt.Errorf("storage is initialized but could not save controller selection: %w", err)
 			}
 		}
@@ -133,10 +133,13 @@ func runControllerStorageInitialize(args []string, transport controllerhost.Tran
 	// Re-discover immediately before crossing the destructive boundary.
 	fresh, err := controllerhost.DiscoverStorage(ctx, transport, config)
 	if err != nil {
+		renderStorageFailure(out, "Storage revalidation failed.", err.Error(), "No disk was changed.", "sudo boetticher storage plan")
 		return err
 	}
 	if fresh.State != "empty" || fresh.Selected == nil || !hasStableID(fresh.Selected.StableIDs, *device) {
-		return errors.New("candidate storage changed during validation; refusing initialization")
+		err := errors.New("candidate storage changed during validation; refusing initialization")
+		renderStorageFailure(out, "Storage initialization stopped.", err.Error(), "No disk was changed.", "sudo boetticher storage plan")
+		return err
 	}
 	command, err := controllerhost.InitializationCommand(fresh)
 	if err != nil {
@@ -144,14 +147,20 @@ func runControllerStorageInitialize(args []string, transport controllerhost.Tran
 	}
 	fmt.Fprintf(out, "Storage initialization: RUNNING\n  Device: %s\n  Model: %s\n", *device, diskLabel(*fresh.Selected))
 	if _, err := transport.Run(ctx, command); err != nil {
+		renderStorageFailure(out, "Storage initialization failed.", err.Error(), "No verified storage layout was established.", "sudo boetticher storage status")
 		return fmt.Errorf("storage initialization failed: %w", err)
 	}
 	config.Storage = &controllerhost.StorageConfig{Profile: controllerhost.StorageProfile, Device: *device, GuestStorage: controllerhost.GuestStorageID}
 	if err := controllerhost.SaveConfig(config); err != nil {
+		renderStorageFailure(out, "Storage initialized, but controller configuration was not saved.", err.Error(), "Native storage was preserved.", "sudo boetticher storage status")
 		return fmt.Errorf("storage initialized but could not save controller selection: %w", err)
 	}
 	fmt.Fprintln(out, "Storage initialization: PASS")
 	return nil
+}
+
+func renderStorageFailure(out io.Writer, heading, detail, applied, next string) {
+	fmt.Fprintf(out, "\n%s\n\nApplied:\n  %s\n\nFailure detail:\n  %s\n\nPreserved:\n  Proxmox boot disk\n  Existing LVM and guests\n  Network configuration\n\nNext:\n  %s\n", heading, applied, detail, next)
 }
 
 func renderStoragePlan(out io.Writer, plan controllerhost.StoragePlan) {

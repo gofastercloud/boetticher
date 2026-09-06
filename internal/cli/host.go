@@ -212,6 +212,9 @@ func runHostStatus(args []string, out io.Writer) error {
 	if *details {
 		renderHostDetails(out, inventory)
 	}
+	if !nodeOK || !servicesOK || !baseline {
+		return errors.New("Proxmox host readiness failed")
+	}
 	return nil
 }
 
@@ -280,12 +283,19 @@ func runHostPrepare(args []string, input io.Reader, out, errOut io.Writer) error
 	if err != nil {
 		return err
 	}
+	prepared, baselineErr := controllerhost.CheckBaseline(context.Background(), transport)
+	if baselineErr == nil && prepared {
+		fmt.Fprintln(out, "Proxmox host already prepared and healthy.")
+		fmt.Fprintln(out, "No changes required.")
+		return nil
+	}
 	if _, err := controllerhost.Collect(context.Background(), transport, false); err != nil {
 		return fmt.Errorf("revalidate Proxmox host before preparation: %w", err)
 	}
-	fmt.Fprintln(out, "Proxmox host preparation")
-	fmt.Fprintln(out, "\nWill configure:\n  Proxmox package repository policy\n  Required controller prerequisites\n  Headless laptop behavior")
-	fmt.Fprintln(out, "\nWill NOT change:\n  Guests\n  Storage\n  Network interfaces\n  Bridges\n  IP addresses\n  Firewall\n  Controller SSH identity\n  Existing recovery access")
+	fmt.Fprintln(out, "Preparing Proxmox...")
+	fmt.Fprintln(out, "\n  Repository policy      current after preparation")
+	fmt.Fprintln(out, "  Required packages      current after preparation")
+	fmt.Fprintln(out, "  Headless operation     current after preparation")
 	if !*yes {
 		if input == nil {
 			return errors.New("host preparation requires --yes or an interactive confirmation")
@@ -300,16 +310,19 @@ func runHostPrepare(args []string, input io.Reader, out, errOut io.Writer) error
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	fmt.Fprintln(out, "\nApplying host baseline...")
-	if err := controllerhost.RunPrepare(ctx, config, transport, out); err != nil {
+	if err := controllerhost.RunPrepare(ctx, config, transport, io.Discard); err != nil {
+		fmt.Fprintf(out, "\nHost preparation failed.\n\nSucceeded:\n  No baseline change was confirmed.\n\nPreserved:\n  Existing guests\n  Storage\n  Network interfaces\n  IP addresses\n  Controller SSH identity\n\nNext:\n  sudo boetticher host status\n")
 		return err
 	}
-	prepared, err := controllerhost.CheckBaseline(ctx, transport)
+	prepared, err = controllerhost.CheckBaseline(ctx, transport)
 	if err != nil {
+		fmt.Fprintf(out, "\nHost preparation applied, but verification failed.\n\nSucceeded:\n  Ansible preparation completed.\n\nNot changed:\n  Guests\n  Storage\n  Network interfaces\n  IP addresses\n\nNext:\n  sudo boetticher host status\n")
 		return err
 	}
 	if !prepared {
-		return errors.New("host preparation completed but baseline verification failed")
+		err := errors.New("host preparation completed but baseline verification failed")
+		fmt.Fprintf(out, "\nHost preparation applied, but verification failed.\n\nSucceeded:\n  Ansible preparation completed.\n\nNot changed:\n  Guests\n  Storage\n  Network interfaces\n  IP addresses\n\nNext:\n  sudo boetticher host status\n")
+		return err
 	}
 	fmt.Fprintln(out, "Host baseline: PASS")
 	return nil

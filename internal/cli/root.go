@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +23,8 @@ func RunWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 
 func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return runTUI(nil, input, out, errOut)
+		usage(out)
+		return errors.New("a command is required; choose a Controller foundation command")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 1 && args[0] == "help" && args[1] == "--advanced" {
@@ -31,6 +33,9 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 			usage(out)
 		}
 		return nil
+	}
+	if isLegacyLifecycleCommand(args[0]) {
+		return legacyLifecycleDisabled(args[0])
 	}
 	if helpRequested(args) {
 		commandHelp(args, out)
@@ -42,26 +47,14 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	case "host":
 		return runHost(args[1:], input, out, errOut)
 	case "foundation":
-		if len(args) == 1 && args[0] == "status" {
-			return runFoundation(nil, out)
+		if len(args) == 1 && (args[0] == "status" || args[0] == "converge") {
+			return runFoundation(args, out)
 		}
-		return fmt.Errorf("usage: boetticher foundation status")
-	case "init":
-		return runInit(args[1:], out)
-	case "tui":
-		return runTUI(args[1:], input, out, errOut)
-	case "enroll":
-		return runEnroll(args[1:], out)
-	case "plan":
-		return runPlan(args[1:], out)
-	case "bundle":
-		return runBundle(args[1:], out)
+		return fmt.Errorf("usage: boetticher foundation status|converge")
 	case "ssh-config":
 		return runSSHConfig(args[1:], out)
 	case "access":
 		return runAccess(args[1:], out)
-	case "pki":
-		return runPKI(args[1:], out)
 	case "firewall":
 		return runFirewall(args[1:], out)
 	case "dhcp":
@@ -78,16 +71,8 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runNetworkWithInput(args[1:], input, out)
 	case "hardware":
 		return runHardware(args[1:], out)
-	case "companion":
-		return runCompanion(args[1:], out)
 	case "recover":
 		return runRecovery(args[1:], out)
-	case "deploy":
-		return runDeploy(args[1:], out)
-	case "status":
-		return runStatus(args[1:], out)
-	case "update":
-		return runUpdate(args[1:], out)
 	case "logs":
 		return runLogs(args[1:], out)
 	case "aiops":
@@ -95,6 +80,19 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	}
 	fmt.Fprintln(errOut, "usage: boetticher <command>")
 	return fmt.Errorf("unknown or incomplete command %q", strings.Join(args, " "))
+}
+
+func legacyLifecycleDisabled(command string) error {
+	return fmt.Errorf("boetticher %s is unavailable in the Controller foundation workflow; use controller, host, storage, network, or foundation commands", command)
+}
+
+func isLegacyLifecycleCommand(command string) bool {
+	switch command {
+	case "init", "enroll", "plan", "bundle", "deploy", "status", "update", "tui", "pki", "companion":
+		return true
+	default:
+		return false
+	}
 }
 
 func helpRequested(args []string) bool {

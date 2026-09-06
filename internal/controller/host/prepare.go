@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -79,19 +80,47 @@ func RunPrepare(ctx context.Context, config LabConfig, transport Transport, out 
 	command := exec.CommandContext(commandContext, ansibleVenv, "-i", path, filepath.Join(playbookDir, "prepare.yml"))
 	command.Dir = playbookDir
 	command.Env = cleanAnsibleEnvironment(runtime)
-	command.Stdout = out
-	command.Stderr = out
+	var ansibleOutput bytes.Buffer
+	command.Stdout = &ansibleOutput
+	command.Stderr = &ansibleOutput
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := command.Run(); err != nil {
+		appendOperationLog("host prepare", ansibleOutput.String())
 		if errors.Is(commandContext.Err(), context.DeadlineExceeded) {
 			return errors.New("Proxmox host preparation timed out")
 		}
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return fmt.Errorf("Proxmox host preparation interrupted: %w", ctx.Err())
 		}
-		return fmt.Errorf("Proxmox host preparation failed: %w", err)
+		detail := strings.TrimSpace(ansibleOutput.String())
+		if detail == "" {
+			return fmt.Errorf("Proxmox host preparation failed: %w", err)
+		}
+		lines := strings.Split(detail, "\n")
+		if len(lines) > 12 {
+			lines = lines[len(lines)-12:]
+		}
+		return fmt.Errorf("Proxmox host preparation failed: %w: %s", err, strings.Join(lines, " "))
 	}
+	appendOperationLog("host prepare", ansibleOutput.String())
 	return nil
+}
+
+func appendOperationLog(operation, output string) {
+	if strings.TrimSpace(output) == "" {
+		return
+	}
+	const maxOperationLogOutput = 64 << 10
+	if len(output) > maxOperationLogOutput {
+		output = output[len(output)-maxOperationLogOutput:]
+	}
+	file, err := os.OpenFile("/var/log/boetticher/operations.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = fmt.Fprintf(file, "[%s] %s\n", time.Now().UTC().Format(time.RFC3339), operation)
+	_, _ = file.WriteString(output + "\n")
 }
 
 func cleanAnsibleEnvironment(runtime string) []string {

@@ -7,9 +7,9 @@ description: Prepare a Raspberry Pi as the local Boetticher controller.
 
 # The local controller
 
-Phase one turns a clean Raspberry Pi OS Lite Trixie installation into the
-machine that will eventually run Boetticher’s operator commands. It does not
-enroll with Proxmox, create a site, manage lab guests, or deploy the lab.
+The Controller is the only supported operator entry point. Bootstrap it first,
+then use the host, storage, network, and foundation commands below to converge
+the Proxmox foundation.
 
 ## Supported starting point
 
@@ -24,7 +24,7 @@ authentication is disabled.
 
 The maintainer payload contains a prebuilt ARM64 `boetticher` binary, its
 private Ansible playbook and roles, the pinned Azlux public key, an installer,
-and `SHA256SUMS`. It contains no site, credential, SOPS, Age, appliance, or
+and `SHA256SUMS`. It contains no site, credential, appliance, or
 workstation-cache data.
 
 On the Pi, with the payload copied to `/home/pi/controller-release`:
@@ -62,7 +62,7 @@ sudo boetticher controller status
 
 `controller bootstrap` runs one local Ansible playbook and then local readiness
 checks. `controller status` is read-only: it does not repair the host, run
-Ansible, change Blinkt, load a site, use Age/SOPS, or contact Proxmox.
+Ansible, change Blinkt, load lab state, or contact Proxmox.
 
 The controller installs Go 1.26.5 under
 `/opt/boetticher/toolchains/go1.26.5/` and Ansible Core 2.19.11 in
@@ -98,7 +98,7 @@ The colours mean:
 | Green | Local controller readiness passed |
 | Red | Bootstrap or local readiness failed |
 
-Software success is not physical LED acceptance. During live qualification,
+Software success is not physical LED acceptance. During live acceptance,
 observe each colour and record that result separately. The bootstrap command
 continues safe host setup if GPIO output is unavailable, while status reports
 the GPIO check as failed.
@@ -115,6 +115,7 @@ the GPIO check as failed.
 | `/var/lib/boetticher/controller/` | Controller state, including the log2ram boot marker |
 | `/var/cache/boetticher/` | Downloaded package/toolchain cache |
 | `/var/log/boetticher/bootstrap.log` | Bounded bootstrap output |
+| `/var/log/boetticher/operations.log` | Bounded underlying host-operation output |
 
 The playbook enables Debian security-only unattended upgrades and APT timers,
 without automatic reboot or automatic Boetticher/Go/Ansible upgrades. It keeps
@@ -129,9 +130,10 @@ unmount or reboot.
 
 ## Phase-one boundary
 
-This phase prepares only the local controller. Proxmox enrollment, site creation,
-Age/SOPS material, PKI, appliance bundles, lab deployment, Companion services,
-Kiosk, StreamDeck, and Pulse integration belong to later phases.
+This phase prepares the Controller and the Proxmox foundation. Firewall,
+platform guests, physical trunks, and application modules belong to later
+phases. No alternate workstation, TUI, kiosk, or Companion bootstrap path is
+supported.
 
 The pinned inputs are [Raspberry Pi OS](https://www.raspberrypi.com/documentation/computers/os.html)
 Debian 13/Trixie ARM64, [Go 1.26.5](https://go.dev/dl/),
@@ -181,7 +183,7 @@ existing root key file; do not replace other recovery keys.
 `host enroll` performs strict read-only checks with the persistent controller
 identity and records only `/etc/boetticher/lab.yml` with the verified address,
 root user, node binding, and `no-subscription` repository policy. It does not
-create tokens, secrets, PKI, site state, guests, storage, or networking.
+create API tokens, application secrets, PKI, guests, storage, or networking.
 
 `host status` is read-only. `--details` shows existing guests as operator-owned,
 Proxmox storage, stable `/dev/disk/by-id` identities, LVM, mounts, and network
@@ -203,7 +205,7 @@ host only; disk initialization belongs to a later, explicitly authorized phase.
 
 ## Phase 3A: dedicated data storage
 
-Storage qualification is a separate destructive boundary. Start with both
+Storage initialization is a separate destructive boundary. Start with both
 controller and host readiness passing, then review the read-only plan:
 
 ```sh
@@ -233,11 +235,11 @@ to `/etc/boetticher/lab.yml` only after successful verification.
 
 `storage status` is read-only. Repeating `storage initialize --confirm` on the
 exact healthy layout reports that no changes are required; conflicting or
-partial layouts are never wiped automatically. A small reversible Proxmox
-allocation smoke test is run without creating a guest. Rebooting Proxmox is a
-separate explicit approval gate, followed by rechecking the PV, VG, thin pool,
-storage registration, guests, and management network. Independent Mac/root
-access remains the recovery path if a storage step fails.
+partial layouts are never wiped automatically. During live acceptance, run a
+small reversible Proxmox allocation smoke test without creating a guest.
+Rebooting Proxmox is a separate explicit approval gate, followed by rechecking
+the PV, VG, thin pool, storage registration, guests, and management network.
+Independent Mac/root access remains the recovery path if a storage step fails.
 
 ## Phase 3B: virtual network foundation
 
@@ -269,17 +271,52 @@ Review the protected path before configuration:
 
 ```sh
 sudo boetticher network plan
-sudo boetticher network configure --yes
+sudo boetticher network configure --adopt-existing
 sudo boetticher network status
 sudo boetticher foundation status
 ```
 
 `network plan` and `network status` are read-only. `network configure` adds
-only an absent, exact `vmbr1` stanza with VLAN awareness and no address,
+an absent `vmbr1` stanza with VLAN awareness and no address,
 gateway, or physical port. It never rewrites `vmbr0`, changes `192.168.4.5`,
 changes the default route, attaches the second NIC, creates host VLAN
 subinterfaces, enables forwarding, or configures DHCP, DNS, firewall, guests,
 or switches. An existing conflicting `vmbr1` is reported and not adopted.
+
+A compatible existing bridge requires explicit adoption:
+
+```sh
+sudo boetticher network configure --adopt-existing
+```
+
+The command displays the protected HOME path and runtime addresses before
+asking for confirmation (or accepts `--yes` for deliberate scripted use).
+Adoption requires a VLAN-aware, portless bridge with no configured addresses,
+gateway, or unknown interface directives. Runtime IPv6 link-local addresses
+alone are compatible; configured link-local, global IPv6, IPv4, and gateway
+routes remain conflicts.
+
+Boetticher owns `/etc/sysctl.d/70-boetticher-vmbr1.conf`, setting
+`net.ipv6.conf.vmbr1.disable_ipv6=1`, and a vmbr1-only
+`/etc/network/if-up.d/boetticher-vmbr1` hook. The hook reapplies suppression
+after bridge creation, including at boot; configuration requires ifupdown2
+script support to be enabled. Existing unrelated files at either path are
+rejected. This disables host IPv6 participation on vmbr1 without adding any
+Ethernet filtering or globally disabling IPv6.
+
+After configuration and again after an explicitly authorized Proxmox reboot,
+verify:
+
+```sh
+ip -6 addr show dev vmbr1
+sysctl net.ipv6.conf.vmbr1.disable_ipv6
+```
+
+There must be no IPv6 address and the sysctl must equal `1`. Verify fresh
+Pi-to-Proxmox SSH, unchanged vmbr0/nic0/192.168.4.5/default route, no vmbr1 host
+IPv4 or physical ports, VLAN awareness, repeat configure with no changes, and
+`foundation status` PASS. Guest IPv6 L2 forwarding requires its own live
+traffic check; local tests do not establish that result.
 
 The six VLAN numbers remain logical desired configuration for later guest
 deployment. They do not claim zone isolation in this phase. Configuration is
