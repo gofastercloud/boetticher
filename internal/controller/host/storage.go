@@ -64,7 +64,7 @@ func DiscoverStorage(ctx context.Context, transport Transport, config LabConfig)
 	if err := json.Unmarshal(lsblk.Stdout, &listing); err != nil {
 		return StoragePlan{}, fmt.Errorf("decode block devices: %w", err)
 	}
-	byIDResult, err := transport.Run(ctx, "find /dev/disk/by-id -maxdepth 1 -type l -printf '%f -> %p\\n'")
+	byIDResult, err := transport.Run(ctx, "for path in /dev/disk/by-id/*; do [ -L \"$path\" ] && printf '%s -> %s\\n' \"${path##*/}\" \"$(readlink -f \"$path\")\"; done")
 	if err != nil {
 		return StoragePlan{}, fmt.Errorf("read stable disk identities: %w", err)
 	}
