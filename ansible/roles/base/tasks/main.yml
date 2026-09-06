@@ -279,7 +279,8 @@
 
 - name: Force IPv4 for AirVPN-selected appliance package maintenance
   ansible.builtin.copy:
-    content: 'Acquire::ForceIPv4 "true";\n'
+    content: |
+      Acquire::ForceIPv4 "true";
     dest: /etc/apt/apt.conf.d/99boetticher-force-ipv4
     owner: root
     group: root
