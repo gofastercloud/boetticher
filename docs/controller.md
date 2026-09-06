@@ -1,0 +1,141 @@
+---
+layout: default
+title: Controller
+section: controller
+description: Prepare a Raspberry Pi as the local Boetticher controller.
+---
+
+# The local controller
+
+Phase one turns a clean Raspberry Pi OS Lite Trixie installation into the
+machine that will eventually run Boetticher’s operator commands. It does not
+enroll with Proxmox, create a site, manage lab guests, or deploy the lab.
+
+## Supported starting point
+
+Use Raspberry Pi OS Lite based on Debian 13 (Trixie) with the 64-bit ARM64
+userspace on a Raspberry Pi 3, 4, or 5-class board. Keep the existing hostname,
+network placement, routes, SSH host keys, operator keys, and `pi` passwordless
+sudo access unchanged. Test a new public-key SSH session before running the
+installer; `--confirm-key-login` records that acknowledgement before password
+authentication is disabled.
+
+## Install from a local payload
+
+The maintainer payload contains a prebuilt ARM64 `boetticher` binary, its
+private Ansible playbook and roles, the pinned Azlux public key, an installer,
+and `SHA256SUMS`. It contains no site, credential, SOPS, Age, appliance, or
+workstation-cache data.
+
+On the Pi, with the payload copied to `/home/pi/controller-release`:
+
+```sh
+sudo sh /home/pi/controller-release/install.sh \
+  --from-dir /home/pi/controller-release \
+  --operator pi \
+  --confirm-key-login
+```
+
+The installer validates the OS and architecture, verifies the archive checksum,
+installs a root-owned versioned release, prepares `/opt/boetticher/venv`, and
+invokes the local controller bootstrap. A failed checksum or unsafe archive
+leaves the previous installed release untouched. Repeating the same payload is
+safe and does not edit an existing versioned release.
+
+The eventual public form is intentionally documented without a fake location:
+
+```sh
+curl -fsSL "$RELEASE_BASE/install.sh" | \
+  sudo sh -s -- --version "$VERSION" --operator pi --confirm-key-login
+```
+
+`RELEASE_BASE` must be a real, published HTTPS release location. Until one is
+published, use `--from-dir`; the installer does not silently fall back to local
+files after a failed download or checksum check.
+
+## Bootstrap and status
+
+```sh
+sudo boetticher controller bootstrap --operator pi --confirm-key-login
+sudo boetticher controller status
+```
+
+`controller bootstrap` runs one local Ansible playbook and then local readiness
+checks. `controller status` is read-only: it does not repair the host, run
+Ansible, change Blinkt, load a site, use Age/SOPS, or contact Proxmox.
+
+The controller installs Go 1.26.5 under
+`/opt/boetticher/toolchains/go1.26.5/` and Ansible Core 2.19.11 in
+`/opt/boetticher/venv/`. The Boetticher binary is always the prebuilt payload;
+the Pi does not compile it. Go checks use `GOTOOLCHAIN=local`.
+
+If log2ram was installed during this boot, bootstrap reports a failed readiness
+check and asks for an explicit reboot:
+
+```text
+Controller readiness: FAIL — reboot required to activate log2ram
+
+Next:
+  sudo reboot
+```
+
+After reconnecting with a fresh key-authenticated SSH session, rerun bootstrap
+and status. A successful final state reports `Controller readiness: PASS`.
+
+## Blinkt
+
+The short-lived `/opt/boetticher/current/controller/libexec/boetticher-bootstrap-led`
+helper drives the Pimoroni Blinkt at low brightness through the discovered GPIO
+chip and header lines GPIO23/GPIO24. It writes one frame and exits; there is no
+controller daemon or socket.
+
+The colours mean:
+
+| Colour | Meaning |
+| --- | --- |
+| Blue | Bootstrap is running |
+| Amber | A reboot is required for log2ram activation |
+| Green | Local controller readiness passed |
+| Red | Bootstrap or local readiness failed |
+
+Software success is not physical LED acceptance. During live qualification,
+observe each colour and record that result separately. The bootstrap command
+continues safe host setup if GPIO output is unavailable, while status reports
+the GPIO check as failed.
+
+## Installed paths and maintenance
+
+| Path | Purpose |
+| --- | --- |
+| `/opt/boetticher/releases/<build-id>/` | Immutable installed payload |
+| `/opt/boetticher/current` | Active release symlink |
+| `/opt/boetticher/venv/` | Private Ansible environment |
+| `/opt/boetticher/toolchains/go1.26.5/` | Pinned Go toolchain |
+| `/etc/boetticher/controller.yml` | Minimal operator and Blinkt configuration |
+| `/var/lib/boetticher/controller/` | Controller state, including the log2ram boot marker |
+| `/var/cache/boetticher/` | Downloaded package/toolchain cache |
+| `/var/log/boetticher/bootstrap.log` | Bounded bootstrap output |
+
+The playbook enables Debian security-only unattended upgrades and APT timers,
+without automatic reboot or automatic Boetticher/Go/Ansible upgrades. It keeps
+journald at 32 MiB persistent and 16 MiB runtime limits, and rotates bootstrap
+logs daily for seven files.
+
+log2ram uses the signed Azlux Trixie repository with its pinned public key and a
+128 MiB RAM-backed `/var/log`. It is not a backup: logs not synchronized before
+a sudden power loss can be lost. The native log2ram service and synchronization
+timer remain responsible for persistence; bootstrap never forces a live
+unmount or reboot.
+
+## Phase-one boundary
+
+This phase prepares only the local controller. Proxmox enrollment, site creation,
+Age/SOPS material, PKI, appliance bundles, lab deployment, Companion services,
+Kiosk, StreamDeck, and Pulse integration belong to later phases.
+
+The pinned inputs are [Raspberry Pi OS](https://www.raspberrypi.com/documentation/computers/os.html)
+Debian 13/Trixie ARM64, [Go 1.26.5](https://go.dev/dl/),
+[Ansible Core 2.19.11](https://pypi.org/project/ansible-core/2.19.11/), and
+[Azlux log2ram](https://github.com/azlux/log2ram). The Go archive checksum and
+Ansible pin are recorded in the repository; the Azlux archive key is shipped as
+a public runtime asset.

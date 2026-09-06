@@ -37,6 +37,8 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return nil
 	}
 	switch args[0] {
+	case "controller":
+		return runController(args[1:], out, errOut)
 	case "init":
 		return runInit(args[1:], out)
 	case "tui":

@@ -1,0 +1,10 @@
+---
+controller_go_version: "1.26.5"
+controller_go_sha256: "fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49"
+controller_go_archive: "/var/cache/boetticher/go{{ controller_go_version }}.linux-arm64.tar.gz"
+controller_go_root: "/opt/boetticher/toolchains/go{{ controller_go_version }}"
+controller_log2ram_size: "128M"
+controller_log2ram_key_fingerprint: "98B824A5FA7D3A10FDB225B7CA548A0A0312D8E6"
+controller_operator_user: "pi"
+controller_blinkt_enabled: true
+controller_blinkt_gpiochip: 0

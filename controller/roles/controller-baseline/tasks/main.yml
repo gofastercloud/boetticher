@@ -1,0 +1,21 @@
+---
+- name: Install controller packages
+  ansible.builtin.include_tasks: packages.yml
+
+- name: Install the pinned controller Go toolchain
+  ansible.builtin.include_tasks: go.yml
+
+- name: Configure controller maintenance
+  ansible.builtin.include_tasks: maintenance.yml
+
+- name: Apply minimal controller SSH hardening
+  ansible.builtin.include_tasks: ssh.yml
+
+- name: Configure bounded controller logging
+  ansible.builtin.include_tasks: logging.yml
+
+- name: Apply handlers before log2ram installation
+  ansible.builtin.meta: flush_handlers
+
+- name: Install and configure log2ram last
+  ansible.builtin.include_tasks: log2ram.yml

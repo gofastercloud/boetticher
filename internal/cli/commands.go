@@ -19,6 +19,7 @@ type helpSpec struct {
 }
 
 var commandSpecs = []commandSpec{
+	{Usage: "boetticher controller bootstrap|status [--operator USER] [--confirm-key-login]"},
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--root-age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]"},
 	{Usage: "boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]"},
 	{Usage: "boetticher plan [--site DIR] [--live] [--json]"},
@@ -58,6 +59,15 @@ var advancedCommandSpecs = []commandSpec{
 // paths explicit makes every help request useful without making command
 // dispatch depend on a second parser or on a recursive help hint.
 var helpSpecs = map[string]helpSpec{
+	"controller": {
+		Usage: "boetticher controller bootstrap|status [--operator USER] [--confirm-key-login]", Purpose: "Prepare and inspect the local Raspberry Pi controller without a site or lab connection.", Arguments: "bootstrap configures the local controller; status reads local readiness only.", Options: "--operator selects the existing local operator account; bootstrap requires --confirm-key-login before SSH password authentication is disabled.", Safety: "Local-only. These commands never load site state, secrets, certificates, Proxmox credentials, or remote lab connections.", Examples: "boetticher controller bootstrap --operator pi --confirm-key-login; boetticher controller status", Related: "init, enroll",
+	},
+	"controller bootstrap": {
+		Usage: "boetticher controller bootstrap [--operator USER] [--confirm-key-login]", Purpose: "Configure the local Raspberry Pi controller and run final local readiness checks.", Arguments: "No positional arguments.", Options: "--operator selects the existing local operator account; --confirm-key-login confirms that a fresh public-key SSH session was tested.", Safety: "Local-only and retryable. It does not enroll or deploy the lab. A reboot is never automatic; repeat bootstrap after reconnecting.", Examples: "boetticher controller bootstrap --operator pi --confirm-key-login", Related: "controller status",
+	},
+	"controller status": {
+		Usage: "boetticher controller status [--operator USER]", Purpose: "Read local controller readiness without repairing or contacting Proxmox.", Arguments: "No positional arguments.", Options: "--operator selects the local account whose effective SSH policy is checked.", Safety: "Read-only. It does not install packages, run Ansible, change LEDs, load a site, or contact a remote system.", Examples: "boetticher controller status", Related: "controller bootstrap",
+	},
 	"tui": {
 		Usage: "boetticher tui [--site DIR] [--offline]", Purpose: "Open the experimental interactive dashboard.", Arguments: "No positional arguments.", Options: "--site selects your private site directory; --offline skips live refresh and shows saved settings.", Safety: "The dashboard launches the same commands as the CLI, so changes still ask for their normal confirmation. Secrets are never command arguments. Use the direct CLI when you need zones, packet captures, JSON, or probe cleanup.", Examples: "boetticher tui --site ./my-boetticher", Related: "status --details, deploy, module, firewall, network test",
 	},

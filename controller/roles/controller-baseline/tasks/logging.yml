@@ -1,0 +1,43 @@
+---
+- name: Create bounded controller log directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/systemd/journald.conf.d, mode: '0755'}
+    - {path: /var/log/boetticher, mode: '0700'}
+
+- name: Configure bounded persistent journald storage
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/60-boetticher-controller.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Journal]
+      Storage=persistent
+      SystemMaxUse=32M
+      RuntimeMaxUse=16M
+      MaxRetentionSec=7day
+      Compress=yes
+  notify: restart journald
+
+- name: Configure controller bootstrap log rotation
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/boetticher-controller
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      /var/log/boetticher/*.log {
+          daily
+          rotate 7
+          size 1M
+          compress
+          missingok
+          notifempty
+          create 0600 root root
+      }

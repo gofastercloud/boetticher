@@ -99,7 +99,7 @@ func TestCommandReferenceIsGeneratedFromCLIContract(t *testing.T) {
 
 func TestDocsSiteKeepsOneSmallGuideSet(t *testing.T) {
 	root := repositoryRoot(t)
-	guideNames := []string{"index.md", "start.md", "lab.md", "modules.md", "commands.md"}
+	guideNames := []string{"index.md", "start.md", "lab.md", "modules.md", "commands.md", "controller.md"}
 	entries, err := os.ReadDir(filepath.Join(root, "docs"))
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,68 @@
+#!/usr/bin/python3
+"""Write one low-brightness Blinkt bootstrap frame and exit."""
+
+import argparse
+import sys
+
+import lgpio
+
+DATA = 23
+CLOCK = 24
+PIXELS = 8
+BRIGHTNESS = 2
+
+COLOURS = {
+    "running": (0, 40, 180),
+    "ready": (0, 150, 30),
+    "reboot": (190, 80, 0),
+    "failed": (180, 0, 0),
+    "off": (0, 0, 0),
+}
+
+
+def write_frame(chip, colours):
+    def write_bit(value):
+        lgpio.gpio_write(chip, DATA, int(bool(value)))
+        lgpio.gpio_write(chip, CLOCK, 1)
+        lgpio.gpio_write(chip, CLOCK, 0)
+
+    def write_byte(value):
+        for shift in range(7, -1, -1):
+            write_bit(value & (1 << shift))
+
+    for _ in range(4):
+        write_byte(0)
+
+    for red, green, blue in colours:
+        for value in (0xE0 | BRIGHTNESS, blue, green, red):
+            write_byte(value)
+
+    for _ in range(36):
+        write_bit(0)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--chip", required=True, type=int)
+    parser.add_argument("state", choices=COLOURS)
+    args = parser.parse_args()
+
+    chip = lgpio.gpiochip_open(args.chip)
+    claimed = []
+    try:
+        for pin in (DATA, CLOCK):
+            lgpio.gpio_claim_output(chip, pin, 0)
+            claimed.append(pin)
+        write_frame(chip, [COLOURS[args.state]] * PIXELS)
+    finally:
+        for pin in reversed(claimed):
+            lgpio.gpio_free(chip, pin)
+        lgpio.gpiochip_close(chip)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:  # pragma: no cover - hardware error path
+        print(f"Blinkt update failed: {error}", file=sys.stderr)
+        sys.exit(1)

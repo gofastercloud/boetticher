@@ -1,0 +1,107 @@
+---
+- name: Check for an unrelated /usr/local/go installation
+  ansible.builtin.stat:
+    path: /usr/local/go
+  register: controller_system_go
+
+- name: Refuse to replace an unrelated /usr/local/go installation
+  ansible.builtin.assert:
+    that:
+      - not controller_system_go.stat.exists
+    fail_msg: "/usr/local/go already exists; refusing to replace an unrelated Go installation"
+
+- name: Create controller cache and versioned toolchain directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /var/cache/boetticher, mode: '0755'}
+    - {path: "{{ controller_go_root }}", mode: '0755'}
+
+- name: Check an existing pinned Go extraction
+  ansible.builtin.command:
+    argv: ["{{ controller_go_root }}/bin/go", version]
+  register: controller_go_existing_check
+  changed_when: false
+  failed_when: false
+
+- name: Remove an incomplete pinned Go extraction
+  ansible.builtin.file:
+    path: "{{ controller_go_root }}"
+    state: absent
+  when:
+    - controller_go_existing_check.rc != 0 or ('go' + controller_go_version not in controller_go_existing_check.stdout | default(''))
+
+- name: Recreate the versioned Go directory after incomplete extraction cleanup
+  ansible.builtin.file:
+    path: "{{ controller_go_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: controller_go_existing_check.rc != 0 or ('go' + controller_go_version not in controller_go_existing_check.stdout | default(''))
+
+- name: Download the pinned Go archive
+  ansible.builtin.get_url:
+    url: "https://go.dev/dl/go{{ controller_go_version }}.linux-arm64.tar.gz"
+    dest: "{{ controller_go_archive }}"
+    checksum: "sha256:{{ controller_go_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned Go toolchain
+  ansible.builtin.unarchive:
+    src: "{{ controller_go_archive }}"
+    dest: "{{ controller_go_root }}"
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+    creates: "{{ controller_go_root }}/bin/go"
+
+- name: Verify the pinned Go toolchain
+  ansible.builtin.command:
+    argv: ["{{ controller_go_root }}/bin/go", version]
+  environment:
+    GOTOOLCHAIN: local
+    GOWORK: off
+    GOPROXY: off
+  register: controller_go_check
+  changed_when: false
+
+- name: Require the pinned Go version
+  ansible.builtin.assert:
+    that:
+      - "'go' + controller_go_version in controller_go_check.stdout"
+    fail_msg: "installed Go did not report {{ controller_go_version }}"
+
+- name: Inspect existing public Go links
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    follow: false
+  loop:
+    - {path: /usr/local/bin/go}
+    - {path: /usr/local/bin/gofmt}
+  register: controller_go_links
+
+- name: Refuse to overwrite unrelated public Go links
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or (item.stat.islnk and item.stat.lnk_source == controller_go_root + '/bin/' + (item.path | basename))
+    fail_msg: "{{ item.path }} already exists and is not the pinned controller toolchain"
+  loop: "{{ controller_go_links.results }}"
+
+- name: Install public links to the pinned Go toolchain
+  ansible.builtin.file:
+    src: "{{ controller_go_root }}/bin/{{ item.name }}"
+    dest: "/usr/local/bin/{{ item.name }}"
+    state: link
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - {name: go}
+    - {name: gofmt}

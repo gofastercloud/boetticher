@@ -1,0 +1,36 @@
+---
+- name: Require Raspberry Pi OS Trixie ARM64 userspace
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Debian'
+      - ansible_facts.distribution_major_version | int == 13
+      - ansible_facts.architecture == 'aarch64'
+      - ansible_facts.userspace_architecture | default('aarch64') == 'aarch64'
+    fail_msg: "controller bootstrap requires Debian 13/Trixie ARM64 userspace"
+
+- name: Install controller prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - git
+      - rsync
+      - openssh-client
+      - openssh-server
+      - python3-debian
+      - build-essential
+      - pkg-config
+      - unattended-upgrades
+      - logrotate
+      - python3-lgpio
+      - gpiod
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+
+- name: Apply normal Trixie package updates
+  ansible.builtin.apt:
+    upgrade: safe
+    update_cache: false
+    lock_timeout: 300

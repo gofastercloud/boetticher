@@ -119,7 +119,7 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"boetticher init", "boetticher enroll", "boetticher plan", "boetticher deploy", "boetticher status", "boetticher module", "boetticher network", "boetticher update", "boetticher help --advanced"} {
+	for _, command := range []string{"boetticher controller", "boetticher init", "boetticher enroll", "boetticher plan", "boetticher deploy", "boetticher status", "boetticher module", "boetticher network", "boetticher update", "boetticher help --advanced"} {
 		if !strings.Contains(text, command) {
 			t.Errorf("root short help omitted %s: %s", command, text)
 		}
@@ -133,7 +133,7 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
-		{"init", "--help"}, {"enroll", "--help"}, {"bundle", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
+		{"controller", "--help"}, {"controller", "bootstrap", "--help"}, {"controller", "status", "--help"}, {"init", "--help"}, {"enroll", "--help"}, {"bundle", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
 		{"network", "--help"}, {"firewall", "--help"}, {"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"network", "test", "--help"},
 		{"module", "--help"}, {"module", "secrets", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"},
 	} {

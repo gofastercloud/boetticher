@@ -1,0 +1,48 @@
+---
+- name: Configure Debian security-only unattended upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52boetticher-unattended
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      Unattended-Upgrade::Origins-Pattern {
+          "origin=Debian,codename={{ ansible_facts.distribution_release }}-security,label=Debian-Security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Dependencies "false";
+
+- name: Inspect installed time synchronization services
+  ansible.builtin.service_facts:
+
+- name: Install systemd-timesyncd when no supported service exists
+  ansible.builtin.apt:
+    name: systemd-timesyncd
+    state: present
+    lock_timeout: 300
+  when:
+    - "'chrony.service' not in ansible_facts.services"
+    - "'systemd-timesyncd.service' not in ansible_facts.services"
+  register: controller_timesyncd_install
+
+- name: Enable fallback systemd-timesyncd
+  ansible.builtin.systemd_service:
+    name: systemd-timesyncd.service
+    enabled: true
+    state: started
+  when:
+    - controller_timesyncd_install is changed or (
+        'chrony.service' not in ansible_facts.services and
+        'systemd-timesyncd.service' in ansible_facts.services
+      )
+
+- name: Enable APT maintenance timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
