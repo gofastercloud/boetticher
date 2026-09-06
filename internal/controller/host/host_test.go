@@ -131,3 +131,15 @@ func TestClassifyExistingLayoutRequiresAllOwnedLayers(t *testing.T) {
 		t.Fatalf("partial layout classified as %q, want conflict", state)
 	}
 }
+
+func TestExactOwnedStorageCanRecoverSelectionWithoutMutation(t *testing.T) {
+	plan := StoragePlan{
+		PVJSON:  json.RawMessage(`{"report":[{"pv":[{"pv_name":"/dev/sda","vg_name":"boetticher-vg"}]}]}`),
+		VGJSON:  json.RawMessage(`{"report":[{"vg":[{"vg_name":"boetticher-vg"}]}]}`),
+		LVJSON:  json.RawMessage(`{"report":[{"lv":[{"lv_name":"data"}]}]}`),
+		Proxmox: json.RawMessage(`[{"storage":"boetticher-data","type":"lvmthin","vgname":"boetticher-vg","thinpool":"data"}]`),
+	}
+	if !exactOwnedStorage(plan) || pvPathForVG(plan.PVJSON, StorageVolumeGroup) != "/dev/sda" {
+		t.Fatal("exact owned storage was not recognized")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 )
 
@@ -136,6 +137,21 @@ func DiscoverStorage(ctx context.Context, transport Transport, config LabConfig)
 			}
 		}
 		plan.State, plan.Detail = classifyExistingLayout(plan, *config.Storage)
+	} else if exactOwnedStorage(plan) {
+		pvPath := pvPathForVG(plan.PVJSON, StorageVolumeGroup)
+		for _, disk := range allDisks {
+			if disk.Path == pvPath {
+				plan.Selected = &disk
+				break
+			}
+		}
+		if plan.Selected != nil {
+			plan.State = "exact"
+			plan.Detail = "exact Boetticher LVM-thin layout is already present; controller selection can be recorded without mutation"
+		} else {
+			plan.State = "conflict"
+			plan.Detail = "boetticher-data exists but its PV cannot be mapped to a stable disk"
+		}
 	} else if bytesContain(plan.Proxmox, []byte(`"storage":"`+GuestStorageID+`"`)) {
 		plan.State = "conflict"
 		plan.Detail = "boetticher-data already exists without a matching controller selection"
@@ -180,6 +196,7 @@ func decorateDisk(disk *Disk, ids map[string]string) {
 			disk.StableIDs = append(disk.StableIDs, "/dev/disk/by-id/"+id)
 		}
 	}
+	sort.Strings(disk.StableIDs)
 }
 
 func sameDisk(left, right Disk) bool { return left.Path != "" && left.Path == right.Path }
@@ -296,6 +313,32 @@ func bytesContain(data []byte, needle []byte) bool {
 	return strings.Contains(string(data), string(needle))
 }
 
+func exactOwnedStorage(plan StoragePlan) bool {
+	return bytesContain(plan.PVJSON, []byte(`"vg_name":"`+StorageVolumeGroup+`"`)) && bytesContain(plan.VGJSON, []byte(`"vg_name":"`+StorageVolumeGroup+`"`)) && bytesContain(plan.LVJSON, []byte(`"lv_name":"`+StorageThinPool+`"`)) && bytesContain(plan.Proxmox, []byte(`"storage":"`+GuestStorageID+`"`)) && bytesContain(plan.Proxmox, []byte(`"type":"lvmthin"`)) && bytesContain(plan.Proxmox, []byte(`"vgname":"`+StorageVolumeGroup+`"`)) && bytesContain(plan.Proxmox, []byte(`"thinpool":"`+StorageThinPool+`"`))
+}
+
+func pvPathForVG(data []byte, wantVG string) string {
+	var document struct {
+		Report []struct {
+			PV []struct {
+				Name string `json:"pv_name"`
+				VG   string `json:"vg_name"`
+			} `json:"pv"`
+		} `json:"report"`
+	}
+	if json.Unmarshal(data, &document) != nil {
+		return ""
+	}
+	for _, report := range document.Report {
+		for _, pv := range report.PV {
+			if pv.VG == wantVG {
+				return pv.Name
+			}
+		}
+	}
+	return ""
+}
+
 func InitializationCommand(plan StoragePlan) (string, error) {
 	if plan.Selected == nil || len(plan.Selected.StableIDs) == 0 {
 		return "", errors.New("no uniquely identified stable data disk is selected")
@@ -341,7 +384,7 @@ func InitializationCommand(plan StoragePlan) (string, error) {
 		"vgcreate boetticher-vg \"$resolved\"",
 		"lvcreate --yes -l 95%VG -T boetticher-vg/data",
 		"pvesm add lvmthin boetticher-data --vgname boetticher-vg --thinpool data --content images,rootdir",
-		"lvs --noheadings -o lv_attr boetticher-vg/data | grep -q '^t'",
+		"lvs --noheadings -o lv_attr boetticher-vg/data | grep -Eq '^[[:space:]]*t'",
 		"pvesm status --storage boetticher-data",
 	)
 	return strings.Join(lines, "; "), nil

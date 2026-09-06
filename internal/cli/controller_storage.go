@@ -103,6 +103,12 @@ func runControllerStorageInitialize(args []string, transport controllerhost.Tran
 		return err
 	}
 	if plan.State == "exact" {
+		if config.Storage == nil && plan.Selected != nil {
+			config.Storage = &controllerhost.StorageConfig{Profile: controllerhost.StorageProfile, Device: firstStableID(*plan.Selected), GuestStorage: controllerhost.GuestStorageID}
+			if err := controllerhost.SaveConfig(config); err != nil {
+				return fmt.Errorf("storage is initialized but could not save controller selection: %w", err)
+			}
+		}
 		fmt.Fprintln(out, "Storage already initialized and healthy.")
 		fmt.Fprintln(out, "No changes required.")
 		return nil
