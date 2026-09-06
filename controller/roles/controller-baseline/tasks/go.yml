@@ -66,9 +66,9 @@
   ansible.builtin.command:
     argv: ["{{ controller_go_root }}/bin/go", version]
   environment:
-    GOTOOLCHAIN: local
-    GOWORK: off
-    GOPROXY: off
+    GOTOOLCHAIN: 'local'
+    GOWORK: 'off'
+    GOPROXY: 'off'
   register: controller_go_check
   changed_when: false
 
