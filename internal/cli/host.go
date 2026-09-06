@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/gofastercloud/boetticher/internal/controller"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
@@ -19,19 +17,32 @@ import (
 
 func runHost(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher host <identity|trust|enroll|status|prepare>")
+		return errors.New("usage: boetticher host <create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|test-ipv6|teardown|reboot>")
 	}
 	switch args[0] {
-	case "identity":
-		return runHostIdentity(args[1:], out)
-	case "trust":
-		return runHostTrust(args[1:], out)
+	case "create-identity":
+		return runHostCreateIdentity(args[1:], out)
+	case "show-public-key":
+		return runHostShowPublicKey(args[1:], out)
+	case "import-host-key":
+		return runHostImportHostKey(args[1:], out)
 	case "enroll":
 		return runHostEnroll(args[1:], out)
+	case "apply":
+		return runHostApply(args[1:], input, out, errOut)
 	case "status":
 		return runHostStatus(args[1:], out)
-	case "prepare":
-		return runHostPrepare(args[1:], input, out, errOut)
+	case "plan-storage":
+		if len(args) != 1 {
+			return errors.New("usage: boetticher host plan-storage")
+		}
+		return runControllerStorage([]string{"plan"}, out)
+	case "test-ipv6":
+		return runHostIPv6Test(args[1:], out)
+	case "teardown":
+		return runHostTeardown(args[1:], input, out)
+	case "reboot":
+		return runHostReboot(args[1:], out)
 	default:
 		return fmt.Errorf("unknown host command %q", args[0])
 	}
@@ -50,48 +61,42 @@ func requireControllerReady() error {
 	return nil
 }
 
-func runHostIdentity(args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("usage: boetticher host identity create|public-key")
+func runHostCreateIdentity(args []string, out io.Writer) error {
+	if len(args) != 0 {
+		return errors.New("usage: boetticher host create-identity")
 	}
 	if err := requireControllerReady(); err != nil {
 		return err
 	}
-	switch args[0] {
-	case "create":
-		if len(args) != 1 {
-			return errors.New("usage: boetticher host identity create")
-		}
-		_, created, err := controllerhost.CreateIdentity(context.Background(), nil)
-		if err != nil {
-			return err
-		}
-		if created {
-			fmt.Fprintln(out, "Controller SSH identity: CREATED")
-		} else {
-			fmt.Fprintln(out, "Controller SSH identity: PASS existing Ed25519 identity retained")
-		}
-		return nil
-	case "public-key":
-		if len(args) != 1 {
-			return errors.New("usage: boetticher host identity public-key")
-		}
-		key, err := controllerhost.PublicKey()
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(out, key)
+	_, created, err := controllerhost.CreateIdentity(context.Background(), nil)
+	if err != nil {
 		return err
-	default:
-		return fmt.Errorf("unknown host identity command %q", args[0])
 	}
+	if created {
+		fmt.Fprintln(out, "Controller SSH identity: CREATED")
+	} else {
+		fmt.Fprintln(out, "Controller SSH identity: PASS existing Ed25519 identity retained")
+	}
+	return nil
 }
 
-func runHostTrust(args []string, out io.Writer) error {
-	if len(args) == 0 || args[0] != "import" {
-		return errors.New("usage: boetticher host trust import --address IPv4 --key 'ssh-ed25519 ...'")
+func runHostShowPublicKey(args []string, out io.Writer) error {
+	if len(args) != 0 {
+		return errors.New("usage: boetticher host show-public-key")
 	}
-	fs := flag.NewFlagSet("host trust import", flag.ContinueOnError)
+	if err := requireControllerReady(); err != nil {
+		return err
+	}
+	key, err := controllerhost.PublicKey()
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, key)
+	return err
+}
+
+func runHostImportHostKey(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("host import-host-key", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	address := fs.String("address", "", "verified Proxmox IPv4 address")
 	key := fs.String("key", "", "public host key copied from the trusted Mac")
@@ -99,7 +104,7 @@ func runHostTrust(args []string, out io.Writer) error {
 		return err
 	}
 	if fs.NArg() != 0 || *address == "" || *key == "" {
-		return errors.New("usage: boetticher host trust import --address IPv4 --key 'ssh-ed25519 ...'")
+		return errors.New("usage: boetticher host import-host-key --address IPv4 --key 'ssh-ed25519 ...'")
 	}
 	if err := requireControllerReady(); err != nil {
 		return err
@@ -173,23 +178,36 @@ func runHostStatus(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	inventory, err := controllerhost.Collect(context.Background(), transport, *details)
+	ctx := context.Background()
+	inventory, err := controllerhost.Collect(ctx, transport, *details)
 	if err != nil {
 		return err
 	}
-	baseline, _ := controllerhost.CheckBaseline(context.Background(), transport)
+	baseline := false
+	var baselineErr error
+	var storagePlan controllerhost.StoragePlan
+	var storageErr error
+	var networkPlan controllerhost.NetworkPlan
+	var networkErr error
+	if config.Proxmox.Node != "" {
+		baseline, baselineErr = controllerhost.CheckBaseline(ctx, transport)
+		storagePlan, storageErr = controllerhost.DiscoverStorage(ctx, transport, config)
+		networkPlan, networkErr = controllerhost.DiscoverNetwork(ctx, transport, config)
+	}
 	fmt.Fprintln(out, "Proxmox host")
-	fmt.Fprintln(out, "PASS  SSH trust          Verified")
+	fmt.Fprintln(out, "PASS  Host trust         Established")
 	fmt.Fprintf(out, "PASS  Controller access  %s\n", controllerhost.ConfigSummary(config))
-	nodeOK := len(inventory.Nodes) == 1 && inventory.Nodes[0].Node == config.Proxmox.Node
+	nodeOK := config.Proxmox.Node != "" && len(inventory.Nodes) == 1 && inventory.Nodes[0].Node == config.Proxmox.Node
 	if nodeOK {
-		fmt.Fprintf(out, "PASS  Node identity      %s\n", config.Proxmox.Node)
+		fmt.Fprintf(out, "PASS  Enrollment         %s\n", config.Proxmox.Node)
+	} else if config.Proxmox.Node == "" {
+		fmt.Fprintln(out, "FAIL  Enrollment         Not configured")
 	} else {
 		observed := "none"
 		if len(inventory.Nodes) > 0 {
 			observed = inventory.Nodes[0].Node
 		}
-		fmt.Fprintf(out, "FAIL  Node identity      expected %s, observed %s\n", config.Proxmox.Node, observed)
+		fmt.Fprintf(out, "FAIL  Enrollment         expected %s, observed %s\n", config.Proxmox.Node, observed)
 	}
 	fmt.Fprintf(out, "PASS  Proxmox            %s\n", strings.TrimSpace(inventory.Version))
 	servicesOK := true
@@ -203,18 +221,41 @@ func runHostStatus(args []string, out io.Writer) error {
 	} else {
 		fmt.Fprintln(out, "FAIL  Services           One or more required services are not active")
 	}
-	if baseline {
-		fmt.Fprintln(out, "PASS  Host baseline      Prepared")
+	if config.Proxmox.Node != "" && baselineErr == nil && baseline {
+		fmt.Fprintln(out, "PASS  Host configuration Configured")
 	} else {
-		fmt.Fprintln(out, "FAIL  Host baseline      Preparation required")
-		fmt.Fprintln(out, "\nNext:\n  sudo boetticher host prepare")
+		fmt.Fprintln(out, "FAIL  Host configuration Not configured")
 	}
+	storageOK := config.Proxmox.Node != "" && storageErr == nil && storagePlan.State == "exact"
+	if storageOK {
+		fmt.Fprintln(out, "PASS  Storage            boetticher-data")
+	} else if config.Proxmox.Node == "" {
+		fmt.Fprintln(out, "FAIL  Storage            Not configured")
+	} else if storageErr != nil {
+		fmt.Fprintf(out, "FAIL  Storage            %v\n", storageErr)
+	} else {
+		fmt.Fprintf(out, "FAIL  Storage            %s\n", storagePlan.Detail)
+	}
+	networkOK := config.Proxmox.Node != "" && networkErr == nil && networkPlan.State == "exact"
+	if networkOK {
+		fmt.Fprintln(out, "PASS  Internal network   vmbr1")
+	} else if config.Proxmox.Node == "" {
+		fmt.Fprintln(out, "FAIL  Internal network   Not configured")
+	} else if networkErr != nil {
+		fmt.Fprintf(out, "FAIL  Internal network   %v\n", networkErr)
+	} else {
+		fmt.Fprintf(out, "FAIL  Internal network   %s\n", networkPlan.Detail)
+	}
+	fmt.Fprintln(out, "      Physical LAB       Not configured")
+	fmt.Fprintln(out, "      Modules            None deployed")
 	if *details {
 		renderHostDetails(out, inventory)
 	}
-	if !nodeOK || !servicesOK || !baseline {
-		return errors.New("Proxmox host readiness failed")
+	if !nodeOK || !servicesOK || !baseline || !storageOK || !networkOK {
+		fmt.Fprintln(out, "\nHost readiness: FAIL")
+		return errors.New("Proxmox Host readiness failed")
 	}
+	fmt.Fprintln(out, "\nHost readiness: PASS")
 	return nil
 }
 
@@ -260,70 +301,4 @@ func renderHostDetails(out io.Writer, inventory controllerhost.Inventory) {
 			fmt.Fprintf(out, "  %s\n", detail)
 		}
 	}
-}
-
-func runHostPrepare(args []string, input io.Reader, out, errOut io.Writer) error {
-	fs := flag.NewFlagSet("host prepare", flag.ContinueOnError)
-	fs.SetOutput(errOut)
-	yes := fs.Bool("yes", false, "approve the bounded Proxmox host baseline")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("usage: boetticher host prepare [--yes]")
-	}
-	if err := requireControllerReady(); err != nil {
-		return err
-	}
-	config, err := controllerhost.LoadConfig()
-	if err != nil {
-		return err
-	}
-	transport, err := hostTransport(config)
-	if err != nil {
-		return err
-	}
-	prepared, baselineErr := controllerhost.CheckBaseline(context.Background(), transport)
-	if baselineErr == nil && prepared {
-		fmt.Fprintln(out, "Proxmox host already prepared and healthy.")
-		fmt.Fprintln(out, "No changes required.")
-		return nil
-	}
-	if _, err := controllerhost.Collect(context.Background(), transport, false); err != nil {
-		return fmt.Errorf("revalidate Proxmox host before preparation: %w", err)
-	}
-	fmt.Fprintln(out, "Preparing Proxmox...")
-	fmt.Fprintln(out, "\n  Repository policy      current after preparation")
-	fmt.Fprintln(out, "  Required packages      current after preparation")
-	fmt.Fprintln(out, "  Headless operation     current after preparation")
-	if !*yes {
-		if input == nil {
-			return errors.New("host preparation requires --yes or an interactive confirmation")
-		}
-		answer, promptErr := promptYesNo(bufio.NewReader(input), out, "\nContinue? [y/N]: ", false)
-		if promptErr != nil {
-			return promptErr
-		}
-		if !answer {
-			return errors.New("host preparation cancelled")
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-	defer cancel()
-	if err := controllerhost.RunPrepare(ctx, config, transport, io.Discard); err != nil {
-		fmt.Fprintf(out, "\nHost preparation failed.\n\nSucceeded:\n  No baseline change was confirmed.\n\nPreserved:\n  Existing guests\n  Storage\n  Network interfaces\n  IP addresses\n  Controller SSH identity\n\nNext:\n  sudo boetticher host status\n")
-		return err
-	}
-	prepared, err = controllerhost.CheckBaseline(ctx, transport)
-	if err != nil {
-		fmt.Fprintf(out, "\nHost preparation applied, but verification failed.\n\nSucceeded:\n  Ansible preparation completed.\n\nNot changed:\n  Guests\n  Storage\n  Network interfaces\n  IP addresses\n\nNext:\n  sudo boetticher host status\n")
-		return err
-	}
-	if !prepared {
-		err := errors.New("host preparation completed but baseline verification failed")
-		fmt.Fprintf(out, "\nHost preparation applied, but verification failed.\n\nSucceeded:\n  Ansible preparation completed.\n\nNot changed:\n  Guests\n  Storage\n  Network interfaces\n  IP addresses\n\nNext:\n  sudo boetticher host status\n")
-		return err
-	}
-	fmt.Fprintln(out, "Host baseline: PASS")
-	return nil
 }

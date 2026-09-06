@@ -15,12 +15,12 @@ func TestNetworkConfigureFlagsKeepAdoptionExplicit(t *testing.T) {
 	}{
 		{nil, false, false, false},
 		{[]string{"--yes"}, true, false, false},
-		{[]string{"--adopt-existing"}, false, true, false},
-		{[]string{"--adopt-existing", "--yes"}, true, true, false},
-		{[]string{"--yes", "--adopt-existing"}, true, true, false},
+		{[]string{"--adopt-existing-network"}, false, true, false},
+		{[]string{"--adopt-existing-network", "--yes"}, true, true, false},
+		{[]string{"--yes", "--adopt-existing-network"}, true, true, false},
 		{[]string{"--force"}, false, false, true},
 		{[]string{"--yes", "--yes"}, false, false, true},
-		{[]string{"--adopt-existing", "--adopt-existing"}, false, false, true},
+		{[]string{"--adopt-existing-network", "--adopt-existing-network"}, false, false, true},
 	} {
 		yes, adopt, err := parseNetworkConfigureFlags(tc.args)
 		if yes != tc.yes || adopt != tc.adopt || (err != nil) != tc.invalid {
@@ -33,7 +33,7 @@ func TestAdoptionPreviewAndStatus(t *testing.T) {
 	plan := controllerhost.NetworkPlan{State: "adoptable", Bridge: controllerhost.BridgeState{HostAddresses: []string{"inet6 fe80::123"}}}
 	var out bytes.Buffer
 	renderNetworkPlan(&out, plan)
-	for _, want := range []string{"--adopt-existing", "fe80::123", "Persist Boetticher ownership", "Disable the Proxmox host IPv6 stack", "vmbr0", "storage", "guests"} {
+	for _, want := range []string{"--adopt-existing-network", "fe80::123", "Persist Boetticher ownership", "Disable the Proxmox Host IPv6 stack", "vmbr0", "storage", "guests"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("preview missing %s", want)
 		}

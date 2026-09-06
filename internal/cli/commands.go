@@ -20,24 +20,15 @@ type helpSpec struct {
 
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]"},
-	{Usage: "boetticher host identity|trust|enroll|status|prepare ..."},
-	{Usage: "boetticher storage plan|initialize|status [--device PATH] [--confirm]"},
-	{Usage: "boetticher network plan|configure|status"},
-	{Usage: "boetticher foundation status|converge|teardown|reboot"},
+	{Usage: "boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|test-ipv6|teardown|reboot ..."},
+	{Usage: "boetticher module <capability> <action> [flags]"},
 }
 
 var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher host status --details"},
-	{Usage: "boetticher storage status"},
-	{Usage: "boetticher network status"},
-	{Usage: "boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]"},
-	{Usage: "boetticher aiops status [--site DIR] [--live] [--json]"},
-	{Usage: "boetticher network test bridge-ipv6"},
-	{Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
-	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
-	{Usage: "boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
-	{Usage: "boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]"},
-	{Usage: "boetticher module list|configure|enable|disable NAME [--site DIR] [--dry-run] [--json] [--confirm] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
+	{Usage: "boetticher host plan-storage"},
+	{Usage: "boetticher host test-ipv6"},
+	{Usage: "boetticher module <capability> <action> [--yes] [--details] [--verbose]"},
 }
 
 // helpSpecs is keyed by the command path before -h/--help. Keeping nested
@@ -45,40 +36,40 @@ var advancedCommandSpecs = []commandSpec{
 // dispatch depend on a second parser or on a recursive help hint.
 var helpSpecs = map[string]helpSpec{
 	"controller": {
-		Usage: "boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]", Purpose: "Prepare, inspect, or explicitly reboot the local Raspberry Pi Controller.", Arguments: "bootstrap configures locally; status reads local readiness; reboot requires --yes and never contacts Proxmox.", Options: "--operator selects the existing local operator account; bootstrap requires --confirm-key-login; reboot requires --yes.", Safety: "Bootstrap and status are local. Controller reboot is explicit and does not reboot Proxmox.", Examples: "boetticher controller bootstrap --operator pi --confirm-key-login; boetticher controller status; boetticher controller reboot --yes", Related: "host, foundation",
+		Usage: "boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]", Purpose: "Bootstrap, inspect, or explicitly reboot the local Controller.", Arguments: "bootstrap configures locally; status reads local readiness; reboot requires --yes and never contacts Proxmox.", Options: "--operator selects the existing local operator account; bootstrap requires --confirm-key-login; reboot requires --yes.", Safety: "Bootstrap and status are local. Controller reboot is explicit and does not reboot the Host.", Examples: "boetticher controller bootstrap --operator pi --confirm-key-login; boetticher controller status; boetticher controller reboot --yes", Related: "host",
 	},
 	"controller bootstrap": {
-		Usage: "boetticher controller bootstrap [--operator USER] [--confirm-key-login]", Purpose: "Configure the local Raspberry Pi controller and run final local readiness checks.", Arguments: "No positional arguments.", Options: "--operator selects the existing local operator account; --confirm-key-login confirms that a fresh public-key SSH session was tested.", Safety: "Local-only and retryable. It does not enroll or deploy the lab. A reboot is never automatic; repeat bootstrap after reconnecting.", Examples: "boetticher controller bootstrap --operator pi --confirm-key-login", Related: "controller status",
+		Usage: "boetticher controller bootstrap [--operator USER] [--confirm-key-login]", Purpose: "Configure the local Controller and run final local readiness checks.", Arguments: "No positional arguments.", Options: "--operator selects the existing local operator account; --confirm-key-login confirms that a fresh public-key SSH session was tested.", Safety: "Local-only and retryable. It does not enroll or deploy the Host. A reboot is never automatic; repeat bootstrap after reconnecting.", Examples: "boetticher controller bootstrap --operator pi --confirm-key-login", Related: "controller status",
 	},
 	"controller status": {
 		Usage: "boetticher controller status [--operator USER]", Purpose: "Read local controller readiness without repairing or contacting Proxmox.", Arguments: "No positional arguments.", Options: "--operator selects the local account whose effective SSH policy is checked.", Safety: "Read-only. It does not install packages, run Ansible, change LEDs, load a site, or contact a remote system.", Examples: "boetticher controller status", Related: "controller bootstrap",
 	},
 	"controller reboot": {
-		Usage: "boetticher controller reboot --yes", Purpose: "Reboot the local Controller for an approved persistence rehearsal.", Arguments: "No positional arguments.", Options: "--yes is required.", Safety: "Reboots only the local Controller; Proxmox and lab guests are not contacted.", Examples: "boetticher controller reboot --yes", Related: "controller status, foundation status",
+		Usage: "boetticher controller reboot --yes", Purpose: "Reboot the local Controller for an approved persistence rehearsal.", Arguments: "No positional arguments.", Options: "--yes is required.", Safety: "Reboots only the local Controller; the Host and its guests are not contacted.", Examples: "boetticher controller reboot --yes", Related: "controller status, host status",
 	},
 	"host": {
-		Usage: "boetticher host identity|trust|enroll|status|prepare ...", Purpose: "Enroll and inspect the existing Proxmox host from the local controller.", Arguments: "identity creates or prints the persistent controller SSH key; trust imports a Mac-verified Proxmox host key; enroll records one verified root host; status reads host state; prepare applies the bounded host baseline.", Options: "host trust import takes --address and --key; host status accepts --details; host prepare accepts --yes to skip its confirmation prompt.", Safety: "Uses only the dedicated controller identity and imported known-hosts file. Enrollment and status do not change Proxmox; preparation changes only the declared repository, prerequisite packages, and headless policy. Guests, storage, networking, API tokens, SOPS, and PKI are out of scope.", Examples: "boetticher host identity create; boetticher host trust import --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_KEY'; boetticher host enroll root@192.168.4.5; boetticher host status --details; boetticher host prepare", Related: "controller status, enroll",
-	},
-	"host identity": {
-		Usage: "boetticher host identity create|public-key", Purpose: "Create or display the persistent controller SSH identity used for Proxmox.", Arguments: "No positional arguments.", Options: "create retains a valid existing Ed25519 identity; public-key prints only the public OpenSSH key.", Safety: "The private key remains root-owned on the Pi and is never printed or transferred.", Examples: "boetticher host identity create; boetticher host identity public-key", Related: "host trust import, host enroll",
-	},
-	"host trust": {
-		Usage: "boetticher host trust import --address IPv4 --key 'ssh-ed25519 ...'", Purpose: "Import a Proxmox host key copied from the already-trusted Mac.", Arguments: "--address is the verified Proxmox IPv4 address; --key is one OpenSSH host public-key line.", Options: "The imported key is stored in the dedicated controller known-hosts file.", Safety: "No TOFU or ssh-keyscan is used. A changed key for an existing address is rejected and unrelated known-hosts entries are retained.", Examples: "boetticher host trust import --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_KEY'", Related: "host identity public-key, host enroll",
+		Usage: "boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|test-ipv6|teardown|reboot ...", Purpose: "Bind, configure, inspect, test, rebuild, or reboot the single supported Proxmox Host.", Arguments: "create-identity and show-public-key manage the persistent Controller identity; import-host-key records the independently verified Host key; enroll binds the Host; apply owns the Host baseline, storage, and virtual network; status is read-only; teardown removes exact Boetticher-owned Host configuration; reboot requires --yes.", Options: "import-host-key takes --address and --key; apply takes --data-disk, --adopt-existing-network, and --yes; status accepts --details.", Safety: "Trust is never accepted automatically. Host apply stops at missing enrollment, destructive storage, or ambiguous network adoption. It never deploys Modules or changes the protected HOME path.", Examples: "boetticher host create-identity; boetticher host show-public-key; boetticher host import-host-key --address 192.0.2.10 --key 'ssh-ed25519 VERIFIED_KEY'; boetticher host enroll root@192.0.2.10; boetticher host apply --data-disk /dev/disk/by-id/DEVICE --yes; boetticher host status --details", Related: "controller status, module",
 	},
 	"host enroll": {
-		Usage: "boetticher host enroll root@IPv4", Purpose: "Verify and bind one Proxmox standalone node to the controller.", Arguments: "The target must be root@IPv4 and must match the imported host key.", Options: "No options.", Safety: "Read-only remote checks plus one local /etc/boetticher/lab.yml binding. It does not prepare, deploy, modify guests, or create API credentials.", Examples: "boetticher host enroll root@192.168.4.5", Related: "host status, host prepare",
+		Usage: "boetticher host enroll root@IPv4", Purpose: "Verify and bind the supported Proxmox Host to the Controller.", Arguments: "The target must be root@IPv4 and must match the imported Host key.", Options: "No options.", Safety: "Read-only remote checks plus one local /etc/boetticher/lab.yml binding. It does not apply Host configuration or deploy Modules.", Examples: "boetticher host enroll root@192.0.2.10", Related: "host status, host apply",
 	},
 	"host status": {
-		Usage: "boetticher host status [--details]", Purpose: "Read the enrolled Proxmox host and optionally print its live inventory.", Arguments: "No positional arguments.", Options: "--details includes guests, storage, stable disks, LVM, mounts, and networking.", Safety: "Read-only. It never runs Ansible or changes Proxmox state.", Examples: "boetticher host status; boetticher host status --details", Related: "host enroll, host prepare",
+		Usage: "boetticher host status [--details]", Purpose: "Read the complete enrolled Proxmox Host state.", Arguments: "No positional arguments.", Options: "--details includes guests, storage, stable disks, LVM, mounts, interfaces, bridges, and routes.", Safety: "Read-only. It never repairs or changes the Host.", Examples: "boetticher host status; boetticher host status --details", Related: "host enroll, host apply",
 	},
-	"host prepare": {
-		Usage: "boetticher host prepare [--yes]", Purpose: "Apply the small idempotent Proxmox host baseline.", Arguments: "No positional arguments.", Options: "--yes approves the displayed bounded preparation without an interactive prompt.", Safety: "Changes only known Proxmox repository policy, prerequisite packages, and headless power behavior. It does not upgrade, reboot, re-network, reconfigure storage, or touch guests.", Examples: "boetticher host prepare; boetticher host prepare --yes", Related: "host status",
+	"host apply": {
+		Usage: "boetticher host apply [--data-disk /dev/disk/by-id/DEVICE] [--adopt-existing-network] [--yes]", Purpose: "Inspect and establish the owned Host baseline, storage, and internal virtual network.", Arguments: "No positional arguments.", Options: "--data-disk binds the exact stable disk at the destructive storage boundary; --adopt-existing-network approves a compatible unowned internal bridge; --yes approves ordinary changes.", Safety: "Idempotent and fail-closed. It never accepts Host trust automatically, adopts ambiguous state, deploys Modules, or changes HOME management.", Examples: "boetticher host apply; boetticher host apply --data-disk /dev/disk/by-id/DEVICE --yes; boetticher host apply --adopt-existing-network --yes", Related: "host status, host plan-storage",
 	},
-	"network foundation": {
-		Usage: "boetticher network plan|configure|status", Purpose: "Create and inspect the virtual-only VLAN-aware internal bridge foundation.", Arguments: "plan and status are read-only; configure adds only vmbr1 after the protected HOME path is checked.", Options: "configure accepts --adopt-existing for explicit adoption of a compatible portless bridge and --yes for deliberate scripted use. The fixed logical VLANs are 5, 10, 20, 30, 40, and 99.", Safety: "vmbr0, 192.168.4.5, its physical member, default route, guests, storage, firewall, and second NIC are protected. No host VLAN subinterfaces, IP forwarding, routing, DHCP, DNS, or physical trunk are configured.", Examples: "boetticher network plan; boetticher network configure --yes; boetticher network status", Related: "foundation status, host status",
+	"host plan-storage": {
+		Usage: "boetticher host plan-storage", Purpose: "Preview the dedicated Host data-storage candidate without changing it.", Arguments: "No positional arguments.", Options: "No options.", Safety: "Read-only. It shows the protected boot disk, stable identities, and any exact candidate for Host apply.", Examples: "boetticher host plan-storage", Related: "host apply, host teardown",
 	},
-	"foundation": {
-		Usage: "boetticher foundation status|converge|teardown|reboot", Purpose: "Aggregate, safely converge, remove, or explicitly reboot the local Controller foundation while preserving trust and HOME management.", Arguments: "status is read-only. converge repeats native checks and stops at trust or destructive approval boundaries. teardown removes exact owned foundation state and requires explicit storage confirmation. reboot reboots the enrolled Proxmox host.", Options: "teardown accepts --plan, --yes, and --confirm-storage /dev/disk/by-id/DEVICE; reboot accepts --yes.", Safety: "Teardown and reboot never remove unexpected guests, shared packages, unknown host configuration, the boot disk, or Controller↔Proxmox trust.", Examples: "boetticher foundation status; boetticher foundation converge; boetticher foundation teardown --plan; boetticher foundation teardown --confirm-storage /dev/disk/by-id/ata-example --yes; boetticher foundation reboot --yes", Related: "controller status, host status, storage status, network status",
+	"host test-ipv6": {
+		Usage: "boetticher host test-ipv6", Purpose: "Run the bounded temporary-guest IPv6 forwarding journey through the owned internal bridge.", Arguments: "No positional arguments.", Options: "No options.", Safety: "The temporary guests are stopped, destroyed, and verified absent, including their storage volumes, before the command passes.", Examples: "boetticher host test-ipv6", Related: "host status, host apply",
+	},
+	"host teardown": {
+		Usage: "boetticher host teardown [--plan] [--data-disk /dev/disk/by-id/DEVICE] [--yes]", Purpose: "Remove exact Boetticher-owned Host configuration while preserving trust, recovery, boot storage, and HOME management.", Arguments: "--plan is read-only; --data-disk must match the configured dedicated disk when it will be erased.", Options: "--yes approves ordinary removal; the disk binding is still required for destructive storage removal.", Safety: "Unknown guests, storage, bridges, and configuration stop the operation. Teardown is retryable and preserves the imported Host key trust.", Examples: "boetticher host teardown --plan; boetticher host teardown --data-disk /dev/disk/by-id/DEVICE --yes", Related: "host apply, host status",
+	},
+	"host reboot": {
+		Usage: "boetticher host reboot --yes", Purpose: "Reboot the enrolled Proxmox Host after an explicit approval.", Arguments: "No positional arguments.", Options: "--yes is required.", Safety: "Requires a matching enrolled Host and empty guest inventory; it never reboots the Controller.", Examples: "boetticher host reboot --yes", Related: "host status, controller reboot",
 	},
 	"tui": {
 		Usage: "boetticher tui [--site DIR] [--offline]", Purpose: "Open the experimental interactive dashboard.", Arguments: "No positional arguments.", Options: "--site selects your private site directory; --offline skips live refresh and shows saved settings.", Safety: "The dashboard launches the same commands as the CLI, so changes still ask for their normal confirmation. Secrets are never command arguments. Use the direct CLI when you need zones, packet captures, JSON, or probe cleanup.", Examples: "boetticher tui --site ./my-boetticher", Related: "status --details, deploy, module, firewall, network test",
@@ -164,26 +155,8 @@ var helpSpecs = map[string]helpSpec{
 	"dns": {
 		Usage: "boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]", Purpose: "Manage your own private A and CNAME names.", Arguments: "add needs --name, --type, and --value; remove needs --name and --type; list has no required arguments.", Options: "--value is an IPv4 address for A or a private fully qualified domain name for CNAME; --json is for tools; --site selects saved settings.", Safety: "Changes site.yml only; deploy applies them. Platform, module, and DHCP names stay reserved, and the command is not a general PowerDNS console.", Examples: "boetticher dns record add --name app.lab.home.arpa --type CNAME --value app-01.servers.lab.home.arpa --site ./my-boetticher", Related: "dhcp, config validate, deploy",
 	},
-	"storage": {
-		Usage: "boetticher storage plan|initialize|status [--device PATH] [--confirm]", Purpose: "Plan, initialize, and inspect the dedicated Proxmox guest-storage disk from the controller.", Arguments: "plan is read-only; initialize requires the exact freshly rediscovered /dev/disk/by-id device and explicit --confirm; status is read-only.", Options: "--device selects the exact stable Timetec identity for first initialization; --confirm acknowledges the destructive boundary. No force or skip-checks option exists.", Safety: "Initialization protects the boot disk and fails closed on mounted, partitioned, LVM, guest-used, conflicting, or ambiguous state. It creates only boetticher-vg/data and boetticher-data; no guests, networking, backups, or Phase-3B work is performed.", Examples: "boetticher storage plan; boetticher storage initialize --device /dev/disk/by-id/ata-example --confirm; boetticher storage status", Related: "host status, host prepare",
-	},
 	"module": {
-		Usage: "boetticher module list|configure|enable|disable [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH]", Purpose: "List or configure Boetticher's built-in modules.", Arguments: "NAME is needed for configure, enable, and disable; list takes none. Use --purge only with disable.", Options: "--dry-run shows the result; --json emits a secret-free setup plan; --confirm approves configuration or lifecycle changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).", Safety: "Configure, enable, and disable update desired site state only; they never deploy. Run plan and deploy explicitly. DNS stays on and logging is optional. Disable keeps a module's guests and data unless you explicitly add --purge.", Examples: "boetticher module configure printer --site ./my-boetticher; boetticher module enable monitoring --confirm --site ./my-boetticher; boetticher plan --site ./my-boetticher --live", Related: "config validate, plan, deploy",
-	},
-	"module secrets": {
-		Usage: "boetticher module secrets MODULE list|set|remove|rotate [--site DIR] [--age-identity PATH] [--confirm]", Purpose: "Manage the secrets a built-in module actually needs.", Arguments: "MODULE is a registered module; list, set, and remove choose the operation, with NAME needed for set and remove. AirVPN rotate needs no name.", Options: "--site selects your private site directory; --age-identity selects your independent age identity; --confirm is needed for removal and AirVPN profile rotation.", Safety: "Values come from a hidden prompt or stdin, never command arguments. They are never displayed, logged, or written to generated files. This updates encrypted site material only; deploy delivers a changed secret to a service.", Examples: "boetticher module secrets bifrost list --site ./my-boetticher; boetticher module secrets bifrost set openrouter_api_key --site ./my-boetticher; boetticher module secrets bifrost remove openrouter_api_key --confirm --site ./my-boetticher; boetticher module secrets airvpn rotate --confirm --site ./my-boetticher", Related: "module configure, deploy, config validate",
-	},
-	"module list": {
-		Usage: "boetticher module list [--site DIR]", Purpose: "List the built-in modules and whether they are on.", Arguments: "No positional arguments.", Options: "--site selects your private site directory.", Safety: "Read-only. It does not change settings or deploy.", Examples: "boetticher module list --site ./my-boetticher", Related: "module configure, status --details",
-	},
-	"module configure": {
-		Usage: "boetticher module configure MODULE [--site DIR] [--dry-run] [--json] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--confirm]", Purpose: "Configure one built-in module.", Arguments: "MODULE is a registered module.", Options: "The interactive workflow asks only for fields the module needs. --set provides repeatable typed values; --usb provides repeatable physical bindings; --secret names a secret read from a hidden prompt or stdin; --age-identity selects your independent age identity; --non-interactive suppresses prompts; --dry-run previews; --confirm saves the settings.", Safety: "Changes local settings only and never deploys. Secret values come from a prompt or stdin and are never command arguments or plan output.", Examples: "boetticher module configure printer --site ./my-boetticher; boetticher module configure aiops --non-interactive --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher", Related: "module enable, deploy, module secrets",
-	},
-	"module enable": {
-		Usage: "boetticher module enable NAME [--site DIR] [--dry-run] [--confirm] [--age-identity PATH]", Purpose: "Turn on one optional module in desired site state.", Arguments: "NAME is a registered optional module.", Options: "--dry-run shows the proposed state; --confirm saves the setting.", Safety: "This is local desired-state configuration only. It never deploys; review the plan and run deploy explicitly.", Examples: "boetticher module enable monitoring --confirm --site ./my-boetticher; boetticher plan --site ./my-boetticher --live", Related: "module configure, plan, deploy",
-	},
-	"module disable": {
-		Usage: "boetticher module disable NAME [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH]", Purpose: "Turn off one optional module in desired site state.", Arguments: "NAME is a registered optional module.", Options: "--dry-run shows the proposed state; --confirm saves the setting; --purge records removal of the module's exact resources and requires confirmation at deploy.", Safety: "This is local desired-state configuration only. It never deploys. Disable keeps a module's guests and data by default; purge is exact and separately guarded.", Examples: "boetticher module disable printer --confirm --site ./my-boetticher; boetticher plan --site ./my-boetticher --live", Related: "module configure, plan, deploy",
+		Usage: "boetticher module <capability> <action> [flags]", Purpose: "Reserve one shallow operator namespace for a Host capability.", Arguments: "The capability is the operator-managed concern, such as firewall, dhcp, dns, ntp, vpn, monitoring, statuspage, or printer. The action is capability-specific.", Options: "Modules may define their own bounded action flags. The normal third-level namespace is the capability; do not expose provider, appliance, daemon, or peripheral names here.", Safety: "Phase 3D documents the grammar only. No speculative firewall or Module implementation is introduced by this phase.", Examples: "boetticher module firewall status; boetticher module dhcp add-reservation; boetticher module dns add-record; boetticher module statuspage add-check", Related: "host apply, host status",
 	},
 	"config": {
 		Usage: "boetticher config validate|show|schema [--site DIR]", Purpose: "Check, display, or find the site configuration schema.", Arguments: "validate, show, and schema select the read-only operation.", Options: "--site selects your private site directory; schema does not need a site directory.", Safety: "Read-only. Unknown fields, invalid settings, and attempts to disable mandatory modules stop before the lab changes.", Examples: "boetticher config validate --site ./my-boetticher; boetticher config schema", Related: "module list, plan, deploy --dry-run",
@@ -191,63 +164,41 @@ var helpSpecs = map[string]helpSpec{
 }
 
 var nestedHelpSpecs = map[string]helpSpec{
-	"aiops status":             helpSpecs["aiops"],
-	"companion add":            helpSpecs["companion add"],
-	"companion setup":          helpSpecs["companion setup"],
-	"companion status":         helpSpecs["companion status"],
-	"companion migrate":        helpSpecs["companion migrate"],
-	"network trunk status":     helpSpecs["network"],
-	"network trunk attach":     helpSpecs["network"],
-	"network trunk detach":     helpSpecs["network"],
-	"network plan":             helpSpecs["network foundation"],
-	"network configure":        helpSpecs["network foundation"],
-	"network status":           helpSpecs["network foundation"],
-	"foundation":               helpSpecs["foundation"],
-	"foundation status":        helpSpecs["foundation"],
-	"foundation converge":      helpSpecs["foundation"],
-	"foundation teardown":      helpSpecs["foundation"],
-	"foundation reboot":        helpSpecs["foundation"],
-	"controller reboot":        helpSpecs["controller reboot"],
-	"network test":             helpSpec{Usage: "boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--airvpn] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Check routes, DNS, policy, mTLS, and speed from temporary probes in selected zones.", Arguments: "No positional arguments. By default it visits all six modeled zones.", Options: "--zones selects a comma-separated subset; --capture adds a short tcpdump from a probe; --airvpn also checks the declared ARR source through AirVPN; --cleanup-only removes a stale Boetticher probe; --json is for tools; connection options select the Proxmox certificate path.", Safety: "Advanced and live. It creates only recognised unprivileged LXC probes in VMIDs 910-919 and never changes firewall policy. --airvpn requires enabled ARR and AirVPN, stops and restarts only the declared AirVPN LXC to prove ARR has no direct escape, and restores it even after a failed check. It tries cleanup after every run; resolve a cleanup failure before retrying. It leaves your saved settings alone.", Examples: "boetticher network test --site ./my-boetticher; boetticher network test --airvpn --site ./my-boetticher", Related: "network trunk status, firewall diff, dhcp leases, status --details"},
-	"network test bridge-ipv6": helpSpec{Usage: "boetticher network test bridge-ipv6", Purpose: "Prove IPv6 link-local Ethernet forwarding through the owned vmbr1 without using firewall policy.", Arguments: "No positional arguments.", Options: "Creates two bounded temporary unprivileged test guests on one fixed test VLAN, pings both directions, and removes both guests before returning.", Safety: "Requires an exact healthy vmbr1 and an empty guest inventory. It never changes desired configuration, firewall policy, or permanent guests. Cleanup verifies both VMIDs and storage volumes are absent.", Examples: "boetticher network test bridge-ipv6", Related: "network status, foundation status"},
-	"hardware usb list":        helpSpecs["hardware"],
-	"hardware usb status":      helpSpecs["hardware"],
-	"hardware usb bind":        helpSpecs["hardware"],
-	"hardware usb unbind":      helpSpecs["hardware"],
-	"pki client create":        helpSpecs["pki"],
-	"pki client export":        helpSpecs["pki"],
-	"pki client revoke":        helpSpecs["pki"],
-	"pki trust export":         helpSpecs["pki trust"],
-	"firewall status":          helpSpecs["firewall"],
-	"firewall show":            helpSpecs["firewall"],
-	"firewall diff":            helpSpecs["firewall"],
-	"firewall counters":        helpSpecs["firewall"],
-	"firewall logs":            helpSpecs["firewall"],
-	"firewall verify":          helpSpecs["firewall"],
-	"firewall rule add":        helpSpecs["firewall rule add"],
-	"firewall rule list":       helpSpecs["firewall rule list"],
-	"firewall rule remove":     helpSpecs["firewall rule remove"],
-	"dhcp status":              helpSpecs["dhcp"],
-	"dhcp leases":              helpSpecs["dhcp"],
-	"dhcp reservation add":     helpSpecs["dhcp"],
-	"dhcp reservation list":    helpSpecs["dhcp"],
-	"dhcp reservation remove":  helpSpecs["dhcp"],
-	"dns":                      helpSpecs["dns"],
-	"dns record add":           helpSpecs["dns"],
-	"dns record list":          helpSpecs["dns"],
-	"dns record remove":        helpSpecs["dns"],
-	"storage plan":             helpSpecs["storage"],
-	"storage status":           helpSpecs["storage"],
-	"storage initialize":       helpSpecs["storage"],
-	"storage recover":          helpSpecs["storage"],
-	"module list":              helpSpecs["module list"],
-	"module configure":         helpSpecs["module configure"],
-	"module enable":            helpSpecs["module enable"],
-	"module disable":           helpSpecs["module disable"],
-	"module secrets":           helpSpecs["module secrets"],
-	"config validate":          helpSpecs["config"],
-	"config show":              helpSpecs["config"],
-	"config schema":            helpSpecs["config"],
+	"aiops status":            helpSpecs["aiops"],
+	"companion add":           helpSpecs["companion add"],
+	"companion setup":         helpSpecs["companion setup"],
+	"companion status":        helpSpecs["companion status"],
+	"companion migrate":       helpSpecs["companion migrate"],
+	"controller reboot":       helpSpecs["controller reboot"],
+	"hardware usb list":       helpSpecs["hardware"],
+	"hardware usb status":     helpSpecs["hardware"],
+	"hardware usb bind":       helpSpecs["hardware"],
+	"hardware usb unbind":     helpSpecs["hardware"],
+	"pki client create":       helpSpecs["pki"],
+	"pki client export":       helpSpecs["pki"],
+	"pki client revoke":       helpSpecs["pki"],
+	"pki trust export":        helpSpecs["pki trust"],
+	"firewall status":         helpSpecs["firewall"],
+	"firewall show":           helpSpecs["firewall"],
+	"firewall diff":           helpSpecs["firewall"],
+	"firewall counters":       helpSpecs["firewall"],
+	"firewall logs":           helpSpecs["firewall"],
+	"firewall verify":         helpSpecs["firewall"],
+	"firewall rule add":       helpSpecs["firewall rule add"],
+	"firewall rule list":      helpSpecs["firewall rule list"],
+	"firewall rule remove":    helpSpecs["firewall rule remove"],
+	"dhcp status":             helpSpecs["dhcp"],
+	"dhcp leases":             helpSpecs["dhcp"],
+	"dhcp reservation add":    helpSpecs["dhcp"],
+	"dhcp reservation list":   helpSpecs["dhcp"],
+	"dhcp reservation remove": helpSpecs["dhcp"],
+	"dns":                     helpSpecs["dns"],
+	"dns record add":          helpSpecs["dns"],
+	"dns record list":         helpSpecs["dns"],
+	"dns record remove":       helpSpecs["dns"],
+	"config validate":         helpSpecs["config"],
+	"config show":             helpSpecs["config"],
+	"config schema":           helpSpecs["config"],
 }
 
 // CommandReferenceMarkdown renders the browseable command menu from the same
@@ -257,8 +208,8 @@ func CommandReferenceMarkdown() string {
 	var document strings.Builder
 	document.WriteString("---\nlayout: default\ntitle: Command reference\nsection: commands\ndescription: A generated menu of every public Boetticher command form.\n---\n\n")
 	document.WriteString("# Command reference\n\n")
-	document.WriteString("This page is generated from the same usage menu as `boetticher help`. The foundation lifecycle is Controller-driven and uses native Linux and Proxmox state. Add `--help` to any command for the full explanation. Healthy repeat convergence reports `No changes required.`\n\n")
-	document.WriteString("## The usual loop\n\n```text\nboetticher controller status\nboetticher host status\nboetticher storage status\nboetticher network status\nboetticher foundation converge\n```\n\n")
+	document.WriteString("This page is generated from the same usage menu as `boetticher help`. The Controller owns local runtime and trust; the Host owns Proxmox baseline, storage, and virtual networking; Modules provide later operator capabilities. Add `--help` to any command for the full explanation. Reapplying an already-correct Host is a successful no-op and reports `No changes required.`\n\n")
+	document.WriteString("## The usual loop\n\n```text\nboetticher controller bootstrap\nboetticher controller status\nboetticher host enroll root@PROXMOX_ADDRESS\nboetticher host apply\nboetticher host status\n```\n\n")
 	document.WriteString("## Normal command menu\n\n```text\n")
 	for _, spec := range commandSpecs {
 		document.WriteString(spec.Usage + "\n")
@@ -269,6 +220,6 @@ func CommandReferenceMarkdown() string {
 	}
 	document.WriteString("```\n\n")
 	document.WriteString("## Need a hand?\n\n")
-	document.WriteString("```text\nboetticher help\nboetticher help --advanced\nboetticher foundation converge --help\nboetticher network configure --help\n```\n")
+	document.WriteString("```text\nboetticher help\nboetticher help --advanced\nboetticher host apply --help\nboetticher host teardown --help\nboetticher module firewall status --help\n```\n")
 	return strings.TrimRight(document.String(), "\n") + "\n"
 }

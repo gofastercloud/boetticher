@@ -24,7 +24,7 @@ func RunWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
 		usage(out)
-		return errors.New("a command is required; choose a Controller foundation command")
+		return errors.New("a command is required; choose a Controller or Host command")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 1 && args[0] == "help" && args[1] == "--advanced" {
@@ -37,6 +37,9 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	if isLegacyLifecycleCommand(args[0]) {
 		return legacyLifecycleDisabled(args[0])
 	}
+	if err := retiredCommandError(args); err != nil {
+		return err
+	}
 	if helpRequested(args) {
 		commandHelp(args, out)
 		return nil
@@ -46,11 +49,6 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runController(args[1:], out, errOut)
 	case "host":
 		return runHost(args[1:], input, out, errOut)
-	case "foundation":
-		if len(args) >= 2 && (args[1] == "status" || args[1] == "converge" || args[1] == "teardown" || args[1] == "reboot") {
-			return runFoundationWithInput(args[1:], input, out)
-		}
-		return fmt.Errorf("usage: boetticher foundation status|converge|teardown|reboot")
 	case "ssh-config":
 		return runSSHConfig(args[1:], out)
 	case "access":
@@ -61,14 +59,10 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runDHCP(args[1:], out)
 	case "dns":
 		return runDNS(args[1:], out)
-	case "storage":
-		return runStorage(args[1:], out)
 	case "module":
 		return runModuleWithInput(args[1:], input, out, errOut)
 	case "config":
 		return runConfig(args[1:], out)
-	case "network":
-		return runNetworkWithInput(args[1:], input, out)
 	case "hardware":
 		return runHardware(args[1:], out)
 	case "recover":
@@ -83,7 +77,34 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 }
 
 func legacyLifecycleDisabled(command string) error {
-	return fmt.Errorf("boetticher %s is unavailable in the Controller foundation workflow; use controller, host, storage, network, or foundation commands", command)
+	return fmt.Errorf("boetticher %s is retired from the supported Controller/Host workflow", command)
+}
+
+func retiredCommandError(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	switch args[0] {
+	case "foundation":
+		return errors.New("boetticher foundation is retired; use boetticher host apply, status, teardown, or reboot")
+	case "storage":
+		return errors.New("boetticher storage is retired; storage is Host configuration; use boetticher host apply, status, or plan-storage")
+	case "network":
+		return errors.New("boetticher network is retired; networking is Host configuration; use boetticher host apply, status, or test-ipv6")
+	case "host":
+		if len(args) < 2 {
+			return nil
+		}
+		switch args[1] {
+		case "identity":
+			return errors.New("boetticher host identity is retired; use boetticher host create-identity or show-public-key")
+		case "trust":
+			return errors.New("boetticher host trust is retired; use boetticher host import-host-key")
+		case "prepare":
+			return errors.New("boetticher host prepare is retired; use boetticher host apply")
+		}
+	}
+	return nil
 }
 
 func isLegacyLifecycleCommand(command string) bool {

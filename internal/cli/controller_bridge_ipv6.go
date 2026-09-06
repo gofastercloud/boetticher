@@ -10,9 +10,9 @@ import (
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 )
 
-func runControllerBridgeIPv6(args []string, out io.Writer) error {
+func runHostIPv6Test(args []string, out io.Writer) error {
 	if len(args) != 0 {
-		return errors.New("usage: boetticher network test bridge-ipv6")
+		return errors.New("usage: boetticher host test-ipv6")
 	}
 	if err := requireControllerReady(); err != nil {
 		return err
@@ -22,7 +22,7 @@ func runControllerBridgeIPv6(args []string, out io.Writer) error {
 		return err
 	}
 	if config.Proxmox.Node == "" {
-		return errors.New("host enrollment is required before the IPv6 bridge test")
+		return errors.New("host enrollment is required before the Host IPv6 test")
 	}
 	transport, err := controllerhost.TransportFor(config)
 	if err != nil {

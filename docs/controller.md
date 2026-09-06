@@ -2,14 +2,14 @@
 layout: default
 title: Controller
 section: controller
-description: Prepare a Raspberry Pi as the local Boetticher controller.
+description: Prepare the local Boetticher Controller.
 ---
 
 # The local controller
 
 The Controller is the only supported operator entry point. Bootstrap it first,
-then use the host, storage, network, and foundation commands below to converge
-the Proxmox foundation.
+then use the Host commands below to enroll, apply, inspect, and recover the
+Proxmox Host.
 
 ## Supported starting point
 
@@ -130,7 +130,7 @@ unmount or reboot.
 
 ## Phase-one boundary
 
-This phase prepares the Controller and the Proxmox foundation. Firewall,
+This phase prepares the Controller and the Proxmox Host. Firewall,
 platform guests, physical trunks, and application modules belong to later
 phases. No alternate workstation, TUI, kiosk, or Companion bootstrap path is
 supported.
@@ -151,9 +151,9 @@ copy only that public host key to the Pi. Do not use `ssh-keyscan`, TOFU, or
 `StrictHostKeyChecking=no`.
 
 ```sh
-sudo boetticher host identity create
-sudo boetticher host identity public-key
-sudo boetticher host trust import --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_HOST_KEY'
+sudo boetticher host create-identity
+sudo boetticher host show-public-key
+sudo boetticher host import-host-key --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_HOST_KEY'
 sudo boetticher host enroll root@192.168.4.5
 sudo boetticher host status --details
 ```
@@ -175,7 +175,7 @@ awk '$1 == "192.168.4.5" && $2 == "ssh-ed25519" { print $2 " " $3; exit }' \\
 
 If the file is hashed or has multiple ambiguous records, stop and verify the
 record manually through the trusted Mac/console rather than guessing. Then
-pass only the verified public host key to `host trust import`. To authorize the
+pass only the verified public host key to `host import-host-key`. To authorize the
 Pi, inspect the host's effective `AuthorizedKeysFile` through the trusted Mac
 session and append the printed controller public key idempotently to that
 existing root key file; do not replace other recovery keys.
@@ -190,7 +190,7 @@ Proxmox storage, stable `/dev/disk/by-id` identities, LVM, mounts, and network
 facts. It does not adopt or mutate discovered objects. A working but unprepared
 host is reported as requiring preparation, not as unhealthy.
 
-`host prepare` displays its bounded change set and requires confirmation (or
+`host apply` displays its bounded Host change set and requires confirmation (or
 `--yes`). Its dedicated Ansible role only configures the known Proxmox
 no-subscription repository policy, required host prerequisites, and headless
 power behavior. It never formats disks, changes guests, storage, bridges,
@@ -209,7 +209,7 @@ Storage initialization is a separate destructive boundary. Start with both
 controller and host readiness passing, then review the read-only plan:
 
 ```sh
-sudo boetticher storage plan
+sudo boetticher host plan-storage
 ```
 
 The plan traces the running Proxmox root/LVM stack to protect the boot disk and
@@ -222,9 +222,9 @@ First initialization requires the exact freshly rediscovered stable path and
 explicit confirmation:
 
 ```sh
-sudo boetticher storage initialize \
-  --device /dev/disk/by-id/<exact-timetec-id> \
-  --confirm
+sudo boetticher host apply \
+  --data-disk /dev/disk/by-id/<exact-data-disk-id> \
+  --yes
 ```
 
 The operation creates only one LVM PV, `boetticher-vg`, thin pool `data`, and
@@ -233,7 +233,7 @@ does not create a filesystem or mount, move guests, alter existing storage,
 change networking, or begin Phase 3B. The selected stable identity is written
 to `/etc/boetticher/lab.yml` only after successful verification.
 
-`storage status` is read-only. Repeating `storage initialize --confirm` on the
+`host status` is read-only. Repeating `host apply --yes` on the
 exact healthy layout reports that no changes are required; conflicting or
 partial layouts are never wiped automatically. During live acceptance, run a
 small reversible Proxmox allocation smoke test without creating a guest.
@@ -241,7 +241,7 @@ Rebooting Proxmox is a separate explicit approval gate, followed by rechecking
 the PV, VG, thin pool, storage registration, guests, and management network.
 Independent Mac/root access remains the recovery path if a storage step fails.
 
-## Phase 3B: virtual network foundation
+## Phase 3B: Host virtual networking
 
 Phase 3B adds only the internal virtual bridge. It preserves the proven HOME
 management path and does not configure a physical trunk or any routing policy:
@@ -270,13 +270,11 @@ Virtual LAB
 Review the protected path before configuration:
 
 ```sh
-sudo boetticher network plan
-sudo boetticher network configure --adopt-existing
-sudo boetticher network status
-sudo boetticher foundation status
+sudo boetticher host apply --adopt-existing-network --yes
+sudo boetticher host status
 ```
 
-`network plan` and `network status` are read-only. `network configure` adds
+`host status` is read-only. `host apply` adds
 an absent `vmbr1` stanza with VLAN awareness and no address,
 gateway, or physical port. It never rewrites `vmbr0`, changes `192.168.4.5`,
 changes the default route, attaches the second NIC, creates host VLAN
@@ -286,7 +284,7 @@ or switches. An existing conflicting `vmbr1` is reported and not adopted.
 A compatible existing bridge requires explicit adoption:
 
 ```sh
-sudo boetticher network configure --adopt-existing
+sudo boetticher host apply --adopt-existing-network --yes
 ```
 
 The command displays the protected HOME path and runtime addresses before
@@ -315,7 +313,7 @@ sysctl net.ipv6.conf.vmbr1.disable_ipv6
 There must be no IPv6 address and the sysctl must equal `1`. Verify fresh
 Pi-to-Proxmox SSH, unchanged vmbr0/nic0/192.168.4.5/default route, no vmbr1 host
 IPv4 or physical ports, VLAN awareness, repeat configure with no changes, and
-`foundation status` PASS. Guest IPv6 L2 forwarding requires its own live
+`host status` PASS. Guest IPv6 L2 forwarding requires its own live
 traffic check; local tests do not establish that result.
 
 The six VLAN numbers remain logical desired configuration for later guest
@@ -325,14 +323,14 @@ an exact bridge report that no changes are required. Proxmox reboot is a
 separate explicit gate; the independent Mac/root path is the recovery method
 if management verification fails. Phase 3B stops before firewall deployment.
 
-## Foundation teardown and rebuild
+## Host teardown and rebuild
 
-The foundation has a bounded inverse for qualification and recovery:
+Host configuration has a bounded inverse for qualification and recovery:
 
 ```sh
-sudo boetticher foundation teardown --plan
-sudo boetticher foundation teardown \
-  --confirm-storage /dev/disk/by-id/ata-Timetec_MS21_PL220510SCC1TB0785 --yes
+sudo boetticher host teardown --plan
+sudo boetticher host teardown \
+  --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
 ```
 
 The plan preserves the Controller identity, trusted Proxmox host key,
@@ -343,15 +341,15 @@ enrollment, storage, and network selections in `lab.yml`. Shared packages,
 unknown repository or power settings, guests, and unrelated storage stop the
 operation.
 
-Teardown is ordered from dependents to foundations and is retryable by rerunning
+Teardown is ordered from dependent Host configuration to its prerequisites and is retryable by rerunning
 the same command. The exact Timetec stable path is required for disk
 destruction; `--yes` confirms only non-destructive prompts. After remote work
 succeeds, `lab.yml` retains the Proxmox address and user but omits the enrolled
-node, storage, and network selections. `foundation status` then reports the
-intentional trust-only state and `foundation converge` directs the operator to
+node, storage, and network selections. `host status` then reports the
+intentional trust-only state and `host apply` directs the operator to
 `host enroll`.
 
-`network test bridge-ipv6` is the bounded native regression for each rebuilt
+`host test-ipv6` is the bounded native regression for each rebuilt
 cycle. It requires an exact vmbr1 and an empty guest inventory, creates only
 VMIDs 991 and 992 on VLAN 40 with guest firewalls disabled, proves both
 directions of IPv6 link-local forwarding, and explicitly stops, destroys, and
@@ -360,6 +358,6 @@ verifies the temporary guests and storage volumes.
 Approved reboot rehearsals are also Controller operations:
 
 ```sh
-sudo boetticher foundation reboot --yes
+sudo boetticher host reboot --yes
 sudo boetticher controller reboot --yes
 ```

@@ -10,15 +10,15 @@ import (
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 )
 
-func runFoundationReboot(args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("foundation reboot", flag.ContinueOnError)
+func runHostReboot(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("host reboot", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	yes := fs.Bool("yes", false, "confirm rebooting the enrolled Proxmox host")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || !*yes {
-		return errors.New("foundation reboot requires --yes")
+		return errors.New("host reboot requires --yes")
 	}
 	if err := requireControllerReady(); err != nil {
 		return err
@@ -28,7 +28,7 @@ func runFoundationReboot(args []string, out io.Writer) error {
 		return err
 	}
 	if config.Proxmox.Node == "" {
-		return errors.New("host enrollment is required before a foundation reboot")
+		return errors.New("host enrollment is required before a Host reboot")
 	}
 	transport, err := controllerhost.TransportFor(config)
 	if err != nil {
@@ -42,7 +42,7 @@ func runFoundationReboot(args []string, out io.Writer) error {
 		return fmt.Errorf("Proxmox node identity mismatch: expected %s", config.Proxmox.Node)
 	}
 	if len(inventory.Guests) != 0 {
-		return fmt.Errorf("foundation reboot requires an empty guest inventory; found %s", guestList(inventory.Guests))
+		return fmt.Errorf("Host reboot requires an empty guest inventory; found %s", guestList(inventory.Guests))
 	}
 	if _, err := transport.Run(context.Background(), "systemctl reboot"); err != nil {
 		return fmt.Errorf("Proxmox reboot failed: %w", err)

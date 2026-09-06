@@ -16,9 +16,9 @@ The name is a tiny chemistry-show wink. The result is less *Breaking Bad* and
 more *breaking out the good gear*.
 
 The supported lifecycle is Controller-driven: bootstrap the Controller, enroll
-and prepare Proxmox, recognize or initialize dedicated storage, configure the
-virtual network, and check the foundation. Application deployment and the
-physical LAB trunk are later phases.
+the Proxmox Host, apply its OS baseline, storage, and virtual network, then
+inspect the Host. Modules are later operator capabilities; they are not part
+of Host apply.
 
 ## Start here
 
@@ -35,21 +35,19 @@ ceremony:
 ```text
 boetticher controller bootstrap --operator pi --confirm-key-login
 boetticher controller status
-boetticher host identity create
-boetticher host trust import --address PROXMOX_HOME_IP --key 'ssh-ed25519 VERIFIED_HOST_KEY'
+boetticher host create-identity
+boetticher host show-public-key
+boetticher host import-host-key --address PROXMOX_HOME_IP --key 'ssh-ed25519 VERIFIED_HOST_KEY'
 boetticher host enroll root@PROXMOX_HOME_IP
+boetticher host plan-storage
+boetticher host apply --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
 boetticher host status
-boetticher host prepare
-boetticher storage plan
-boetticher storage initialize --device /dev/disk/by-id/ata-Timetec_MS21_PL220510SCC1TB0785 --confirm
-boetticher network plan
-boetticher network configure --adopt-existing
-boetticher foundation status
 ```
 
-Use `boetticher foundation converge` after the first explicit approvals. It
-repeats the native checks and reports `No changes required.` once the
-foundation is established. It never approves trust or erases a disk for you.
+If a compatible unowned internal bridge is found, review the plan and repeat
+Host apply with `--adopt-existing-network --yes`. Host apply repeats native
+inspection and reports `No changes required.` once the Host is configured. It
+never accepts Host trust or erases a disk without the exact operator approval.
 
 ## Built with a lot of excellent open source
 

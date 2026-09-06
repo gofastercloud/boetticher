@@ -2,138 +2,167 @@
 layout: default
 title: Start here
 section: start
-description: The Controller foundation lifecycle.
+description: The Controller and Host lifecycle.
 ---
 
 # Start here
 
-Boetticher has one supported foundation path. Run these commands on the
-Controller, in order, from a clean Raspberry Pi OS Lite (Debian 13/Trixie,
-ARM64) installation:
+Boetticher has two core targets:
 
-```text
-1. Install the Controller release payload.
-2. Bootstrap the Controller.
-3. Establish Proxmox host trust from the independently verified Mac record.
-4. Enroll the Proxmox node.
-5. Prepare the host baseline.
-6. Recognize or initialize the dedicated data disk.
-7. Recognize or configure the virtual internal network.
-8. Check foundation status.
-```
+- the Controller, which runs Boetticher, owns its administrative identity, and
+  manages attached Controller hardware; and
+- one Proxmox Host, whose OS baseline, storage, and virtual network are Host
+  configuration.
 
-## Commands
+There is no separate base or foundation object.
+
+## First Host journey
+
+Run these commands on the Controller after installing the supported release:
 
 ```sh
 sudo boetticher controller bootstrap --operator pi --confirm-key-login
 sudo boetticher controller status
 
-sudo boetticher host identity create
-sudo boetticher host trust import --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_HOST_KEY'
-sudo boetticher host enroll root@192.168.4.5
-sudo boetticher host status
-sudo boetticher host prepare
+sudo boetticher host create-identity
+sudo boetticher host show-public-key
+sudo boetticher host import-host-key \
+  --address 192.0.2.10 --key 'ssh-ed25519 VERIFIED_HOST_KEY'
+sudo boetticher host enroll root@192.0.2.10
 
-sudo boetticher storage plan
-sudo boetticher storage initialize \
-  --device /dev/disk/by-id/ata-Timetec_MS21_PL220510SCC1TB0785 --confirm
-
-sudo boetticher network plan
-sudo boetticher network configure --adopt-existing
-sudo boetticher foundation status
+sudo boetticher host plan-storage
+sudo boetticher host apply \
+  --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
+sudo boetticher host status --details
 ```
 
-The trust record is copied from the Mac only after a strict SSH connection to
-the Proxmox address has been verified. Boetticher never accepts a new host key
-automatically. The Controller keeps its Ed25519 identity and known-hosts file
-under `/var/lib/boetticher/controller/ssh/`.
+The Host key must be verified independently before `import-host-key`. Boetticher
+never accepts a new key automatically. The Controller keeps its Ed25519 identity
+and known-hosts file under `/var/lib/boetticher/controller/ssh/`.
 
-Storage initialization is the only foundation operation that can erase data.
-Review the exact stable `/dev/disk/by-id` candidate and pass `--confirm` only
-after verifying that it is neither the Proxmox boot disk nor a disk used by a
-guest. If the native LVM and Proxmox layout is already the owned
-`boetticher-data` store, `storage initialize` reports:
+`host apply` is declarative and idempotent. It inspects native state and then:
+
+- applies the bounded Proxmox OS baseline;
+- configures the exact dedicated data-disk layout when requested; and
+- configures the VLAN-aware internal bridge while preserving HOME management.
+
+It does not deploy Modules. An already-correct Host is a successful no-op.
+
+## Approval boundaries
+
+Host apply stops before a missing trust binding, a destructive disk operation,
+or adoption of a compatible but unowned internal bridge.
+
+Review a disk candidate first:
+
+```sh
+sudo boetticher host plan-storage
+```
+
+Then bind the exact stable identity and approve the operation:
+
+```sh
+sudo boetticher host apply \
+  --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
+```
+
+If an existing portless VLAN-aware `vmbr1` is compatible but unowned, review it
+and explicitly approve adoption:
+
+```sh
+sudo boetticher host apply --adopt-existing-network --yes
+```
+
+Conflicting or ambiguous native state stops without mutation. Rerun `host apply`
+after resolving the reported boundary; no workflow state, resume token, plan
+digest, ledger, or transaction database is required.
+
+## Host status
+
+`host status` is the single normal Host view and is read-only. It reports
+enrollment, Host configuration, storage, the internal network, the physical LAB
+interface, and Module state. `--details` adds the node/version, guests, storage,
+stable disks, LVM, mounts, interfaces, bridges, and routes.
+
+The protected HOME path remains separate from the internal bridge. The current
+reference topology is `vmbr0` for management and a VLAN-aware `vmbr1` for VLANs
+5, 10, 20, 30, 40, and 99. Physical LAB networking is later Host configuration;
+it is not a Module.
+
+## Host teardown and rebuild
+
+Teardown removes exact Boetticher-owned Host configuration while preserving the
+Controller, imported Host trust, Proxmox installation, boot disk, HOME
+management, and independent recovery access.
+
+Review first:
+
+```sh
+sudo boetticher host teardown --plan
+```
+
+If the dedicated data disk is owned and will be erased, provide the exact
+configured stable identity and ordinary approval:
+
+```sh
+sudo boetticher host teardown \
+  --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
+```
+
+After teardown, the Host configuration is `NOT CONFIGURED` while Host trust is
+preserved. Rebuild through the proven sequence:
+
+```sh
+sudo boetticher host enroll root@192.0.2.10
+sudo boetticher host apply --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
+sudo boetticher host status
+```
+
+Teardown is retryable. Unknown guests, storage, bridges, or configuration stop
+the operation; no direct Proxmox cleanup is part of the supported journey.
+
+## Reboots and bounded IPv6 test
+
+Reboot the concrete target explicitly:
+
+```sh
+sudo boetticher controller reboot --yes
+sudo boetticher host reboot --yes
+```
+
+The Host IPv6 test is a bounded regression journey:
+
+```sh
+sudo boetticher host test-ipv6
+```
+
+It uses reserved temporary VMIDs on VLAN 40, proves bidirectional IPv6
+link-local forwarding, stops and destroys both guests, and verifies that their
+VMIDs and temporary storage volumes are absent before returning `PASS`.
+
+## Modules
+
+Modules are operator-visible capabilities on the Host. Their public grammar is
+always:
 
 ```text
-Storage already initialized and healthy.
-No changes required.
+boetticher module <capability> <action> [flags]
 ```
 
-`vmbr1` is VLAN-aware, has no physical member, and has no host address. A
-runtime IPv6 link-local address on a compatible pre-existing bridge is handled
-by explicit adoption; configured addresses, gateways, physical members, or
-unknown directives stop the operation. Adoption persists
-`net.ipv6.conf.vmbr1.disable_ipv6=1` for the Proxmox host only. Guest IPv6
-Ethernet forwarding remains a separate live acceptance check.
+Examples for later capability work are `module firewall status`, `module dhcp
+add-reservation`, `module dns add-record`, `module ntp status`, `module vpn
+status`, `module monitoring status`, `module statuspage add-check`, and `module
+printer status`. Provider software, appliance names, daemons, guests, and
+Controller peripherals are not Module namespaces. Phase 3D documents this
+grammar; it does not start firewall or speculative Module implementation.
 
-Once the explicit approvals are complete, use the guided read-only convergence
-check:
-
-```sh
-sudo boetticher foundation converge
-```
-
-It reuses the same native checks as the individual operations, stops at any
-missing trust, preparation approval, storage approval, or network adoption
-decision, and reports `No changes required.` for an established foundation.
-It never deploys a firewall, platform guests, physical trunk, or switch
-configuration.
-
-## Foundation teardown
-
-To remove the Boetticher-owned foundation while preserving Controller trust,
-the Proxmox installation, the boot disk, and HOME management, review the
-read-only plan first:
-
-```sh
-sudo boetticher foundation teardown --plan
-```
-
-Teardown refuses unexpected guests, unknown storage, ambiguous bridges, and
-unrecognized host configuration. The exact Timetec disk must be acknowledged
-explicitly; `--yes` only confirms the non-destructive parts:
-
-```sh
-sudo boetticher foundation teardown \
-  --confirm-storage /dev/disk/by-id/ata-Timetec_MS21_PL220510SCC1TB0785 \
-  --yes
-```
-
-After teardown, `foundation status` reports Controller readiness and established
-Proxmox trust, with host enrollment, baseline, storage, and network shown as
-not configured. Rerun `host enroll`, `host prepare`, `storage initialize`, and
-`network configure` to rebuild; no manual `pvesh`, LVM, network-file, or guest
-cleanup is part of the supported journey.
-
-For the bounded vmbr1 regression, run the native Controller test after each
-rebuild and after each Proxmox reboot:
-
-```sh
-sudo boetticher network test bridge-ipv6
-```
-
-It creates two temporary guests on VLAN 40, proves bidirectional IPv6
-link-local forwarding, and stops, destroys, and verifies removal of both
-guests and their temporary storage volumes.
-
-Approved reboot rehearsals use the Controller commands:
-
-```sh
-sudo boetticher foundation reboot --yes
-sudo boetticher controller reboot --yes
-```
-
-## Recovery
+## Recovery boundary
 
 For Controller failure, restore `/etc/boetticher/` and
 `/var/lib/boetticher/controller/ssh/`, or enroll a replacement Controller with
-the Mac trust ceremony. For Proxmox network failure, use independent Mac/root
-access, inspect the native bridge and interface files, and restore the known
-good bounded configuration. For partial storage, inspect native LVM and
-Proxmox storage and rerun the operation only when its owned state is
-recognized. No automated destructive recovery is provided.
+the independent Host trust ceremony. For Host failure, use independent
+Mac/root recovery access, inspect native state, and rerun the bounded operation
+only when Boetticher ownership is clear.
 
-The [Controller guide](controller.html) contains installation and maintenance
-details. The [lab guide](lab.html) describes the fixed VLAN topology. Firewall
-and application modules are later phases and are not required for foundation
-readiness.
+The [Controller guide](controller.html) covers local installation and
+maintenance. The [lab guide](lab.html) describes the fixed Host topology.

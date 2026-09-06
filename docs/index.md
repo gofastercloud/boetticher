@@ -9,7 +9,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
   <div>
     <p class="eyebrow">Automated homelab builder</p>
     <h1>Turn a clean Proxmox host into a very good little lab.</h1>
-    <p class="lede">Boetticher gives a clean Proxmox host one small, repeatable foundation path from a local Controller.</p>
+    <p class="lede">Boetticher gives a clean Proxmox Host one small, repeatable lifecycle from a local Controller.</p>
     <div class="actions">
       <a class="button" href="start.html">Start a fresh lab →</a>
       <a class="button button--quiet" href="https://github.com/gofastercloud/boetticher">Browse the source ↗</a>
@@ -29,7 +29,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
   </article>
   <article class="card">
     <h3>A small daily loop</h3>
-    <p>Bootstrap the Controller, enroll and prepare Proxmox, recognize storage and the virtual network, then check foundation status.</p>
+    <p>Bootstrap the Controller, enroll the Host, apply its baseline, storage, and virtual network, then inspect Host status.</p>
   </article>
   <article class="card">
     <h3>Your workloads stay yours</h3>
@@ -51,7 +51,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 | Build your first lab or learn the everyday rhythm | [Start here](start.html) |
 | See how the zones, guests, storage, access, and recovery fit together | [The lab](lab.html) |
 | Add a printer, dashboard, AI helper, or AirVPN exit | [Modules](modules.html) |
-| Prepare a Raspberry Pi controller | [Controller](controller.html) |
+| Prepare the Controller | [Controller](controller.html) |
 | Look up a flag or browse the CLI menu | [Commands](commands.html) |
 
 <aside class="callout">
@@ -59,7 +59,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 </aside>
 
 <aside class="callout">
-  <p><strong>The foundation boundary:</strong> the Controller owns the desired host, dedicated storage, and virtual-only <code>vmbr1</code> shape. Firewall, platform guests, physical trunks, and switches are later phases.</p>
+  <p><strong>The Host boundary:</strong> Host apply owns the Proxmox OS baseline, dedicated storage, and virtual-only <code>vmbr1</code> shape. Modules and physical LAB networking are later work.</p>
 </aside>
 
 ## A quick glossary
@@ -70,7 +70,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
   <dt>VLAN</dt>
   <dd>A virtual local-area network: one physical cable can carry several separate networks. This <a href="https://www.cloudflare.com/learning/network-layer/what-is-a-vlan/">VLAN explainer</a> makes it pleasantly concrete.</dd>
   <dt>Controller</dt>
-  <dd>The local Raspberry Pi that keeps the persistent SSH identity and runs the foundation commands.</dd>
+  <dd>The machine that runs Boetticher, keeps the persistent administrative identity, and owns attached Controller peripherals. The current reference implementation is a Raspberry Pi.</dd>
 </dl>
 
 ## Built by a lot of clever people

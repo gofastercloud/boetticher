@@ -12,7 +12,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
-func TestPublicDocumentationDescribesControllerFoundation(t *testing.T) {
+func TestPublicDocumentationDescribesControllerAndHost(t *testing.T) {
 	root := repositoryRoot(t)
 	read := func(path string) string {
 		data, err := os.ReadFile(filepath.Join(root, path))
@@ -25,7 +25,7 @@ func TestPublicDocumentationDescribesControllerFoundation(t *testing.T) {
 	home := read("docs/index.md")
 	start := read("docs/start.md")
 	commands := read("docs/commands.md")
-	for _, want := range []string{"boetticher controller bootstrap", "boetticher host identity", "boetticher storage plan", "boetticher network configure", "boetticher foundation converge", "No changes required."} {
+	for _, want := range []string{"boetticher controller bootstrap", "boetticher host apply", "boetticher host plan-storage", "boetticher host teardown", "boetticher module <capability> <action>", "No changes required."} {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)
 		}

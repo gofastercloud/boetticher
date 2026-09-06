@@ -51,7 +51,7 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"boetticher controller", "boetticher host", "boetticher storage", "boetticher network", "boetticher foundation"} {
+	for _, command := range []string{"boetticher controller", "boetticher host", "boetticher module"} {
 		if !strings.Contains(text, command) {
 			t.Errorf("root short help omitted %s: %s", command, text)
 		}
@@ -73,32 +73,24 @@ func TestNoArgumentsDoesNotLaunchAnAlternateTUI(t *testing.T) {
 	if err := Run(nil, &output, &output); err == nil {
 		t.Fatal("no arguments unexpectedly launched a workflow")
 	}
-	if !strings.Contains(output.String(), "boetticher controller") || strings.Contains(output.String(), "dashboard") {
-		t.Fatalf("no-argument output did not show the foundation path: %s", output.String())
+	if !strings.Contains(output.String(), "boetticher controller") || !strings.Contains(output.String(), "boetticher host") || strings.Contains(output.String(), "dashboard") {
+		t.Fatalf("no-argument output did not show the Controller/Host path: %s", output.String())
 	}
 }
 
-func TestFoundationSubcommandDispatchesItsActualOperation(t *testing.T) {
+func TestHostTeardownAndIPv6HelpArePublished(t *testing.T) {
 	var output bytes.Buffer
-	_ = Run([]string{"foundation", "status"}, &output, &output)
-	if strings.Contains(output.String(), "usage: boetticher foundation status|converge") {
-		t.Fatalf("foundation status was not dispatched: %s", output.String())
-	}
-}
-
-func TestFoundationTeardownAndBridgeIPv6HelpArePublished(t *testing.T) {
-	var output bytes.Buffer
-	if err := Run([]string{"foundation", "teardown", "--help"}, &output, &output); err != nil {
+	if err := Run([]string{"host", "teardown", "--help"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "--confirm-storage") {
+	if !strings.Contains(output.String(), "--data-disk") {
 		t.Fatalf("teardown help omitted exact disk confirmation: %s", output.String())
 	}
 	output.Reset()
-	if err := Run([]string{"network", "test", "bridge-ipv6", "--help"}, &output, &output); err != nil {
+	if err := Run([]string{"host", "test-ipv6", "--help"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "link-local Ethernet forwarding") {
+	if !strings.Contains(output.String(), "IPv6 forwarding") {
 		t.Fatalf("bridge test help omitted its bounded purpose: %s", output.String())
 	}
 }
@@ -106,9 +98,9 @@ func TestFoundationTeardownAndBridgeIPv6HelpArePublished(t *testing.T) {
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"controller", "--help"}, {"controller", "bootstrap", "--help"}, {"controller", "status", "--help"},
-		{"host", "--help"}, {"storage", "--help"}, {"network", "--help"}, {"foundation", "--help"}, {"foundation", "converge", "--help"},
-		{"firewall", "--help"}, {"dhcp", "--help"}, {"dns", "--help"}, {"access", "--help"}, {"network", "test", "--help"},
-		{"module", "--help"}, {"module", "secrets", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"},
+		{"host", "--help"}, {"host", "apply", "--help"}, {"host", "status", "--help"}, {"host", "teardown", "--help"}, {"host", "test-ipv6", "--help"},
+		{"firewall", "--help"}, {"dhcp", "--help"}, {"dns", "--help"}, {"access", "--help"},
+		{"module", "--help"}, {"module", "firewall", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err != nil {
@@ -122,8 +114,8 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 
 func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	paths := []string{
-		"firewall diff", "dhcp leases", "network trunk status",
-		"module disable", "module configure printer",
+		"firewall diff", "dhcp leases",
+		"module firewall status", "module printer status",
 		"config schema",
 	}
 	for _, path := range paths {
@@ -142,8 +134,8 @@ func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 			if strings.Contains(text, "Run boetticher "+strings.Fields(path)[0]+" with --help") {
 				t.Errorf("nested help %q contains recursive hint: %s", path, text)
 			}
-			if path == "module configure printer" && !strings.Contains(text, "The interactive workflow asks only for fields the module needs.") {
-				t.Errorf("module-specific help %q fell back to generic module help: %s", path, text)
+			if strings.HasPrefix(path, "module ") && !strings.Contains(text, "capability") {
+				t.Errorf("module help %q omitted capability-first grammar: %s", path, text)
 			}
 		})
 	}
@@ -181,6 +173,18 @@ func TestLegacyLifecycleIsDisabled(t *testing.T) {
 	}
 }
 
+func TestRetiredHostLifecycleFormsDoNotExecute(t *testing.T) {
+	for _, args := range [][]string{
+		{"foundation", "status"}, {"storage", "status"}, {"network", "status"},
+		{"host", "identity", "create"}, {"host", "trust", "import"}, {"host", "prepare"},
+	} {
+		var output bytes.Buffer
+		if err := Run(args, &output, &output); err == nil {
+			t.Fatalf("retired command %v was accepted", args)
+		}
+	}
+}
+
 func TestCommandReferenceContainsCLIUsage(t *testing.T) {
 	root := repositoryRoot(t)
 	document, err := os.ReadFile(filepath.Join(root, "docs", "commands.md"))
@@ -201,7 +205,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 	}
 	known := map[string]map[string]bool{
 		"controller": {"--operator": true, "--confirm-key-login": true},
-		"host":       {"--address": true, "--key": true},
+		"host":       {"--address": true, "--key": true, "--data-disk": true, "--adopt-existing-network": true, "--yes": true},
 		"storage":    {"--device": true, "--confirm": true},
 		"network":    {"--adopt-existing": true, "--yes": true},
 		"foundation": {},
