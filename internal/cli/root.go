@@ -47,8 +47,8 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	case "host":
 		return runHost(args[1:], input, out, errOut)
 	case "foundation":
-		if len(args) == 1 && (args[0] == "status" || args[0] == "converge") {
-			return runFoundation(args, out)
+		if len(args) == 2 && (args[1] == "status" || args[1] == "converge") {
+			return runFoundation(args[1:], out)
 		}
 		return fmt.Errorf("usage: boetticher foundation status|converge")
 	case "ssh-config":

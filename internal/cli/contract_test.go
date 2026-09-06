@@ -78,6 +78,14 @@ func TestNoArgumentsDoesNotLaunchAnAlternateTUI(t *testing.T) {
 	}
 }
 
+func TestFoundationSubcommandDispatchesItsActualOperation(t *testing.T) {
+	var output bytes.Buffer
+	_ = Run([]string{"foundation", "status"}, &output, &output)
+	if strings.Contains(output.String(), "usage: boetticher foundation status|converge") {
+		t.Fatalf("foundation status was not dispatched: %s", output.String())
+	}
+}
+
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"controller", "--help"}, {"controller", "bootstrap", "--help"}, {"controller", "status", "--help"},
