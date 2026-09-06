@@ -135,6 +135,7 @@ func TestRunBootstrapReportsSubprocessFailure(t *testing.T) {
 		LogPath:         logPath,
 		Run:             func(context.Context, string, []string, string, []string, io.Writer, io.Writer) error { return wantErr },
 		ShowLED:         func(context.Context, string, int, string) error { return nil },
+		PlatformReady:   func(context.Context, func(context.Context, string, ...string) ([]byte, error)) bool { return true },
 		runtimeRoot:     root,
 		isRoot:          func() bool { return true },
 	}, &output, io.Discard)

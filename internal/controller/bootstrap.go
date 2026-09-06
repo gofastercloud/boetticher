@@ -31,6 +31,7 @@ type BootstrapOptions struct {
 	Command         func(context.Context, string, ...string) ([]byte, error)
 	Run             func(context.Context, string, []string, string, []string, io.Writer, io.Writer) error
 	ShowLED         func(context.Context, string, int, string) error
+	PlatformReady   func(context.Context, func(context.Context, string, ...string) ([]byte, error)) bool
 	runtimeRoot     string
 	isRoot          func() bool
 }
@@ -76,6 +77,12 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 	}
 	if options.ShowLED == nil {
 		options.ShowLED = showLED
+	}
+	if options.PlatformReady == nil {
+		options.PlatformReady = platformReady
+	}
+	if !options.PlatformReady(ctx, options.Command) {
+		return errors.New("controller bootstrap requires Debian 13/Trixie on Raspberry Pi ARM64")
 	}
 	if err := os.MkdirAll(filepath.Dir(options.LockPath), 0755); err != nil {
 		return fmt.Errorf("create bootstrap lock directory: %w", err)

@@ -46,8 +46,10 @@ with tarfile.open(archive, "r:gz") as bundle:
         if not raw or "\\" in raw or "\x00" in raw:
             raise SystemExit(f"unsafe archive member: {raw!r}")
         path = pathlib.PurePosixPath(raw)
-        if path.is_absolute() or ".." in path.parts:
+        if not path.parts or path.is_absolute() or ".." in path.parts or "//" in raw or raw.startswith("./") or "/./" in raw:
             raise SystemExit(f"unsafe archive member: {raw!r}")
+        if path.parts[0] not in {"bin", "controller", "BUILD_ID"} or (path.parts[0] == "BUILD_ID" and len(path.parts) != 1):
+            raise SystemExit(f"unexpected archive member: {raw!r}")
         if member.issym() or member.islnk() or member.isdev() or not (member.isdir() or member.isfile()):
             raise SystemExit(f"unsupported archive member: {raw!r}")
         target = (root / pathlib.Path(*path.parts)).resolve()

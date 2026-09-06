@@ -20,8 +20,8 @@ main() {
   cp -R controller "$stage/controller"
   printf '%s\n' "$build_id" >"$stage/BUILD_ID"
 
-  tar -C "$stage" -czf dist/controller/boetticher-controller-linux-arm64.tar.gz \
-    bin controller BUILD_ID
+    COPYFILE_DISABLE=1 tar -C "$stage" -czf dist/controller/boetticher-controller-linux-arm64.tar.gz \
+        bin controller BUILD_ID
   cp scripts/install-controller.sh dist/controller/install.sh
   chmod 0755 dist/controller/install.sh
   (
