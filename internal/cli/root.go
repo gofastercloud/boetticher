@@ -47,10 +47,10 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	case "host":
 		return runHost(args[1:], input, out, errOut)
 	case "foundation":
-		if len(args) >= 2 && (args[1] == "status" || args[1] == "converge" || args[1] == "teardown") {
+		if len(args) >= 2 && (args[1] == "status" || args[1] == "converge" || args[1] == "teardown" || args[1] == "reboot") {
 			return runFoundationWithInput(args[1:], input, out)
 		}
-		return fmt.Errorf("usage: boetticher foundation status|converge|teardown")
+		return fmt.Errorf("usage: boetticher foundation status|converge|teardown|reboot")
 	case "ssh-config":
 		return runSSHConfig(args[1:], out)
 	case "access":

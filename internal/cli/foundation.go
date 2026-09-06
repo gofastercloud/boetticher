@@ -22,6 +22,9 @@ func runFoundationWithInput(args []string, input io.Reader, out io.Writer) error
 		if len(args) >= 1 && args[0] == "teardown" {
 			return runFoundationTeardown(args[1:], input, out)
 		}
+		if len(args) >= 1 && args[0] == "reboot" {
+			return runFoundationReboot(args[1:], out)
+		}
 		if len(args) != 1 || args[0] != "status" {
 			return errors.New("usage: boetticher foundation status|converge|teardown")
 		}

@@ -116,6 +116,13 @@ It creates two temporary guests on VLAN 40, proves bidirectional IPv6
 link-local forwarding, and stops, destroys, and verifies removal of both
 guests and their temporary storage volumes.
 
+Approved reboot rehearsals use the Controller commands:
+
+```sh
+sudo boetticher foundation reboot --yes
+sudo boetticher controller reboot --yes
+```
+
 ## Recovery
 
 For Controller failure, restore `/etc/boetticher/` and

@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -21,9 +23,31 @@ func runController(args []string, out, errOut io.Writer) error {
 		return runControllerBootstrap(args[1:], out, errOut)
 	case "status":
 		return runControllerStatus(args[1:], out)
+	case "reboot":
+		return runControllerReboot(args[1:], out)
 	default:
 		return fmt.Errorf("unknown controller command %q", args[0])
 	}
+}
+
+func runControllerReboot(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("controller reboot", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	yes := fs.Bool("yes", false, "confirm rebooting the Controller")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || !*yes {
+		return errors.New("controller reboot requires --yes")
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("controller reboot requires root; run it with sudo")
+	}
+	if err := exec.Command("systemctl", "reboot").Run(); err != nil {
+		return fmt.Errorf("Controller reboot failed: %w", err)
+	}
+	fmt.Fprintln(out, "Controller reboot requested.")
+	return nil
 }
 
 func runControllerBootstrap(args []string, out, errOut io.Writer) error {

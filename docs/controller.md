@@ -356,3 +356,10 @@ cycle. It requires an exact vmbr1 and an empty guest inventory, creates only
 VMIDs 991 and 992 on VLAN 40 with guest firewalls disabled, proves both
 directions of IPv6 link-local forwarding, and explicitly stops, destroys, and
 verifies the temporary guests and storage volumes.
+
+Approved reboot rehearsals are also Controller operations:
+
+```sh
+sudo boetticher foundation reboot --yes
+sudo boetticher controller reboot --yes
+```

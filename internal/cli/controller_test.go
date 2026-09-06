@@ -32,3 +32,10 @@ func TestControllerRejectsUnknownSubcommand(t *testing.T) {
 		t.Fatal("unknown controller command was accepted")
 	}
 }
+
+func TestControllerRebootRequiresExplicitConfirmation(t *testing.T) {
+	var output strings.Builder
+	if err := runController([]string{"reboot"}, &output, &output); err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("controller reboot did not require --yes: %v", err)
+	}
+}

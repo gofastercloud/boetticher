@@ -22,11 +22,11 @@ boetticher foundation converge
 ## Normal command menu
 
 ```text
-boetticher controller bootstrap|status [--operator USER] [--confirm-key-login]
+boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]
 boetticher host identity|trust|enroll|status|prepare ...
 boetticher storage plan|initialize|status [--device PATH] [--confirm]
 boetticher network plan|configure|status
-boetticher foundation status|converge|teardown
+boetticher foundation status|converge|teardown|reboot
 ```
 
 ## Advanced command menu
