@@ -39,6 +39,8 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	switch args[0] {
 	case "controller":
 		return runController(args[1:], out, errOut)
+	case "host":
+		return runHost(args[1:], input, out, errOut)
 	case "init":
 		return runInit(args[1:], out)
 	case "tui":
@@ -131,7 +133,7 @@ func normalizedHelpPath(pathParts []string) string {
 		return ""
 	}
 	switch pathParts[0] {
-	case "module":
+	case "module", "host":
 		return strings.Join(pathParts[:2], " ")
 	}
 	return ""

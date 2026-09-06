@@ -139,3 +139,64 @@ Debian 13/Trixie ARM64, [Go 1.26.5](https://go.dev/dl/),
 [Azlux log2ram](https://github.com/azlux/log2ram). The Go archive checksum and
 Ansible pin are recorded in the repository; the Azlux archive key is shipped as
 a public runtime asset.
+
+## Phase two: Proxmox enrollment
+
+After controller readiness passes, Phase two establishes a dedicated root SSH
+identity for the existing Proxmox host. The Mac remains the trust bridge: verify
+the host key through the Mac's existing strict `known_hosts` relationship, then
+copy only that public host key to the Pi. Do not use `ssh-keyscan`, TOFU, or
+`StrictHostKeyChecking=no`.
+
+```sh
+sudo boetticher host identity create
+sudo boetticher host identity public-key
+sudo boetticher host trust import --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_HOST_KEY'
+sudo boetticher host enroll root@192.168.4.5
+sudo boetticher host status --details
+```
+
+From the Mac, first verify the existing relationship without accepting a new
+key:
+
+```sh
+ssh -o StrictHostKeyChecking=yes root@192.168.4.5 'hostname; pveversion'
+```
+
+For an un-hashed, unambiguous entry, copy the exact Ed25519 record from the
+Mac's trusted file (do not run `ssh-keyscan`):
+
+```sh
+awk '$1 == "192.168.4.5" && $2 == "ssh-ed25519" { print $2 " " $3; exit }' \\
+  ~/.ssh/known_hosts
+```
+
+If the file is hashed or has multiple ambiguous records, stop and verify the
+record manually through the trusted Mac/console rather than guessing. Then
+pass only the verified public host key to `host trust import`. To authorize the
+Pi, inspect the host's effective `AuthorizedKeysFile` through the trusted Mac
+session and append the printed controller public key idempotently to that
+existing root key file; do not replace other recovery keys.
+
+`host enroll` performs strict read-only checks with the persistent controller
+identity and records only `/etc/boetticher/lab.yml` with the verified address,
+root user, node binding, and `no-subscription` repository policy. It does not
+create tokens, secrets, PKI, site state, guests, storage, or networking.
+
+`host status` is read-only. `--details` shows existing guests as operator-owned,
+Proxmox storage, stable `/dev/disk/by-id` identities, LVM, mounts, and network
+facts. It does not adopt or mutate discovered objects. A working but unprepared
+host is reported as requiring preparation, not as unhealthy.
+
+`host prepare` displays its bounded change set and requires confirmation (or
+`--yes`). Its dedicated Ansible role only configures the known Proxmox
+no-subscription repository policy, required host prerequisites, and headless
+power behavior. It never formats disks, changes guests, storage, bridges,
+addresses, routes, firewall, or recovery access. Re-running it is safe; it does
+not upgrade or reboot Proxmox.
+
+The controller keeps the private key at
+`/var/lib/boetticher/controller/ssh/id_ed25519` with root-only permissions and
+the imported host key at `known_hosts` in the same directory. Independent
+Mac/root access remains the recovery path. This phase inventories the dual-disk
+host only; disk initialization belongs to a later, explicitly authorized phase.

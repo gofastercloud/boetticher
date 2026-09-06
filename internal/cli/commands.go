@@ -20,6 +20,7 @@ type helpSpec struct {
 
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher controller bootstrap|status [--operator USER] [--confirm-key-login]"},
+	{Usage: "boetticher host identity|trust|enroll|status|prepare ..."},
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--root-age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]"},
 	{Usage: "boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]"},
 	{Usage: "boetticher plan [--site DIR] [--live] [--json]"},
@@ -67,6 +68,24 @@ var helpSpecs = map[string]helpSpec{
 	},
 	"controller status": {
 		Usage: "boetticher controller status [--operator USER]", Purpose: "Read local controller readiness without repairing or contacting Proxmox.", Arguments: "No positional arguments.", Options: "--operator selects the local account whose effective SSH policy is checked.", Safety: "Read-only. It does not install packages, run Ansible, change LEDs, load a site, or contact a remote system.", Examples: "boetticher controller status", Related: "controller bootstrap",
+	},
+	"host": {
+		Usage: "boetticher host identity|trust|enroll|status|prepare ...", Purpose: "Enroll and inspect the existing Proxmox host from the local controller.", Arguments: "identity creates or prints the persistent controller SSH key; trust imports a Mac-verified Proxmox host key; enroll records one verified root host; status reads host state; prepare applies the bounded host baseline.", Options: "host trust import takes --address and --key; host status accepts --details; host prepare accepts --yes to skip its confirmation prompt.", Safety: "Uses only the dedicated controller identity and imported known-hosts file. Enrollment and status do not change Proxmox; preparation changes only the declared repository, prerequisite packages, and headless policy. Guests, storage, networking, API tokens, SOPS, and PKI are out of scope.", Examples: "boetticher host identity create; boetticher host trust import --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_KEY'; boetticher host enroll root@192.168.4.5; boetticher host status --details; boetticher host prepare", Related: "controller status, enroll",
+	},
+	"host identity": {
+		Usage: "boetticher host identity create|public-key", Purpose: "Create or display the persistent controller SSH identity used for Proxmox.", Arguments: "No positional arguments.", Options: "create retains a valid existing Ed25519 identity; public-key prints only the public OpenSSH key.", Safety: "The private key remains root-owned on the Pi and is never printed or transferred.", Examples: "boetticher host identity create; boetticher host identity public-key", Related: "host trust import, host enroll",
+	},
+	"host trust": {
+		Usage: "boetticher host trust import --address IPv4 --key 'ssh-ed25519 ...'", Purpose: "Import a Proxmox host key copied from the already-trusted Mac.", Arguments: "--address is the verified Proxmox IPv4 address; --key is one OpenSSH host public-key line.", Options: "The imported key is stored in the dedicated controller known-hosts file.", Safety: "No TOFU or ssh-keyscan is used. A changed key for an existing address is rejected and unrelated known-hosts entries are retained.", Examples: "boetticher host trust import --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_KEY'", Related: "host identity public-key, host enroll",
+	},
+	"host enroll": {
+		Usage: "boetticher host enroll root@IPv4", Purpose: "Verify and bind one Proxmox standalone node to the controller.", Arguments: "The target must be root@IPv4 and must match the imported host key.", Options: "No options.", Safety: "Read-only remote checks plus one local /etc/boetticher/lab.yml binding. It does not prepare, deploy, modify guests, or create API credentials.", Examples: "boetticher host enroll root@192.168.4.5", Related: "host status, host prepare",
+	},
+	"host status": {
+		Usage: "boetticher host status [--details]", Purpose: "Read the enrolled Proxmox host and optionally print its live inventory.", Arguments: "No positional arguments.", Options: "--details includes guests, storage, stable disks, LVM, mounts, and networking.", Safety: "Read-only. It never runs Ansible or changes Proxmox state.", Examples: "boetticher host status; boetticher host status --details", Related: "host enroll, host prepare",
+	},
+	"host prepare": {
+		Usage: "boetticher host prepare [--yes]", Purpose: "Apply the small idempotent Proxmox host baseline.", Arguments: "No positional arguments.", Options: "--yes approves the displayed bounded preparation without an interactive prompt.", Safety: "Changes only known Proxmox repository policy, prerequisite packages, and headless power behavior. It does not upgrade, reboot, re-network, reconfigure storage, or touch guests.", Examples: "boetticher host prepare; boetticher host prepare --yes", Related: "host status",
 	},
 	"tui": {
 		Usage: "boetticher tui [--site DIR] [--offline]", Purpose: "Open the experimental interactive dashboard.", Arguments: "No positional arguments.", Options: "--site selects your private site directory; --offline skips live refresh and shows saved settings.", Safety: "The dashboard launches the same commands as the CLI, so changes still ask for their normal confirmation. Secrets are never command arguments. Use the direct CLI when you need zones, packet captures, JSON, or probe cleanup.", Examples: "boetticher tui --site ./my-boetticher", Related: "status --details, deploy, module, firewall, network test",

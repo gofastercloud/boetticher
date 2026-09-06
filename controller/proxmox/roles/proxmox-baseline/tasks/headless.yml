@@ -1,0 +1,16 @@
+---
+- name: Configure headless power behavior
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/90-boetticher-headless.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Login]
+      HandleLidSwitch=ignore
+      HandleLidSwitchExternalPower=ignore
+      HandleLidSwitchDocked=ignore
+      HandleSuspendKey=ignore
+      HandleHibernateKey=ignore
+      IdleAction=ignore
+  notify: reload systemd logind
