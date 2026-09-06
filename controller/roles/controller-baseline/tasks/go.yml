@@ -90,7 +90,7 @@
 - name: Refuse to overwrite unrelated public Go links
   ansible.builtin.assert:
     that:
-      - not item.stat.exists or (item.stat.islnk and item.stat.lnk_source == controller_go_root + '/bin/' + (item.path | basename))
+      - not item.stat.exists or (item.stat.islnk and item.stat.lnk_source == controller_go_root + '/bin/' + (item.item.path | basename))
     fail_msg: "{{ item.item.path }} already exists and is not the pinned controller toolchain"
   loop: "{{ controller_go_links.results }}"
 
