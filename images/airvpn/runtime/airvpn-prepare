@@ -5,6 +5,18 @@ credential="${CREDENTIALS_DIRECTORY:-}/airvpn-wireguard-config"
 test -n "$credential" -a -s "$credential"
 test ! -L /run/boetticher
 install -d -m 0700 /run/boetticher
+if /usr/sbin/ip link show airvpn0 >/dev/null 2>&1; then
+  if [ -L /run/boetticher/airvpn0.conf ] && [ -s /run/boetticher/airvpn0.conf ]; then
+    /usr/bin/wg-quick down /run/boetticher/airvpn0.conf >/dev/null 2>&1 || true
+  fi
+  if /usr/sbin/ip link show airvpn0 >/dev/null 2>&1; then
+    /usr/sbin/ip link delete airvpn0
+  fi
+fi
+if /usr/sbin/ip link show airvpn0 >/dev/null 2>&1; then
+  echo "stale AirVPN interface remains" >&2
+  exit 1
+fi
 if [ -e /run/boetticher/airvpn0.conf ] || [ -L /run/boetticher/airvpn0.conf ]; then
   rm -f /run/boetticher/airvpn0.conf
 fi

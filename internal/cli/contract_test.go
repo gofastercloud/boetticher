@@ -7,8 +7,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/gofastercloud/boetticher/internal/site"
 )
 
 func TestQuickstartCommandsMatchPublicCLI(t *testing.T) {
@@ -35,72 +33,6 @@ func TestQuickstartCommandsMatchPublicCLI(t *testing.T) {
 	}
 }
 
-func TestQuickstartOfflineCommandsExecute(t *testing.T) {
-	// Commands that require a Proxmox host or mutate infrastructure remain
-	// outside local CI; init and its secret path use the bundled implementation.
-	siteDir := filepath.Join(t.TempDir(), "my-boetticher")
-	identity := filepath.Join(t.TempDir(), "age-identity.txt")
-	rootIdentity := filepath.Join(t.TempDir(), "root-age-identity.txt")
-	run := func(args ...string) string {
-		t.Helper()
-		var output bytes.Buffer
-		if err := Run(args, &output, &output); err != nil {
-			t.Fatalf("%v failed: %v\n%s", args, err, output.String())
-		}
-		return output.String()
-	}
-
-	run("init", "--site-dir", siteDir, "--age-identity", identity, "--root-age-identity", rootIdentity)
-	initialized, err := site.Load(siteDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	presence, err := site.PlatformSecretPresence(siteDir, initialized, identity, []string{"pulse_proxy_auth_secret"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !presence["pulse_proxy_auth_secret"] {
-		t.Fatal("init did not create the Core-owned Pulse proxy credential")
-	}
-	run("config", "validate", "--site", siteDir)
-	run("module", "list", "--site", siteDir)
-	var deployOutput bytes.Buffer
-	if err := Run([]string{"deploy", "--site", siteDir, "--dry-run"}, &deployOutput, &deployOutput); err == nil {
-		t.Fatal("deploy dry-run unexpectedly passed without qualified artifact evidence")
-	}
-	if !strings.Contains(deployOutput.String(), "Deployment: FAIL") || !strings.Contains(deployOutput.String(), "Infrastructure changed: NO") {
-		t.Fatalf("deploy dry-run did not render its binary failure summary: %s", deployOutput.String())
-	}
-
-	var statusOutput bytes.Buffer
-	if err := Run([]string{"status", "--site", siteDir}, &statusOutput, &statusOutput); err == nil {
-		t.Fatal("status unexpectedly passed before live deployment evidence")
-	}
-	if !strings.Contains(statusOutput.String(), "Platform FAILED") {
-		t.Fatalf("status did not report the failed local health checks: %s", statusOutput.String())
-	}
-	if strings.Contains(statusOutput.String(), "NOT TESTED") || strings.Contains(statusOutput.String(), "ACTION REQUIRED") {
-		t.Fatalf("status reported an unknowable check: %s", statusOutput.String())
-	}
-}
-
-func TestInitConfiguresDedicatedDataDiskWithoutManualSiteEdits(t *testing.T) {
-	siteDir := filepath.Join(t.TempDir(), "my-boetticher")
-	identity := filepath.Join(t.TempDir(), "age-identity.txt")
-	rootIdentity := filepath.Join(t.TempDir(), "root-age-identity.txt")
-	var output bytes.Buffer
-	if err := Run([]string{"init", "--site-dir", siteDir, "--age-identity", identity, "--root-age-identity", rootIdentity, "--storage-profile", "dedicated-data-disk", "--storage-device", "/dev/disk/by-id/ata-example-data"}, &output, &output); err != nil {
-		t.Fatalf("init dedicated storage: %v\n%s", err, output.String())
-	}
-	configured, err := site.Load(siteDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if configured.StorageProfile != "dedicated-data-disk" || configured.StorageDevice != "/dev/disk/by-id/ata-example-data" {
-		t.Fatalf("dedicated storage was not saved: %#v", configured)
-	}
-}
-
 func TestUsageIsGeneratedFromCommandMetadata(t *testing.T) {
 	var output bytes.Buffer
 	if err := Run([]string{"--help"}, &output, &output); err != nil {
@@ -119,7 +51,7 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"boetticher init", "boetticher enroll", "boetticher plan", "boetticher deploy", "boetticher status", "boetticher module", "boetticher network", "boetticher update", "boetticher help --advanced"} {
+	for _, command := range []string{"boetticher controller", "boetticher host", "boetticher module"} {
 		if !strings.Contains(text, command) {
 			t.Errorf("root short help omitted %s: %s", command, text)
 		}
@@ -129,13 +61,39 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 			t.Errorf("root short help exposed advanced command %s: %s", hidden, text)
 		}
 	}
+	for _, hidden := range []string{"boetticher init", "boetticher deploy", "boetticher bundle", "boetticher tui", "boetticher companion", "boetticher pki"} {
+		if strings.Contains(text, hidden) {
+			t.Errorf("root help exposed superseded lifecycle %s", hidden)
+		}
+	}
+}
+
+func TestNoArgumentsDoesNotLaunchAnAlternateTUI(t *testing.T) {
+	var output bytes.Buffer
+	if err := Run(nil, &output, &output); err == nil {
+		t.Fatal("no arguments unexpectedly launched a workflow")
+	}
+	if !strings.Contains(output.String(), "boetticher controller") || !strings.Contains(output.String(), "boetticher host") || strings.Contains(output.String(), "dashboard") {
+		t.Fatalf("no-argument output did not show the Controller/Host path: %s", output.String())
+	}
+}
+
+func TestHostTeardownHelpIsPublished(t *testing.T) {
+	var output bytes.Buffer
+	if err := Run([]string{"host", "teardown", "--help"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "--data-disk") {
+		t.Fatalf("teardown help omitted exact disk confirmation: %s", output.String())
+	}
 }
 
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
-		{"init", "--help"}, {"enroll", "--help"}, {"bundle", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
-		{"network", "--help"}, {"firewall", "--help"}, {"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"network", "test", "--help"},
-		{"module", "--help"}, {"module", "secrets", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"},
+		{"controller", "--help"}, {"controller", "bootstrap", "--help"}, {"controller", "status", "--help"},
+		{"host", "--help"}, {"host", "apply", "--help"}, {"host", "status", "--help"}, {"host", "teardown", "--help"},
+		{"firewall", "--help"}, {"dhcp", "--help"}, {"dns", "--help"}, {"access", "--help"},
+		{"module", "--help"}, {"module", "firewall", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err != nil {
@@ -149,9 +107,8 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 
 func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	paths := []string{
-		"firewall diff", "dhcp leases", "network trunk status", "pki trust export",
-		"companion add", "companion setup", "companion status",
-		"module disable", "module configure printer",
+		"firewall diff", "dhcp leases",
+		"module firewall status", "module printer status",
 		"config schema",
 	}
 	for _, path := range paths {
@@ -170,8 +127,8 @@ func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 			if strings.Contains(text, "Run boetticher "+strings.Fields(path)[0]+" with --help") {
 				t.Errorf("nested help %q contains recursive hint: %s", path, text)
 			}
-			if path == "module configure printer" && !strings.Contains(text, "The interactive workflow asks only for fields the module needs.") {
-				t.Errorf("module-specific help %q fell back to generic module help: %s", path, text)
+			if strings.HasPrefix(path, "module ") && !strings.Contains(text, "capability") {
+				t.Errorf("module help %q omitted capability-first grammar: %s", path, text)
 			}
 		})
 	}
@@ -200,13 +157,24 @@ func TestCommandMetadataHasSubstantiveHelpForEveryPath(t *testing.T) {
 	}
 }
 
-func TestConvergeIsNotAnActiveCommand(t *testing.T) {
-	var output bytes.Buffer
-	if err := Run([]string{"converge"}, &output, &output); err == nil {
-		t.Fatal("removed converge command was accepted")
+func TestLegacyLifecycleIsDisabled(t *testing.T) {
+	for _, command := range []string{"init", "enroll", "plan", "bundle", "deploy", "status", "update", "tui", "pki", "companion"} {
+		var output bytes.Buffer
+		if err := Run([]string{command}, &output, &output); err == nil {
+			t.Fatalf("legacy command %s was accepted", command)
+		}
 	}
-	if strings.Contains(output.String(), "boetticher converge") {
-		t.Fatal("removed converge command appeared in normal CLI output")
+}
+
+func TestRetiredHostLifecycleFormsDoNotExecute(t *testing.T) {
+	for _, args := range [][]string{
+		{"foundation", "status"}, {"storage", "status"}, {"network", "status"},
+		{"host", "identity", "create"}, {"host", "trust", "import"}, {"host", "prepare"}, {"host", "test-ipv6"},
+	} {
+		var output bytes.Buffer
+		if err := Run(args, &output, &output); err == nil {
+			t.Fatalf("retired command %v was accepted", args)
+		}
 	}
 }
 
@@ -229,6 +197,11 @@ func validateCommandForm(t *testing.T, fields []string) {
 		t.Fatalf("invalid command form: %q", fields)
 	}
 	known := map[string]map[string]bool{
+		"controller": {"--operator": true, "--confirm-key-login": true},
+		"host":       {"--address": true, "--key": true, "--data-disk": true, "--adopt-existing-network": true, "--yes": true},
+		"storage":    {"--device": true, "--confirm": true},
+		"network":    {"--adopt-existing": true, "--yes": true},
+		"foundation": {},
 		"init":       {"--site-dir": true, "--age-identity": true, "--root-age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
 		"bundle":     {"--site": true, "--json": true},
 		"enroll":     {"--site": true, "--bootstrap-address": true, "--operator-key": true, "--age-identity": true, "--recovery-confirmed": true, "--storage-confirmed": true, "--proxmox-ca": true},
@@ -239,11 +212,9 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"logs":       {"--site": true, "--unit": true, "--since": true, "--priority": true, "--limit": true},
 		"ssh-config": {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
 		"access":     {"--site": true},
-		"network":    {"--site": true},
 		"pki":        {"--site": true},
 		"firewall":   {"--site": true, "--live": true, "--json": true},
 		"dhcp":       {"--site": true, "--live": true, "--json": true},
-		"storage":    {"--site": true, "--live": true, "--storage-confirmed": true, "--reinitialize": true, "--reboot": true, "--allow-shared-usb-bridge-quirk": true},
 		"module":     {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true, "--age-identity": true, "--proxmox-ca": true, "--insecure": true},
 		"config":     {"--site": true},
 	}

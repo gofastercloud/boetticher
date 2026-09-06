@@ -67,9 +67,9 @@ The current reuse rule is based on artifact coordinates, effective build-input
 identity, base dependency, and artifact bytes. `ArtifactPath` is only an
 optional local cache hint; when it is absent, the resolver derives the fixed
 cache path from artifact coordinates. Missing, malformed, or absent maintainer
-evidence does not force a rebuild. The native maintainer path reports that
-condition separately, while a missing blob, changed build inputs, or wrong
-bytes remain build failures.
+evidence does not force a rebuild; the native maintainer path reports that
+condition as `qualification-needed`. Changed effective build inputs or wrong
+bytes are reported as `rebuild-needed` and never reuse the old artifact.
 
 ## PKI and operator baseline
 

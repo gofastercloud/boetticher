@@ -134,10 +134,10 @@ the check; the existing structure needs tightening:
   `before` state while producing a configuration diff. That is not a harmless
   convenience: a failed baseline can be presented as an empty or misleading
   diff. It should fail closed.
-* `internal/cli/verify.go:238-268` initializes every evidence tier to
-  `TierLocal` and overrides known check names. A newly added or renamed check
-  can therefore receive an incorrectly optimistic evidence tier. Unknown
-  checks should be rejected or explicitly marked unclassified.
+* `internal/cli/verify.go` now resolves evidence through the typed check
+  definition registry. A newly added or renamed check must have a stable ID;
+  unknown IDs are rejected rather than receiving an incorrectly optimistic
+  evidence tier.
 * `internal/cli/verify.go` and `internal/cli/helpers.go:312-320` use a revision
   substring check for projection freshness. This can produce false positives
   and proves neither artifact structure nor semantic identity. It is adequate
@@ -316,10 +316,23 @@ and ruleset/publication path, yielding 15 or 16.
 
 The evidence-tier model in `internal/status/status.go` is valuable: it
 distinguishes local, remote, deployed, journey, and product evidence and
-preserves `HOLD`, `NOT TESTED`, and `INCONCLUSIVE`. The problem is calibration
-and presentation, not the model. Unknown check names default to local, and
-doctor/network-probe output does not consistently follow the binary operator
-contract. A simpler UI can still retain the full raw report underneath.
+preserves `HOLD`, `NOT TESTED`, and `INCONCLUSIVE`. The operator-facing
+verification path now assigns labels and tiers from one typed definition
+registry keyed by stable IDs; legacy label-only projections are normalized
+only when the label is an exact known match, while unknown IDs are rejected.
+Doctor/network-probe output still has separate recovery semantics, so a
+simpler UI must retain the full raw report underneath.
+
+The current bridge observer is deliberately left unchanged in this pass. Its
+inventory subprocesses have a 10-second deadline and the refresh loop sleeps
+for 2 seconds, while dynamic SANDBOX grants expire after 5 seconds. The
+configured worst-case refresh bound is therefore 12 seconds, which is not a
+live isolation acceptance result. Qualification must measure observed refresh
+latency (including command-tail latency) against the 5-second expiry and use a
+longer command deadline only when the resulting fail-closed behavior is
+demonstrated. A follow-up may replace whole-policy refreshes with incremental
+dynamic-set updates, but every grant still needs explicit expiry and immediate
+revocation on failed or stale observations.
 
 ### `doctor`
 

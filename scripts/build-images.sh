@@ -303,6 +303,8 @@ create_base_rootfs() {
   install -D -m 0644 images/base/runtime/debian-security-snapshot.sources "$rootfs/etc/apt/sources.list.d/boetticher-debian-security.sources"
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
   install -D -m 0644 images/base/runtime/journal-upload.conf "$rootfs/etc/systemd/journal-upload.conf"
+  install -D -m 0644 images/base/runtime/chrony.default "$rootfs/etc/default/chrony"
+  install -D -m 0644 images/base/runtime/chrony.service.conf "$rootfs/etc/systemd/system/chrony.service.d/boetticher.conf"
   install -D -m 0440 images/base/runtime/boetticher.sudoers "$rootfs/etc/sudoers.d/boetticher"
   chroot "$rootfs" chown root:root /etc/sudoers.d/boetticher
   install -D -m 0755 images/base/first-boot/boetticher-first-boot.sh "$rootfs/usr/lib/boetticher/boetticher-first-boot.sh"
@@ -839,12 +841,15 @@ build_firewall() {
     --mkdir /var/lib/boetticher/ansible \
     --mkdir /etc/ssh/sshd_config.d \
     --mkdir /etc/systemd/journald.conf.d \
+    --mkdir /etc/systemd/system/chrony.service.d \
     --mkdir /etc/sysctl.d \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
     --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \
     --upload images/base/runtime/install-runtime-state.sh:/usr/lib/boetticher/install-runtime-state \
     --upload images/firewall/nocloud/network-config:/etc/boetticher/nocloud-network-config \
     --upload images/base/runtime/journald.conf:/etc/systemd/journald.conf.d/boetticher.conf \
+    --upload images/base/runtime/chrony.default:/etc/default/chrony \
+    --upload images/base/runtime/chrony.service.conf:/etc/systemd/system/chrony.service.d/boetticher.conf \
     --upload images/base/runtime/journal-upload.conf:/etc/systemd/journal-upload.conf \
     --upload images/base/runtime/sshd.conf:/etc/ssh/sshd_config.d/boetticher.conf \
     --upload images/base/runtime/sshd-host-key.conf:/etc/ssh/sshd_config.d/boetticher-host-key.conf \

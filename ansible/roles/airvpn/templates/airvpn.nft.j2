@@ -17,6 +17,7 @@ table inet boetticher_airvpn {
     iifname "eth0" ip saddr 10.10.10.10 tcp sport { 5353, 9443 } ct state established accept
     iifname "eth0" ip saddr 10.10.10.10 udp sport { 5353, 123 } ct state established accept
     iifname "eth0" ip saddr 10.10.10.20 tcp sport 443 ct state established accept comment "boetticher:airvpn-pulse-report-reply"
+    iifname "eth0" ip saddr 10.10.10.20 tcp sport 443 ct state established accept comment "boetticher:airvpn-pulse-report-reply"
 {% if logging_plan.enabled | default(false) %}
     iifname "eth0" ip saddr {{ logging_plan.collector_address }} tcp sport 19532 ct state established accept
 {% endif %}

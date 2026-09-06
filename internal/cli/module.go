@@ -15,59 +15,49 @@ import (
 )
 
 func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("usage: boetticher module list|configure|enable|disable|secrets")
+	if len(args) < 2 {
+		return errors.New("usage: boetticher module <capability> <action> [flags]")
 	}
-	switch args[0] {
-	case "list":
-		return runModuleList(args[1:], out)
+	capability, action := args[0], args[1]
+	remaining := args[2:]
+	switch action {
+	case "status":
+		return runModuleStatus(capability, remaining, out)
 	case "configure":
-		return runModuleConfigure(args[1:], input, out, errOut)
+		return runModuleConfigure(append([]string{capability}, remaining...), input, out, errOut)
 	case "enable":
-		return runModuleChangeWithInput(args[1:], input, out, errOut, true)
+		return runModuleChangeWithInput(append([]string{capability}, remaining...), input, out, errOut, true)
 	case "disable":
-		return runModuleChangeWithInput(args[1:], input, out, errOut, false)
+		return runModuleChangeWithInput(append([]string{capability}, remaining...), input, out, errOut, false)
 	case "secrets":
-		return runModuleSecrets(args[1:], input, out, errOut)
+		return runModuleSecrets(append([]string{capability}, remaining...), input, out, errOut)
 	default:
-		return fmt.Errorf("unknown module command %q", args[0])
+		return fmt.Errorf("module capability %q does not implement action %q", capability, action)
 	}
 }
 
-func moduleSite(args []string, name string) (string, *flag.FlagSet, *bool, *bool, error) {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+func runModuleStatus(capability string, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("module "+capability+" status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
-	dryRun := fs.Bool("dry-run", false, "validate and display the plan without changing the site")
-	confirm := fs.Bool("confirm", false, "confirm a site configuration mutation")
-	returnValue := fs.Parse(args)
-	if returnValue != nil {
-		return "", nil, nil, nil, returnValue
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	return *siteDir, fs, dryRun, confirm, nil
-}
-
-func runModuleList(args []string, out io.Writer) error {
-	siteDir, _, _, _, err := moduleSite(args, "module list")
+	if fs.NArg() != 0 {
+		return errors.New("usage: boetticher module <capability> status [--site DIR]")
+	}
+	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
 	}
-	return runModuleListRequest(siteDir, out)
-}
-
-func runModuleListRequest(siteDir string, out io.Writer) error {
-	if siteDir == "" {
-		siteDir = "."
-	}
-	s, err := site.Load(siteDir)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, "NAME\tPOLICY\tENABLED\tREASON\tSTATE")
 	for _, module := range s.Modules {
-		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\n", module.Name, module.Policy, yesNo(module.Enabled), module.Reason, module.State)
+		if module.Name != capability {
+			continue
+		}
+		fmt.Fprintf(out, "Module %s\n  Enabled  %s\n  State    %s\n  Reason   %s\n", module.Name, yesNo(module.Enabled), module.State, module.Reason)
+		return nil
 	}
-	return nil
+	return fmt.Errorf("unknown module capability %q", capability)
 }
 
 func runModuleChangeWithInput(args []string, input io.Reader, out, errOut io.Writer, enable bool) error {

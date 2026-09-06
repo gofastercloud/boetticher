@@ -60,46 +60,6 @@
     - inventory_hostname in logging_upload_configs
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
-- name: Configure Chrony for unprivileged appliances
-  ansible.builtin.copy:
-    content: "DAEMON_OPTS=\"-x\"\n"
-    dest: /etc/default/chrony
-    owner: root
-    group: root
-    mode: '0644'
-  when:
-    - inventory_hostname not in groups.get('proxmox', [])
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
-- name: Allow Chrony startup without kernel clock control
-  ansible.builtin.file:
-    path: /etc/systemd/system/chrony.service.d
-    state: directory
-    owner: root
-    group: root
-    mode: '0755'
-  when:
-    - inventory_hostname not in groups.get('proxmox', [])
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
-- name: Install Chrony startup override
-  ansible.builtin.copy:
-    content: "[Unit]\nAfter=network-online.target\nWants=network-online.target\nConditionCapability=\n"
-    dest: /etc/systemd/system/chrony.service.d/boetticher.conf
-    owner: root
-    group: root
-    mode: '0644'
-  notify: reload systemd
-  when:
-    - inventory_hostname not in groups.get('proxmox', [])
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
-- name: Flush systemd after installing the Chrony override
-  ansible.builtin.meta: flush_handlers
-  when:
-    - inventory_hostname not in groups.get('proxmox', [])
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
 - name: Disable the restricted Chrony service in appliances
   ansible.builtin.service:
     name: chronyd-restricted.service
@@ -306,6 +266,30 @@
   register: boetticher_credential_dropin_install
   notify: reload systemd
   when: boetticher_deploy_phase | default('full') != 'services'
+
+- name: Activate the firewall Kea DDNS credential drop-in
+  ansible.builtin.systemd_service:
+    name: kea-dhcp-ddns-server.service
+    state: restarted
+    daemon_reload: true
+  when:
+    - inventory_hostname in groups.get('firewall', [])
+    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+    - credential_dropins[inventory_hostname]['kea-dhcp-ddns-server.service'] is defined
+
+- name: Force IPv4 for AirVPN-selected appliance package maintenance
+  ansible.builtin.copy:
+    content: |
+      Acquire::ForceIPv4 "true";
+    dest: /etc/apt/apt.conf.d/99boetticher-force-ipv4
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+    - inventory_hostname not in groups.get('proxmox', [])
+    - inventory_hostname in (airvpn_selected_guests | default([])) or inventory_hostname == 'lab-airvpn-01'
 
 - name: Install Pulse host-agent hardware collection dependencies
   ansible.builtin.apt:

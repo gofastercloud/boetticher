@@ -10,10 +10,9 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/cli"
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-func TestPublicDocumentationMatchesV03Model(t *testing.T) {
+func TestPublicDocumentationDescribesControllerAndHost(t *testing.T) {
 	root := repositoryRoot(t)
 	read := func(path string) string {
 		data, err := os.ReadFile(filepath.Join(root, path))
@@ -25,64 +24,16 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 	readme := read("README.md")
 	home := read("docs/index.md")
 	start := read("docs/start.md")
-	lab := read("docs/lab.md")
-	modules := read("docs/modules.md")
 	commands := read("docs/commands.md")
-	site := model.NewDefaultSite("contract-installation", "age1contract")
-
-	for _, want := range []string{
-		model.QualifiedGatewayImage,
-		"Pulse Community " + model.PulseVersion,
-		model.DefaultDomain,
-		"VLAN 5 TRANSIT",
-		"VLAN 10 INFRA",
-		"VLAN 20 SERVERS",
-		"VLAN 30 TRUSTED",
-		"VLAN 40 SANDBOX",
-		"VLAN 99 MGMT",
-		"100–199",
-		"200–499",
-		"500–899",
-		storage.VolumeGroup,
-		storage.GuestStorageID,
-		storage.BackupStorageID,
-	} {
-		if !strings.Contains(readme, want) && !strings.Contains(home, want) && !strings.Contains(start, want) && !strings.Contains(lab, want) {
-			t.Errorf("public documentation is missing model contract %q", want)
-		}
-	}
-	for _, component := range site.PlatformComponents() {
-		if !strings.Contains(readme, component.Hostname) && !strings.Contains(lab, component.Hostname) {
-			t.Errorf("public architecture is missing platform hostname %q", component.Hostname)
-		}
-		if component.URL != "" && !strings.Contains(readme, component.URL) && !strings.Contains(lab, component.URL) {
-			t.Errorf("public architecture is missing platform URL %q", component.URL)
-		}
-	}
-	for _, want := range []string{
-		"boetticher deploy [--plan DIGEST] [--site DIR] [--age-identity PATH] [--only-module NAME] [--confirm]",
-		"boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]",
-		"boetticher companion add|setup|status|migrate ...",
-	} {
+	for _, want := range []string{"boetticher controller bootstrap", "boetticher host apply", "boetticher host plan-storage", "boetticher host teardown", "boetticher module <capability> <action>", "No changes required."} {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)
 		}
 	}
-	for _, want := range []string{"companion add --mac", model.CompanionHostname, model.CompanionAddress, "desired state only"} {
-		if !strings.Contains(start, want) && !strings.Contains(lab, want) {
-			t.Errorf("Companion documentation is missing %q", want)
+	for _, want := range []string{"boetticher init", "boetticher deploy", "boetticher tui", "boetticher companion", "SOPS", "Age"} {
+		if strings.Contains(readme, want) || strings.Contains(home, want) || strings.Contains(start, want) || strings.Contains(commands, want) {
+			t.Errorf("primary documentation exposes superseded path %q", want)
 		}
-	}
-	for name, document := range map[string]string{"README.md": readme, "docs/index.md": home, "docs/start.md": start, "docs/lab.md": lab, "docs/modules.md": modules, "docs/commands.md": commands} {
-		if !strings.Contains(document, model.ReleaseVersion) {
-			t.Errorf("%s is missing current release %s", name, model.ReleaseVersion)
-		}
-		if strings.Contains(document, "0.5.1") {
-			t.Errorf("%s retains the internal 0.5.1 milestone as the public release", name)
-		}
-	}
-	if strings.Contains(modules, "fresh 0.5 site") {
-		t.Error("docs/modules.md retains the internal 0.5 milestone as the fresh-site release")
 	}
 }
 
@@ -99,7 +50,7 @@ func TestCommandReferenceIsGeneratedFromCLIContract(t *testing.T) {
 
 func TestDocsSiteKeepsOneSmallGuideSet(t *testing.T) {
 	root := repositoryRoot(t)
-	guideNames := []string{"index.md", "start.md", "lab.md", "modules.md", "commands.md"}
+	guideNames := []string{"index.md", "start.md", "lab.md", "modules.md", "commands.md", "controller.md"}
 	entries, err := os.ReadDir(filepath.Join(root, "docs"))
 	if err != nil {
 		t.Fatal(err)

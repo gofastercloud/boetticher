@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/networktest"
+	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
 
 func TestProbeAddressModeUsesDHCPOnlyForDynamicZones(t *testing.T) {
@@ -63,6 +66,17 @@ func TestPolicyAllowsHonorsSourceAndDestinationCIDRs(t *testing.T) {
 		t.Fatal("non-matching source CIDR was allowed")
 	}
 }
+
+func TestPlatformEndpointProbeUsesIndependentBaseline(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "networkprobe.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "networktest.ExpectedPlatformAccess(source.Zone, component.Zone, \"tcp\", port)") {
+		t.Fatal("platform endpoint probes are not using the independent zone baseline")
+	}
+}
 func TestPolicyAllowsBuiltInHTTPSForDynamicTrustedProbeAddress(t *testing.T) {
 	plan, err := firewall.PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
@@ -89,6 +103,25 @@ func TestAirVPNNetworkTestRequiresDeclaredARRAndAirVPNContracts(t *testing.T) {
 	}
 	if err := validateAirVPNNetworkTestSite(site); err != nil {
 		t.Fatalf("AirVPN test rejected the declared ARR and AirVPN contracts: %v", err)
+	}
+}
+
+func TestNetworkTestUsesImportedArtifactAndRetainedAirVPNPolicy(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "networkprobe.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"artifacts.ResolveImportedArtifact(*siteDir, wantedArtifact)",
+		"prepareAirVPNProfile(context.Background(), *siteDir, s, *ageIdentity, true, false)",
+		"firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)",
+		"proxmox.EnsureScopedCredentialACL",
+		"createNetworkProbeAsRoot",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("network test is missing qualification path %q", required)
+		}
 	}
 }
 
@@ -133,6 +166,28 @@ func TestNetworkProbeOwnershipUsesExactTagsAndDescriptionFields(t *testing.T) {
 	} {
 		if hasExactDescriptionField(description, "installation", "installation-01") {
 			t.Fatalf("foreign description %q was accepted", description)
+		}
+	}
+}
+
+func TestProxmoxPermissionDeniedOnlyMatchesForbidden(t *testing.T) {
+	if !proxmoxPermissionDenied(&proxmox.APIError{StatusCode: 403}) {
+		t.Fatal("403 Proxmox error was not recognized as permission denied")
+	}
+	for _, status := range []int{404, 500, 503} {
+		if proxmoxPermissionDenied(&proxmox.APIError{StatusCode: status}) {
+			t.Fatalf("HTTP %d Proxmox error was treated as permission denied", status)
+		}
+	}
+}
+
+func TestTransientLXCUnmountErrorIsNarrowlyRecognized(t *testing.T) {
+	if !transientLXCUnmountError(errors.New("Proxmox task failed: lvremove vm-910-disk-0 error: filesystem in use")) {
+		t.Fatal("filesystem-in-use LV failure was not recognized as transient")
+	}
+	for _, message := range []string{"lvremove failed", "filesystem in use", "permission denied"} {
+		if transientLXCUnmountError(errors.New(message)) {
+			t.Fatalf("unrelated destroy error %q was treated as transient", message)
 		}
 	}
 }

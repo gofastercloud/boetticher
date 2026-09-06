@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +23,8 @@ func RunWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 
 func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return runTUI(nil, input, out, errOut)
+		usage(out)
+		return errors.New("a command is required; choose a Controller or Host command")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 1 && args[0] == "help" && args[1] == "--advanced" {
@@ -32,53 +34,39 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		}
 		return nil
 	}
+	if isLegacyLifecycleCommand(args[0]) {
+		return legacyLifecycleDisabled(args[0])
+	}
+	if err := retiredCommandError(args); err != nil {
+		return err
+	}
 	if helpRequested(args) {
 		commandHelp(args, out)
 		return nil
 	}
 	switch args[0] {
-	case "init":
-		return runInit(args[1:], out)
-	case "tui":
-		return runTUI(args[1:], input, out, errOut)
-	case "enroll":
-		return runEnroll(args[1:], out)
-	case "plan":
-		return runPlan(args[1:], out)
-	case "bundle":
-		return runBundle(args[1:], out)
+	case "controller":
+		return runController(args[1:], out, errOut)
+	case "host":
+		return runHost(args[1:], input, out, errOut)
 	case "ssh-config":
 		return runSSHConfig(args[1:], out)
 	case "access":
 		return runAccess(args[1:], out)
-	case "pki":
-		return runPKI(args[1:], out)
 	case "firewall":
 		return runFirewall(args[1:], out)
 	case "dhcp":
 		return runDHCP(args[1:], out)
 	case "dns":
 		return runDNS(args[1:], out)
-	case "storage":
-		return runStorage(args[1:], out)
 	case "module":
 		return runModuleWithInput(args[1:], input, out, errOut)
 	case "config":
 		return runConfig(args[1:], out)
-	case "network":
-		return runNetwork(args[1:], out)
 	case "hardware":
 		return runHardware(args[1:], out)
-	case "companion":
-		return runCompanion(args[1:], out)
 	case "recover":
 		return runRecovery(args[1:], out)
-	case "deploy":
-		return runDeploy(args[1:], out)
-	case "status":
-		return runStatus(args[1:], out)
-	case "update":
-		return runUpdate(args[1:], out)
 	case "logs":
 		return runLogs(args[1:], out)
 	case "aiops":
@@ -86,6 +74,48 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	}
 	fmt.Fprintln(errOut, "usage: boetticher <command>")
 	return fmt.Errorf("unknown or incomplete command %q", strings.Join(args, " "))
+}
+
+func legacyLifecycleDisabled(command string) error {
+	return fmt.Errorf("boetticher %s is retired from the supported Controller/Host workflow", command)
+}
+
+func retiredCommandError(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	switch args[0] {
+	case "foundation":
+		return errors.New("boetticher foundation is retired; use boetticher host apply, status, teardown, or reboot")
+	case "storage":
+		return errors.New("boetticher storage is retired; storage is Host configuration; use boetticher host apply, status, or plan-storage")
+	case "network":
+		return errors.New("boetticher network is retired; networking is Host configuration; use boetticher host apply or status")
+	case "host":
+		if len(args) < 2 {
+			return nil
+		}
+		switch args[1] {
+		case "identity":
+			return errors.New("boetticher host identity is retired; use boetticher host create-identity or show-public-key")
+		case "trust":
+			return errors.New("boetticher host trust is retired; use boetticher host import-host-key")
+		case "prepare":
+			return errors.New("boetticher host prepare is retired; use boetticher host apply")
+		case "test-ipv6":
+			return errors.New("boetticher host test-ipv6 is internal-only; no supported Host acceptance command exists")
+		}
+	}
+	return nil
+}
+
+func isLegacyLifecycleCommand(command string) bool {
+	switch command {
+	case "init", "enroll", "plan", "bundle", "deploy", "status", "update", "tui", "pki", "companion":
+		return true
+	default:
+		return false
+	}
 }
 
 func helpRequested(args []string) bool {
@@ -129,7 +159,7 @@ func normalizedHelpPath(pathParts []string) string {
 		return ""
 	}
 	switch pathParts[0] {
-	case "module":
+	case "module", "host":
 		return strings.Join(pathParts[:2], " ")
 	}
 	return ""

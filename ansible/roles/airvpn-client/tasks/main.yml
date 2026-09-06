@@ -19,6 +19,7 @@
     group: root
     mode: '0600'
     validate: '/usr/sbin/nft -c -f %s'
+  register: airvpn_client_policy_install
 
 - name: Persist selected-client IPv6 bypass prevention
   ansible.builtin.copy:
@@ -52,10 +53,13 @@
 
       [Install]
       WantedBy=network-pre.target
+  register: airvpn_client_unit_install
+  notify:
+    - reload systemd
 
 - name: Apply selected-client restrictions before application services
   ansible.builtin.systemd_service:
     name: boetticher-airvpn-client
     enabled: true
-    state: restarted
+    state: "{{ 'restarted' if airvpn_client_policy_install.changed or airvpn_client_unit_install.changed else 'started' }}"
     daemon_reload: true

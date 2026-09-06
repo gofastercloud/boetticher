@@ -113,7 +113,10 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`)
+	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged {`)
+	if strings.Contains(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`) {
+		t.Fatal("managed gateway upstream binding is incorrectly limited to published services")
+	}
 	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil`)
 	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
 		t.Fatal("published services are not activated immediately after the DNS module")
@@ -615,6 +618,52 @@ func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T
 		if !strings.Contains(text, required) {
 			t.Fatalf("deploy does not reconcile the live bastion policy: missing %q", required)
 		}
+	}
+}
+
+func TestDeploymentTimeoutPreservesShorterCallerDeadline(t *testing.T) {
+	short, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, gotCancel := withDeploymentTimeout(short)
+	defer gotCancel()
+	deadline, ok := got.Deadline()
+	if !ok {
+		t.Fatal("deployment context lost the caller deadline")
+	}
+	shortDeadline, _ := short.Deadline()
+	if !deadline.Equal(shortDeadline) {
+		t.Fatalf("deployment context replaced caller deadline: got %s, want %s", deadline, shortDeadline)
+	}
+}
+
+func TestDeploymentTimeoutBoundsUndeadlinedCaller(t *testing.T) {
+	got, cancel := withDeploymentTimeout(context.Background())
+	defer cancel()
+	deadline, ok := got.Deadline()
+	if !ok {
+		t.Fatal("deployment context did not receive a bounded deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > deploymentTimeout {
+		t.Fatalf("deployment timeout = %s, want no more than %s", remaining, deploymentTimeout)
+	}
+}
+
+func TestPulseAgentPassUsesServicesPhaseWithoutNetworkRoleReplay(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	marker := "install Pulse agent on %s"
+	index := strings.Index(text, marker)
+	if index < 0 {
+		t.Fatal("Pulse agent Ansible pass is missing")
+	}
+	prefix := text[:index]
+	call := strings.LastIndex(prefix, "runTrackedAnsiblePhase(")
+	if call < 0 || !strings.Contains(text[call:index], "ansible.PhaseServices") {
+		t.Fatal("Pulse agent pass can replay bootstrap-only network roles")
 	}
 }
 

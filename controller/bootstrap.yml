@@ -1,0 +1,12 @@
+---
+- name: Bootstrap the Boetticher controller
+  hosts: all
+  connection: local
+  become: false
+  gather_facts: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+  roles:
+    - controller-baseline

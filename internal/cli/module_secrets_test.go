@@ -93,7 +93,7 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	if err := Run([]string{"module", "secrets", "bifrost", "list", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
+	if err := Run([]string{"module", "bifrost", "secrets", "list", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "openrouter_api_key\t runtime") && !strings.Contains(output.String(), "openrouter_api_key\truntime") {
@@ -101,21 +101,21 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	}
 	output.Reset()
 	secret := "super-secret-value"
-	if err := RunWithInput([]string{"module", "secrets", "bifrost", "set", "openrouter_api_key", "--site", siteDir, "--age-identity", identityPath}, strings.NewReader(secret+"\n"), &output, &output); err != nil {
+	if err := RunWithInput([]string{"module", "bifrost", "secrets", "set", "openrouter_api_key", "--site", siteDir, "--age-identity", identityPath}, strings.NewReader(secret+"\n"), &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), secret) {
 		t.Fatalf("secret value leaked from set output: %q", output.String())
 	}
 	output.Reset()
-	if err := Run([]string{"module", "secrets", "bifrost", "list", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
+	if err := Run([]string{"module", "bifrost", "secrets", "list", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "openrouter_api_key\truntime\toperator-supplied\tPASS present") || strings.Contains(output.String(), secret) {
 		t.Fatalf("status did not report redacted secret presence: %q", output.String())
 	}
 	output.Reset()
-	if err := Run([]string{"module", "secrets", "bifrost", "remove", "openrouter_api_key", "--confirm", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
+	if err := Run([]string{"module", "bifrost", "secrets", "remove", "openrouter_api_key", "--confirm", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), secret) {

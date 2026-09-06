@@ -454,6 +454,41 @@ func (c *Client) MoveLXCPersistentVolume(ctx context.Context, node string, vmid 
 	return nil
 }
 
+// ReassignLXCVolume moves an existing LXC volume to another owned container
+// on the same node without copying its bytes. Proxmox renames the storage
+// volume to the target VMID as part of the transfer, so the target must exist
+// and the source/target configuration digests are checked when supplied.
+func (c *Client) ReassignLXCVolume(ctx context.Context, node string, vmid, targetVMID int, volume, targetVolume, digest, targetDigest string) error {
+	if c == nil || !safeNodeID(node) || vmid <= 0 || targetVMID <= 0 || vmid == targetVMID || !safePersistentLXCMountpointKey(volume) || !safePersistentLXCMountpointKey(targetVolume) {
+		return errors.New("Proxmox node, distinct source and target VMIDs, and safe LXC volume keys are required")
+	}
+	if (digest != "" && (len(digest) != 40 || !isHex(digest))) || (targetDigest != "" && (len(targetDigest) != 40 || !isHex(targetDigest))) {
+		return errors.New("LXC source and target configuration digests must be SHA-1 hex values")
+	}
+	params := url.Values{
+		"target-vmid":   {strconv.Itoa(targetVMID)},
+		"volume":        {volume},
+		"target-volume": {targetVolume},
+	}
+	if digest != "" {
+		params.Set("digest", digest)
+	}
+	if targetDigest != "" {
+		params.Set("target-digest", targetDigest)
+	}
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "move_volume"), params, &upid); err != nil {
+		return fmt.Errorf("reassign LXC volume: %w", err)
+	}
+	if upid == "" {
+		return errors.New("Proxmox did not return an LXC volume reassign task")
+	}
+	if err := c.WaitTask(ctx, node, upid); err != nil {
+		return fmt.Errorf("wait for LXC volume reassign: %w", err)
+	}
+	return nil
+}
+
 func safePersistentLXCMountpointKey(value string) bool {
 	if !strings.HasPrefix(value, "mp") {
 		return false
@@ -570,7 +605,14 @@ func (c *Client) destroyLXCForReplacement(ctx context.Context, node string, vmid
 }
 
 func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
-	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) EnsureLXCRunning(ctx context.Context, node string, vmid int) error {

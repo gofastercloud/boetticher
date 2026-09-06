@@ -1,0 +1,2 @@
+---
+proxmox_no_subscription_codename: "{{ ansible_facts.distribution_release }}"

@@ -307,6 +307,45 @@ func TestMoveLXCPersistentVolumeWaitsForVerifiedCopyBeforeDeletingSource(t *test
 	}
 }
 
+func TestReassignLXCVolumeUsesTargetContainerAndDigests(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/910/move_volume":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range map[string]string{
+				"target-vmid": "260", "volume": "mp0", "target-volume": "mp0",
+				"digest":        "0123456789abcdef0123456789abcdef01234567",
+				"target-digest": "fedcba9876543210fedcba9876543210fedcba98",
+			} {
+				if got := r.Form.Get(key); got != want {
+					t.Fatalf("%s = %q, want %q", key, got, want)
+				}
+			}
+			return response([]byte(`{"data":"UPID:pve:reassign"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:reassign/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected LXC reassign request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.ReassignLXCVolume(context.Background(), "node", 910, 260, "mp0", "mp0", "0123456789abcdef0123456789abcdef01234567", "fedcba9876543210fedcba9876543210fedcba98"); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		source, target string
+	}{
+		{"rootfs", "mp0"}, {"mp0", "rootfs"}, {"mp01", "mp0"}, {"mp0", "mp31"},
+	} {
+		if err := client.ReassignLXCVolume(context.Background(), "node", 910, 260, test.source, test.target, "", ""); err == nil {
+			t.Fatalf("unsafe LXC reassign keys were accepted: %q -> %q", test.source, test.target)
+		}
+	}
+}
+
 func TestDeleteStorageSnippetRejectsPathsAndUsesExactEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-meta.yaml" {
@@ -356,6 +395,23 @@ func TestDestroyLXCWaitsForAsynchronousDeletion(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := client.DestroyLXC(context.Background(), "node", 910); err != nil {
 		t.Fatalf("DestroyLXC() did not wait for the deletion task: %v", err)
+	}
+}
+
+func TestStartLXCWaitsForAsynchronousStart(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/910/status/start" {
+			return response([]byte(`{"data":"UPID:pve:start-lxc"}`))
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:start-lxc/status" {
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		}
+		t.Fatalf("unexpected LXC start request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.StartLXC(context.Background(), "node", 910); err != nil {
+		t.Fatalf("StartLXC() did not wait for the start task: %v", err)
 	}
 }
 

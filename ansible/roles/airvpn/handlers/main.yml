@@ -1,0 +1,10 @@
+---
+- name: reload AirVPN firewall policy
+  ansible.builtin.systemd_service:
+    name: boetticher-airvpn-firewall.service
+    state: reloaded
+
+- name: restart AirVPN dnsmasq
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    state: restarted

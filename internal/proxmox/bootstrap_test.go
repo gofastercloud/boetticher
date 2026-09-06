@@ -768,6 +768,20 @@ func TestScopedProvisionerACLPathsIncludeStorageCollection(t *testing.T) {
 	}
 }
 
+func TestScopedProvisionerACLPathsIncludeTemporaryNetworkProbeRange(t *testing.T) {
+	paths := scopedProvisionerACLPaths("node")
+	allowed := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		allowed[path] = true
+	}
+	for vmid := 910; vmid <= 919; vmid++ {
+		path := "/vms/" + strconv.Itoa(vmid)
+		if !allowed[path] {
+			t.Fatalf("scoped ACL paths omit temporary network probe VMID %d", vmid)
+		}
+	}
+}
+
 func TestStorageCollectionACLDoesNotPropagate(t *testing.T) {
 	if got := scopedProvisionerACLPropagate("/storage"); got != 0 {
 		t.Fatalf("storage collection propagation = %d, want 0", got)

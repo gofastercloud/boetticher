@@ -29,3 +29,21 @@ func TestAirVPNServiceCreatesRuntimeDirectoryBeforeNamespaceSetup(t *testing.T) 
 		t.Fatal("AirVPN service does not ask systemd to create its runtime directory")
 	}
 }
+
+func TestAirVPNPrepareRemovesOnlyStaleOwnedInterface(t *testing.T) {
+	data, err := os.ReadFile("../../images/airvpn/runtime/airvpn-prepare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"/usr/sbin/ip link show airvpn0",
+		"/usr/bin/wg-quick down /run/boetticher/airvpn0.conf",
+		"/usr/sbin/ip link delete airvpn0",
+		"stale AirVPN interface remains",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("AirVPN prepare helper is missing stale-interface guard %q", required)
+		}
+	}
+}

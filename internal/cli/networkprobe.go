@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -118,7 +119,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 			progress.fail(nodeErr)
 			return nodeErr
 		}
-		cleanupErr := cleanupNetworkProbes(context.Background(), client, node, s, nil)
+		cleanupErr := cleanupNetworkProbes(context.Background(), client, node, *siteDir, s, nil)
 		if cleanupErr != nil {
 			progress.fail(cleanupErr)
 		} else {
@@ -147,7 +148,15 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.fail(err)
 		return err
 	}
-	artifact, evidence, err := artifacts.ResolveArtifactEvidence(*siteDir, wantedArtifact)
+	var artifact model.Artifact
+	var evidence artifacts.Evidence
+	if _, _, importedErr := artifacts.ImportedReleaseManifest(*siteDir); importedErr == nil {
+		artifact, evidence, err = artifacts.ResolveImportedArtifact(*siteDir, wantedArtifact)
+	} else if errors.Is(importedErr, os.ErrNotExist) {
+		artifact, evidence, err = artifacts.ResolveArtifactEvidence(*siteDir, wantedArtifact)
+	} else {
+		err = importedErr
+	}
 	if err != nil {
 		err = fmt.Errorf("network probe artifact is not qualified: %w", err)
 		progress.fail(err)
@@ -155,7 +164,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 	}
 	progress.complete()
 	progress.start("Prepare Proxmox probe environment")
-	client, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
+	client, credentials, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
 		progress.fail(err)
 		return err
@@ -167,7 +176,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.fail(err)
 		return err
 	}
-	if err := cleanupNetworkProbes(ctx, client, node, s, probes); err != nil {
+	if err := cleanupNetworkProbes(ctx, client, node, *siteDir, s, probes); err != nil {
 		progress.fail(err)
 		return err
 	}
@@ -175,7 +184,17 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.fail(err)
 		return err
 	}
-	policy, err := firewall.PlanFromSite(s)
+	airvpnProfile, profileErr := prepareAirVPNProfile(context.Background(), *siteDir, s, *ageIdentity, true, false)
+	if profileErr != nil {
+		progress.fail(profileErr)
+		return profileErr
+	}
+	var policy firewall.Plan
+	if airvpnProfile == nil {
+		policy, err = firewall.PlanFromSite(s)
+	} else {
+		policy, err = firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)
+	}
 	if err != nil {
 		err = fmt.Errorf("plan network test policy: %w", err)
 		progress.fail(err)
@@ -191,9 +210,10 @@ func runNetworkTest(args []string, out io.Writer) error {
 	progress.start("Create and start temporary probes")
 	created := make([]networktest.Probe, 0, len(probes))
 	var runErr error
+	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
 	for index := range probes {
 		probe := &probes[index]
-		if err := createNetworkProbe(ctx, client, node, storagePlan.GuestStorage, artifact, s, *probe, runID); err != nil {
+		if err := createNetworkProbe(ctx, client, rootRunner, credentials, node, storagePlan.GuestStorage, artifact, s, *probe, runID); err != nil {
 			report.Results = append(report.Results, networktest.Result{Name: "probe/" + probe.Zone, Status: "HOLD", Detail: err.Error(), Started: time.Now().UTC().Format(time.RFC3339), Finished: time.Now().UTC().Format(time.RFC3339)})
 			runErr = err
 			break
@@ -262,7 +282,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 	progress.start("Remove temporary probes")
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), networkTestCleanupTimeout)
 	defer cancelCleanup()
-	cleanupErr := cleanupNetworkProbes(cleanupCtx, client, node, s, probes)
+	cleanupErr := cleanupNetworkProbes(cleanupCtx, client, node, *siteDir, s, probes)
 	if cleanupErr != nil {
 		report.Cleanup = "HOLD: " + cleanupErr.Error()
 		progress.fail(cleanupErr)
@@ -313,7 +333,7 @@ func ensureNetworkProbeArtifact(ctx context.Context, client *proxmox.Client, nod
 	return nil
 }
 
-func createNetworkProbe(ctx context.Context, client *proxmox.Client, node, guestStorage string, artifact model.Artifact, s model.Site, probe networktest.Probe, runID string) error {
+func createNetworkProbe(ctx context.Context, client *proxmox.Client, rootRunner proxmox.SSHRunner, credentials site.ProxmoxCredentials, node, guestStorage string, artifact model.Artifact, s model.Site, probe networktest.Probe, runID string) error {
 	if err := networktest.ValidateProbeAddress(probe); err != nil {
 		return err
 	}
@@ -326,7 +346,15 @@ func createNetworkProbe(ctx context.Context, client *proxmox.Client, node, guest
 		"net0": fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,hwaddr=%s,ip=%s", probe.VLAN, probe.MAC, probeAddressMode(probe)),
 	})
 	if err := client.CreateLXC(ctx, node, probe.VMID, params); err != nil {
-		return fmt.Errorf("create network probe %s: %w", probe.Zone, err)
+		if !proxmoxPermissionDenied(err) {
+			return fmt.Errorf("create network probe %s: %w", probe.Zone, err)
+		}
+		if err := createNetworkProbeAsRoot(ctx, client, rootRunner, node, params, s.BootstrapAddress); err != nil {
+			return fmt.Errorf("create network probe %s through root recovery: %w", probe.Zone, err)
+		}
+		if err := proxmox.EnsureScopedCredentialACL(ctx, rootRunner, s.BootstrapAddress, "root", credentials.APIUser, credentials.TokenID, "BoetticherProvisioner", node); err != nil {
+			return fmt.Errorf("restore network probe ACL after root create: %w", err)
+		}
 	}
 	kind, current, err := client.GuestConfig(ctx, node, probe.VMID)
 	if err != nil || kind != proxmox.KindLXC {
@@ -336,6 +364,30 @@ func createNetworkProbe(ctx context.Context, client *proxmox.Client, node, guest
 		return fmt.Errorf("created network probe %s has the wrong hostname", probe.Zone)
 	}
 	return nil
+}
+
+func createNetworkProbeAsRoot(ctx context.Context, client *proxmox.Client, runner proxmox.SSHRunner, node string, params url.Values, address string) error {
+	args := []string{"/usr/bin/pvesh", "create", "/nodes/" + node + "/lxc"}
+	for _, key := range []string{"vmid", "hostname", "description", "ostemplate", "memory", "cores", "unprivileged", "onboot", "features", "rootfs", "swap", "net0"} {
+		for _, value := range params[key] {
+			args = append(args, "--"+key, value)
+		}
+	}
+	args = append(args, "--output-format", "json")
+	output, err := runner.FreshConnection().RunArgs(ctx, address, "root", args)
+	if err != nil {
+		return err
+	}
+	var response struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return fmt.Errorf("decode root probe creation task: %w", err)
+	}
+	if response.Data == "" {
+		return errors.New("root probe creation returned no task")
+	}
+	return client.WaitTask(ctx, node, response.Data)
 }
 
 func startNetworkProbe(ctx context.Context, client *proxmox.Client, node, siteDir string, s model.Site, probe *networktest.Probe, artifactDigest, runID string) error {
@@ -355,9 +407,23 @@ func startNetworkProbe(ctx context.Context, client *proxmox.Client, node, siteDi
 	}
 	runner := networkProbeRunner(s, siteDir)
 	if probe.Address != "" {
-		arping, err := executeNetworkProbe(ctx, runner, s, *probe, artifactDigest, runID, map[string]any{"version": 1, "kind": "arping", "target": probe.Address})
-		if err != nil || !arping.OK {
-			return fmt.Errorf("duplicate-address detection failed for %s: %s", probe.Zone, responseDetail(arping, err))
+		var arping probeResponse
+		var arpingErr error
+		for attempt := 0; attempt < 12; attempt++ {
+			arping, arpingErr = executeNetworkProbe(ctx, runner, s, *probe, artifactDigest, runID, map[string]any{"version": 1, "kind": "arping", "target": probe.Address})
+			if arpingErr == nil && arping.Completed {
+				break
+			}
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("duplicate-address detection failed for %s: %w", probe.Zone, ctx.Err())
+			case <-timer.C:
+			}
+		}
+		if arpingErr != nil || !arping.Completed || !arping.OK {
+			return fmt.Errorf("duplicate-address detection failed for %s: %s", probe.Zone, responseDetail(arping, arpingErr))
 		}
 		static := fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,hwaddr=%s,ip=%s/24,gw=%s", probe.VLAN, probe.MAC, probe.Address, probe.Gateway)
 		if err := client.SetLXCConfig(ctx, node, probe.VMID, mapToValues(map[string]string{"net0": static})); err != nil {
@@ -444,7 +510,7 @@ func runNetworkProbeCases(ctx context.Context, siteDir string, s model.Site, pol
 		if endpoint.Port() != "" {
 			port, _ = strconv.Atoi(endpoint.Port())
 		}
-		allowed := policyAllows(policy, source.Zone, component.Zone, "tcp", port, source.Address, component.Address)
+		allowed := networktest.ExpectedPlatformAccess(source.Zone, component.Zone, "tcp", port)
 		add("tcp/"+source.Zone+"/"+component.Name, "tcp", component.Address, port, allowed, map[string]any{"version": 1, "kind": "tcp", "target": component.Address, "port": port})
 		add("nmap/"+source.Zone+"/"+component.Name, "nmap", component.Address, port, allowed, map[string]any{"version": 1, "kind": "nmap", "target": component.Address, "port": port})
 		if component.MTLS && allowed {
@@ -1059,7 +1125,7 @@ func finishNetworkTest(out io.Writer, jsonOutput bool, report networktest.Report
 	return nil
 }
 
-func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node string, s model.Site, probes []networktest.Probe) error {
+func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node, siteDir string, s model.Site, probes []networktest.Probe) error {
 	ids := make([]int, 0, networktest.VMIDMax-networktest.VMIDMin+1)
 	if len(probes) == 0 {
 		for id := networktest.VMIDMin; id <= networktest.VMIDMax; id++ {
@@ -1075,6 +1141,15 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 		if err != nil {
 			if proxmox.IsNotFound(err) {
 				continue
+			}
+			if proxmoxPermissionDenied(err) {
+				absent, absenceErr := reservedProbeVMIDAbsent(ctx, siteDir, s, id)
+				if absenceErr != nil {
+					return fmt.Errorf("inspect reserved VMID %d absence: %w", id, absenceErr)
+				}
+				if absent {
+					continue
+				}
 			}
 			return fmt.Errorf("inspect reserved VMID %d: %w", id, err)
 		}
@@ -1107,14 +1182,82 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 		if err := proxmox.ValidateNoUndeclaredLXCPersistentVolumes(current, fmt.Sprintf("network probe %d", id)); err != nil {
 			return fmt.Errorf("HOLD: network probe %d storage ownership changed before purge: %w", id, err)
 		}
-		if err := client.DestroyLXC(ctx, node, id); err != nil {
-			return fmt.Errorf("destroy owned network probe %d: %w", id, err)
+		var destroyErr error
+		for attempt := 0; attempt < 5; attempt++ {
+			if attempt > 0 {
+				kind, current, destroyErr = client.GuestConfig(ctx, node, id)
+				if destroyErr != nil {
+					return fmt.Errorf("reinspect owned network probe %d before retry: %w", id, destroyErr)
+				}
+				tags, _ = current["tags"].(string)
+				description, _ = current["description"].(string)
+				if kind != proxmox.KindLXC || !hasExactProxmoxTag(tags, networktest.HarnessTag) || !hasExactDescriptionField(description, "installation", s.SecretMetadata.InstallationID) {
+					return fmt.Errorf("HOLD: network probe %d ownership changed before retry", id)
+				}
+				if err := proxmox.ValidateNoUndeclaredLXCPersistentVolumes(current, fmt.Sprintf("network probe %d", id)); err != nil {
+					return fmt.Errorf("HOLD: network probe %d storage ownership changed before retry: %w", id, err)
+				}
+			}
+			destroyErr = client.DestroyLXC(ctx, node, id)
+			if destroyErr == nil || !transientLXCUnmountError(destroyErr) || attempt == 4 {
+				break
+			}
+			timer := time.NewTimer(time.Duration(1<<attempt) * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("destroy owned network probe %d: %w", id, ctx.Err())
+			case <-timer.C:
+			}
 		}
-		if _, _, err := client.GuestConfig(ctx, node, id); err == nil || !proxmox.IsNotFound(err) {
+		if destroyErr != nil {
+			return fmt.Errorf("destroy owned network probe %d: %w", id, destroyErr)
+		}
+		if _, _, err := client.GuestConfig(ctx, node, id); err == nil {
 			return fmt.Errorf("verify cleanup of network probe %d", id)
+		} else if !proxmox.IsNotFound(err) {
+			if absent, absenceErr := reservedProbeVMIDAbsent(ctx, siteDir, s, id); absenceErr != nil {
+				return fmt.Errorf("verify cleanup of network probe %d absence: %w", id, absenceErr)
+			} else if !absent {
+				return fmt.Errorf("verify cleanup of network probe %d", id)
+			}
 		}
 	}
 	return nil
+}
+
+func transientLXCUnmountError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "lvremove") && strings.Contains(message, "filesystem in use")
+}
+
+func proxmoxPermissionDenied(err error) bool {
+	var apiErr *proxmox.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden
+}
+
+func reservedProbeVMIDAbsent(ctx context.Context, siteDir string, s model.Site, vmid int) (bool, error) {
+	if vmid < networktest.VMIDMin || vmid > networktest.VMIDMax {
+		return false, fmt.Errorf("VMID %d is outside the reserved network probe range", vmid)
+	}
+	runner := proxmoxRootSSHRunner(s, siteDir)
+	id := strconv.Itoa(vmid)
+	command := "if [ ! -e /etc/pve/lxc/" + id + ".conf ] && [ ! -e /etc/pve/qemu-server/" + id + ".conf ]; then printf absent; else printf present; fi"
+	output, err := runner.FreshConnection().Run(ctx, s.BootstrapAddress, "root", command)
+	if err != nil {
+		return false, err
+	}
+	switch strings.TrimSpace(string(output)) {
+	case "absent":
+		return true, nil
+	case "present":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected reserved VMID %d absence response", vmid)
+	}
 }
 
 func hasExactProxmoxTag(tags, wanted string) bool {

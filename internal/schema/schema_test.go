@@ -49,6 +49,13 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if len(dns.Properties) != 0 {
 		t.Fatalf("DNS module schema exposes non-default settings: %#v", dns.Properties)
 	}
+	reservation := document.Definitions["DHCPReservation"]
+	if _, ok := reservation.Properties["dns_override"]; ok {
+		t.Fatal("schema exposes derived dns_override input")
+	}
+	if _, ok := reservation.Properties["ntp_override"]; ok {
+		t.Fatal("schema exposes derived ntp_override input")
+	}
 	if _, ok := dns.Properties["enabled"]; ok {
 		t.Fatal("DNS module schema exposes forbidden enabled field")
 	}

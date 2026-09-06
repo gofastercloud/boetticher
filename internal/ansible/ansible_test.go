@@ -277,6 +277,56 @@ func TestFirewallRoleRunsBeforeBaseOnManagedPlay(t *testing.T) {
 	}
 }
 
+func TestAirVPNRoleRunsBeforeBaseAndSelectedClients(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	baseIndex := strings.Index(text, "    - base")
+	airVPNIndex := strings.Index(text, "    - role: airvpn\n")
+	clientIndex := strings.Index(text, "    - role: airvpn-client\n")
+	if baseIndex < 0 || airVPNIndex < 0 || clientIndex < 0 || airVPNIndex > baseIndex || baseIndex > clientIndex {
+		t.Fatal("AirVPN role must run before base logging setup and selected-client policy")
+	}
+	if !strings.Contains(text[airVPNIndex:], "boetticher_deploy_phase | default('full') in ['full', 'bootstrap']") {
+		t.Fatal("AirVPN role must run only in the early full/bootstrap foundation pass")
+	}
+	if strings.Contains(text[airVPNIndex:], "boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']") {
+		t.Fatal("AirVPN role must not run again during the services phase")
+	}
+	if strings.Count(text, "    - role: airvpn\n") != 1 || !strings.Contains(text[:airVPNIndex], "hosts: airvpn") {
+		t.Fatal("AirVPN role must run exactly once in the early AirVPN host play")
+	}
+	if strings.Contains(text[:baseIndex], "    - role: chrony\n") {
+		t.Fatal("Chrony must not start before the base role applies the unprivileged appliance options")
+	}
+}
+
+func TestAirVPNRoleRequiresControllerCredentialBeforeStartup(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "airvpn", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	installIndex := strings.Index(text, "Require the controller-installed AirVPN credential and unit binding")
+	startIndex := strings.Index(text, "Enable and start the AirVPN transit service")
+	if installIndex < 0 || startIndex < 0 || installIndex > startIndex {
+		t.Fatal("AirVPN controller credential check must precede the transit service startup")
+	}
+	for _, required := range []string{
+		"/var/lib/boetticher/credentials/airvpn-wireguard-config.cred",
+		"/etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf",
+		"retries: 12",
+		"delay: 5",
+		"until: airvpn_interface.rc == 0",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("AirVPN startup credential projection is missing %q", required)
+		}
+	}
+}
+
 func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml"))
 	if err != nil {
@@ -286,9 +336,6 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 	for _, name := range []string{
 		"Install base packages",
 		"Remove labadmin from the sudo group",
-		"Configure Chrony for unprivileged appliances",
-		"Allow Chrony startup without kernel clock control",
-		"Install Chrony startup override",
 		"Disable the restricted Chrony service in appliances",
 		"Configure appliances to use the platform DNS pair",
 		"Write bounded local journald configuration",
@@ -501,6 +548,9 @@ func TestBaseRoleInstallsPulseAgentOnlyForEnabledTaggedTargets(t *testing.T) {
 		"pulse_agent_release_sha256",
 		"lm-sensors",
 		"smartmontools",
+		"Acquire::ForceIPv4 \"true\";",
+		"airvpn_selected_guests",
+		"lab-airvpn-01",
 		"--enable-host=true",
 		"--enable-proxmox=false",
 		"--enable-docker=false",
@@ -1300,25 +1350,36 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, expected := range []string{
-		"content: \"DAEMON_OPTS=\\\"-x\\\"\\n\"",
-		"dest: /etc/default/chrony",
-		"path: /etc/systemd/system/chrony.service.d",
-		"state: directory",
-		"content: \"[Unit]\\nAfter=network-online.target\\nWants=network-online.target\\nConditionCapability=\\n\"",
-		"dest: /etc/systemd/system/chrony.service.d/boetticher.conf",
-		"notify: reload systemd",
-		"name: chronyd-restricted.service",
-		"enabled: false",
-		"state: stopped",
-	} {
+	for _, removed := range []string{"dest: /etc/default/chrony", "dest: /etc/systemd/system/chrony.service.d/boetticher.conf"} {
+		if strings.Contains(text, removed) {
+			t.Fatalf("base role still rewrites image-owned Chrony invariant %q", removed)
+		}
+	}
+	for _, expected := range []string{"name: chronyd-restricted.service", "enabled: false", "state: stopped"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("base role missing %q", expected)
 		}
 	}
-	chronyBlock := ansibleTaskBlock(text, "Configure Chrony for unprivileged appliances")
-	if chronyBlock == "" || !strings.Contains(chronyBlock, "inventory_hostname not in groups.get('proxmox', [])") {
-		t.Fatal("base role does not restrict unprivileged Chrony configuration to appliances")
+	for _, file := range []string{"chrony.default", "chrony.service.conf"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "images", "base", "runtime", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) == 0 {
+			t.Fatalf("image-owned Chrony invariant %s is empty", file)
+		}
+	}
+	buildData, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"images/base/runtime/chrony.default:/etc/default/chrony",
+		"images/base/runtime/chrony.service.conf:/etc/systemd/system/chrony.service.d/boetticher.conf",
+	} {
+		if !strings.Contains(string(buildData), expected) {
+			t.Fatalf("base image build does not install Chrony invariant %q", expected)
+		}
 	}
 }
 
@@ -1860,6 +1921,36 @@ func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
 	}
 }
 
+func TestFirewallKeaCredentialDropinIsActivatedAfterProjection(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "- name: Activate the firewall Kea DDNS credential drop-in")
+	if start < 0 {
+		t.Fatal("base role is missing firewall Kea credential activation")
+	}
+	end := strings.Index(text[start:], "\n- name:")
+	if end < 0 {
+		end = len(text) - start
+	}
+	task := text[start : start+end]
+	for _, required := range []string{
+		"name: kea-dhcp-ddns-server.service",
+		"state: restarted",
+		"daemon_reload: true",
+		"inventory_hostname in groups.get('firewall', [])",
+		"boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"credential_dropins[inventory_hostname]['kea-dhcp-ddns-server.service'] is defined",
+	} {
+		if !strings.Contains(task, required) {
+			t.Fatalf("firewall Kea credential activation is missing %q", required)
+		}
+	}
+}
+
 func TestFirewallInterfaceBindingsCarryStableRoleMACs(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)
@@ -1966,6 +2057,8 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"--accept-dns=false",
 				"--advertise-routes=10.10.0.0/16",
 				"--snat-subnet-routes=true",
+				"enable_forwarding()",
+				"enable_forwarding\n",
 			},
 			forbidden: []string{"--advertise-exit-node=true", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
 		},

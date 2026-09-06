@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -101,6 +102,11 @@ func HostIsolationForSite(s model.Site) HostIsolation {
 						}
 					}
 				}
+			}
+		}
+		if c.Module == "arr" {
+			if port := s.ModuleConfig["airvpn"].QBittorrentPort; port != 0 {
+				guest.Services = append(guest.Services, HostIsolationPeer{Address: model.AirVPNGuestAddress, Protocol: "tcp/udp", Ports: []string{strconv.Itoa(port)}, Incoming: true})
 			}
 		}
 		plan.Selected = append(plan.Selected, guest)

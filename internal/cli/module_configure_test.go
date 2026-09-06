@@ -37,7 +37,7 @@ func TestConfigureJSONDryRunIsRedactedAndDoesNotMutate(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := Run([]string{"module", "configure", "printer", "--site", dir, "--enabled", "true", "--dry-run", "--json"}, &output, &output); err != nil {
+	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--dry-run", "--json"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	var report moduleConfigureReport
@@ -64,7 +64,7 @@ func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
 	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
 	writeConfigureSite(t, dir, config)
 	var output bytes.Buffer
-	if err := Run([]string{"module", "configure", "printer", "--site", dir, "--enabled", "true", "--json", "--confirm"}, &output, &output); err != nil {
+	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json", "--confirm"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	var report moduleConfigureReport
@@ -79,7 +79,7 @@ func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
 		t.Fatal("configure did not persist desired printer enablement")
 	}
 	output.Reset()
-	if err := Run([]string{"module", "configure", "printer", "--site", dir, "--enabled", "true", "--json", "--confirm"}, &output, &output); err != nil {
+	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json", "--confirm"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), `"status":"NO_CHANGES"`) {
@@ -103,7 +103,7 @@ func TestConfigureBifrostWithARRKeepsOwnedReservationUnique(t *testing.T) {
 	}
 	var output bytes.Buffer
 	err := RunWithInput([]string{
-		"module", "configure", "bifrost", "--site", dir, "--age-identity", identityPath,
+		"module", "bifrost", "configure", "--site", dir, "--age-identity", identityPath,
 		"--non-interactive", "--enabled", "true", "--set", "network=direct",
 		"--set", `upstreams=[{"name":"openrouter","base_url":"https://openrouter.ai/api/v1","api_key_secret":"openrouter_api_key"}]`,
 		"--set", `models=[{"alias":"operations-investigator","upstream":"openrouter","model":"openai/gpt-5-mini"}]`,
@@ -130,7 +130,7 @@ func TestConfigureNonInteractiveHoldsForMissingUSB(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	writeConfigureSite(t, dir, config)
 	var output bytes.Buffer
-	err := Run([]string{"module", "configure", "printer", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
+	err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
 	if err == nil || !strings.Contains(err.Error(), "required USB printer/serial is not configured") {
 		t.Fatalf("missing USB was not held: %v; output=%s", err, output.String())
 	}
@@ -150,7 +150,7 @@ func TestConfigureAIOpsNonInteractiveHoldsForMissingAlias(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigureSite(t, dir, model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged)))
 	var output bytes.Buffer
-	err := Run([]string{"module", "configure", "aiops", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
+	err := Run([]string{"module", "aiops", "configure", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
 	if err == nil || !strings.Contains(err.Error(), "required module configuration model_alias") {
 		t.Fatalf("missing AIOps alias was not held: %v; output=%s", err, output.String())
 	}
@@ -197,7 +197,7 @@ func TestConfigureRejectsObjectListAboveSchemaMaximum(t *testing.T) {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer
-			err = Run([]string{"module", "configure", "bifrost", "--site", dir, "--enabled", "true", "--set", tc.field + "=" + string(value), "--json"}, &output, &output)
+			err = Run([]string{"module", "bifrost", "configure", "--site", dir, "--enabled", "true", "--set", tc.field + "=" + string(value), "--json"}, &output, &output)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("oversized %s was accepted: %v; output=%s", tc.field, err, output.String())
 			}
@@ -221,7 +221,7 @@ func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := Run([]string{"module", "configure", "aiops", "--site", dir, "--enabled", "true", "--set", "model_alias=operations", "--json", "--age-identity", identityPath}, &output, &output); err != nil {
+	if err := Run([]string{"module", "aiops", "configure", "--site", dir, "--enabled", "true", "--set", "model_alias=operations", "--json", "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	var report moduleConfigureReport
@@ -241,7 +241,7 @@ func TestConfigureConfirmationRefusalLeavesConfigurationUnchanged(t *testing.T) 
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	writeConfigureSite(t, dir, config)
 	var output bytes.Buffer
-	if err := RunWithInput([]string{"module", "configure", "monitoring", "--site", dir}, strings.NewReader("n\nn\n"), &output, &output); err != nil {
+	if err := RunWithInput([]string{"module", "monitoring", "configure", "--site", dir}, strings.NewReader("n\nn\n"), &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := site.LoadConfig(dir)

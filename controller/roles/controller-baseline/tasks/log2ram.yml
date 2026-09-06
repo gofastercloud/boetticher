@@ -1,0 +1,94 @@
+---
+- name: Measure existing logs before log2ram installation
+  ansible.builtin.command: du -sx --block-size=1 /var/log
+  register: controller_log_size
+  changed_when: false
+
+- name: Refuse log2ram installation when logs exceed its allocation
+  ansible.builtin.assert:
+    that:
+      - controller_log_size.stdout.split()[0] | int < 134217728
+    fail_msg: "existing /var/log is too large for the 128 MiB log2ram allocation; clean it deliberately before retrying"
+
+- name: Install the official Azlux repository key
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/azlux-archive-keyring.gpg"
+    dest: /usr/share/keyrings/boetticher-azlux.gpg
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure the signed Azlux Trixie repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/boetticher-azlux.sources
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      Types: deb
+      URIs: https://packages.azlux.fr/debian/
+      Suites: trixie
+      Components: main
+      Signed-By: /usr/share/keyrings/boetticher-azlux.gpg
+
+- name: Pin only log2ram from the Azlux repository
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/boetticher-log2ram
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      Package: log2ram
+      Pin: origin "packages.azlux.fr"
+      Pin-Priority: 1001
+
+- name: Refresh package metadata for log2ram
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 0
+    lock_timeout: 300
+
+- name: Install log2ram
+  ansible.builtin.apt:
+    name: log2ram
+    state: present
+    lock_timeout: 300
+
+- name: Read the current boot identifier for the reboot marker
+  ansible.builtin.command: cat /proc/sys/kernel/random/boot_id
+  register: controller_boot_id
+  changed_when: false
+
+- name: Create controller state directory for the reboot marker
+  ansible.builtin.file:
+    path: /var/lib/boetticher/controller
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Preserve the log2ram installation boot marker
+  ansible.builtin.copy:
+    dest: /var/lib/boetticher/controller/log2ram-installed-boot-id
+    content: "{{ controller_boot_id.stdout | trim }}\n"
+    owner: root
+    group: root
+    mode: '0600'
+    force: false
+
+- name: Configure native log2ram settings
+  ansible.builtin.lineinfile:
+    path: /etc/log2ram.conf
+    regexp: "^{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+    create: true
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - {key: SIZE, value: 128M}
+    - {key: USE_RSYNC, value: 'true'}
+    - {key: NOTIFICATION, value: 'false'}
+    - {key: PATH_DISK, value: /var/log}
+    - {key: JOURNALD_AWARE, value: 'true'}
+    - {key: ZL2R, value: 'false'}

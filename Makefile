@@ -1,4 +1,4 @@
-.PHONY: arr-check ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-aiops scan-gatus scan-network-probe command-docs command-docs-check deadcode race streamdeck-check
+.PHONY: arr-check controller-check ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-aiops scan-gatus scan-network-probe command-docs command-docs-check deadcode race streamdeck-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -31,6 +31,14 @@ companion-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/boetticher-streamdeck-linux-arm64-check ./cmd/boetticher-streamdeck
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/boetticher-companion-linux-arm64-check ./cmd/boetticher-companion
 
+controller-check:
+	sh -n scripts/install-controller.sh scripts/package-controller.sh
+	shellcheck scripts/install-controller.sh scripts/package-controller.sh
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s controller/tests -p 'test_*.py'
+	ANSIBLE_CONFIG=controller/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i localhost, controller/bootstrap.yml
+	ANSIBLE_CONFIG=controller/proxmox/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i proxmox, controller/proxmox/prepare.yml
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/controller ./internal/controller/host ./internal/cli
+
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/network-probe-host/tests -p 'test_*.py' -v
@@ -61,10 +69,8 @@ diff-check:
 schema:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/schema -embedded-output internal/schema/site.schema.json
 
-schema-check: schema
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/schema -output /tmp/boetticher-site.schema.json -embedded-output /tmp/boetticher-embedded-site.schema.json
-	cmp -s /tmp/boetticher-site.schema.json schemas/site.schema.json
-	cmp -s /tmp/boetticher-site.schema.json internal/schema/site.schema.json
+schema-check:
+	tmpdir=$$(mktemp -d /tmp/boetticher-schema-check.XXXXXX) && trap 'rm -rf "$$tmpdir"' EXIT && GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/schema -output "$$tmpdir/site.schema.json" -embedded-output "$$tmpdir/embedded-site.schema.json" && cmp -s "$$tmpdir/site.schema.json" schemas/site.schema.json && cmp -s "$$tmpdir/embedded-site.schema.json" internal/schema/site.schema.json
 
 command-docs:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/command-docs > docs/commands.md
@@ -116,4 +122,4 @@ security-check: naming-check actionlint vuln-check
 arr-check:
 	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m unittest discover -s images/arr/tests -p 'test_*.py' -v
 
-ci: arr-check fmt-check image-check schema-check command-docs-check deadcode test usb-export-test race streamdeck-check companion-check vet build ansible-check security-check diff-check
+ci: arr-check controller-check fmt-check image-check schema-check command-docs-check deadcode test usb-export-test race streamdeck-check companion-check vet build ansible-check security-check diff-check

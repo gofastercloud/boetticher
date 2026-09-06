@@ -149,6 +149,11 @@ validate_remote_target() {
 }
 
 sync_native_source() {
+  sync_isolated=${1:-1}
+  case "$sync_isolated" in
+    0|1) ;;
+    *) fail 'sync_native_source requires an isolated-source flag of 0 or 1' ;;
+  esac
   require_native_workspace
   [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
   native_ssh 'rm -rf -- /var/lib/boetticher/local-builder/source; install -d -m 0755 /var/lib/boetticher/local-builder/source'
@@ -161,10 +166,12 @@ sync_native_source() {
     rm -f -- "$source_archive"
     fail 'could not transfer the public native-builder source archive'
   fi
-  native_ssh "rm -rf -- $remote_native_source; install -d -m 0755 $remote_native_source"
-  if ! native_ssh "tar --extract --gzip --file=- --no-same-owner --no-same-permissions --directory=$remote_native_source" < "$source_archive"; then
-    rm -f -- "$source_archive"
-    fail 'could not refresh the isolated native-builder source archive'
+  if [ "$sync_isolated" -eq 1 ]; then
+    native_ssh "rm -rf -- $remote_native_source; install -d -m 0755 $remote_native_source"
+    if ! native_ssh "tar --extract --gzip --file=- --no-same-owner --no-same-permissions --directory=$remote_native_source" < "$source_archive"; then
+      rm -f -- "$source_archive"
+      fail 'could not refresh the isolated native-builder source archive'
+    fi
   fi
   rm -f -- "$source_archive"
 }
@@ -196,6 +203,16 @@ remote_artifact_needs_qualification() {
   esac
 }
 
+remote_artifact_needs_rebuild() {
+  artifact=$1
+  module=$(artifact_module "$artifact")
+  status=$(native_ssh "/usr/sbin/chroot $remote_native_root /bin/sh -c 'cd /var/lib/boetticher/local-builder/source && env GOROOT=/opt/boetticher/go/current PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin GOCACHE=/var/cache/boetticher/go /opt/boetticher/go/current/bin/go run ./cmd/artifact-reuse -root $remote_output -module $module'" 2>/dev/null) || return 1
+  case "$status" in
+    rebuild-needed\ *) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 filter_reusable_targets() {
   operation=$1
   shift
@@ -219,6 +236,8 @@ filter_reusable_targets() {
         printf 'measurement stage=artifact_reuse status=qualification-needed artifact=base\n'
         base_available=1
         reusable=$((reusable + 1))
+      elif remote_artifact_needs_rebuild image-base; then
+        printf 'measurement stage=artifact_reuse status=rebuild-needed artifact=base\n'
       fi
       case " $selected " in
 		*" image-base "*) ;;
@@ -238,6 +257,8 @@ filter_reusable_targets() {
 		elif remote_artifact_needs_qualification "$target"; then
 		  printf 'measurement stage=artifact_reuse status=qualification-needed artifact=%s\n' "${target#image-}"
 		  reusable=$((reusable + 1))
+		elif remote_artifact_needs_rebuild "$target"; then
+		  printf 'measurement stage=artifact_reuse status=rebuild-needed artifact=%s\n' "${target#image-}"
 		else
 		  pending="$pending $target"
         fi
@@ -277,6 +298,8 @@ filter_reusable_targets() {
       elif [ "$operation" = build ] && [ -n "$image_target" ] && remote_artifact_needs_qualification "$image_target"; then
         printf 'measurement stage=artifact_reuse status=qualification-needed artifact=%s\n' "${image_target#image-}"
         reusable=1
+      elif [ "$operation" = build ] && [ -n "$image_target" ] && remote_artifact_needs_rebuild "$image_target"; then
+        printf 'measurement stage=artifact_reuse status=rebuild-needed artifact=%s\n' "${image_target#image-}"
       fi
       ;;
   esac
@@ -293,7 +316,7 @@ filter_reusable_targets() {
 
 setup_native_builder() {
   [ "$artifact_output" = generated/artifacts ] || fail 'native builder mode requires the default generated/artifacts output path'
-  sync_native_source
+  sync_native_source 0
   native_ssh \
     "env BOETTICHER_LOCAL_NATIVE=1 BOETTICHER_SOURCE_ROOT=$remote_source sh $remote_source/scripts/local-builder-setup.sh"
 }

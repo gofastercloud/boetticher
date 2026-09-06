@@ -46,6 +46,12 @@ func TestAirVPNPeerTemplateRendersOnlyEnabledReservation(t *testing.T) {
 	if err := os.WriteFile(path, []byte(playbook.String()), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(dir, "local"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "remote"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command(binary, "-i", "localhost,", path)
 	cmd.Env = append(os.Environ(), "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "local"), "ANSIBLE_REMOTE_TEMP="+filepath.Join(dir, "remote"))
 	if out, err := cmd.CombinedOutput(); err != nil {

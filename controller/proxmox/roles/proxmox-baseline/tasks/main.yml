@@ -1,0 +1,9 @@
+---
+- name: Configure Proxmox repositories
+  ansible.builtin.include_tasks: repositories.yml
+
+- name: Install Proxmox host prerequisites
+  ansible.builtin.include_tasks: prerequisites.yml
+
+- name: Configure headless laptop behavior
+  ansible.builtin.include_tasks: headless.yml

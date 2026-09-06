@@ -2,181 +2,162 @@
 layout: default
 title: Start here
 section: start
-description: Set up a fresh Boetticher lab, then settle into the day-to-day rhythm.
+description: The Controller and Host lifecycle.
 ---
 
 # Start here
 
-Boetticher starts from a fresh, supported amd64 Proxmox VE installation. You
-also need a macOS or Linux controller with the Boetticher binary, SSH, and
-Ansible Core; the Proxmox HOME address; its API CA certificate; and a private
-site directory.
+Boetticher has two core targets:
 
-The default setup is virtual-only and requires no switch change. HOME remains
-on `vmbr0`; the internal VLAN-aware `vmbr1` has no physical member. The
-fixed network still uses VLANs 5, 10, 20, 30, 40, and 99. Attach a physical
-trunk only through the guarded advanced command documented in the
-[lab guide](lab.html).
+- the Controller, which runs Boetticher, owns its administrative identity, and
+  manages attached Controller hardware; and
+- one Proxmox Host, whose OS baseline, storage, and virtual network are Host
+  configuration.
 
-## Install and enroll
+There is no separate base or foundation object.
 
-Replace `PROXMOX_HOME_IP`, the public-key path, and the certificate path with
-your values. The operator public-key file must match the private identity used
-to reach the fresh host. Enrollment records the observed Proxmox identity,
-creates durable scoped API access, configures the bastion and headless power
-policy, and does not arm deployment-only root access.
+## First Host journey
 
-```text
-boetticher init --site-dir ./my-boetticher
-boetticher enroll --site ./my-boetticher   --bootstrap-address PROXMOX_HOME_IP   --operator-key ~/.ssh/id_ed25519.pub   --recovery-confirmed   --proxmox-ca /path/to/pve-root-ca.pem
+Run these commands on the Controller after installing the supported release:
+
+```sh
+sudo boetticher controller bootstrap --operator pi --confirm-key-login
+sudo boetticher controller status
+
+sudo boetticher host create-identity
+sudo boetticher host show-public-key
+sudo boetticher host import-host-key \
+  --address 192.0.2.10 --key 'ssh-ed25519 VERIFIED_HOST_KEY'
+sudo boetticher host enroll root@192.0.2.10
+
+sudo boetticher host plan-storage
+sudo boetticher host apply \
+  --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
+sudo boetticher host status --details
 ```
 
-The Proxmox installer hostname does not need to be a special Boetticher name.
-The enrollment path discovers the one standalone Proxmox node returned by the
-host and API, then binds live operations to that observed node. Keep the
-hostname stable after enrollment.
+The Host key must be verified independently before `import-host-key`. Boetticher
+never accepts a new key automatically. The Controller keeps its Ed25519 identity
+and known-hosts file under `/var/lib/boetticher/controller/ssh/`.
 
-If the site uses the dedicated-data-disk profile, initialize the exact stable
-device after reviewing it:
+`host apply` is declarative and idempotent. It inspects native state and then:
 
-```text
-boetticher init --site-dir ./my-boetticher   --storage-profile dedicated-data-disk   --storage-device /dev/disk/by-id/DEVICE
-boetticher storage initialize --site ./my-boetticher --storage-confirmed
+- applies the bounded Proxmox OS baseline;
+- configures the exact dedicated data-disk layout when requested; and
+- configures the VLAN-aware internal bridge while preserving HOME management.
+
+It does not deploy Modules. An already-correct Host is a successful no-op.
+
+## Approval boundaries
+
+Host apply stops before a missing trust binding, a destructive disk operation,
+or adoption of a compatible but unowned internal bridge.
+
+Review a disk candidate first:
+
+```sh
+sudo boetticher host plan-storage
 ```
 
-Initialization is the guarded destructive path for the selected device. It
-does not format an unspecified disk or an unknown Proxmox workload.
+Then bind the exact stable identity and approve the operation:
 
-## Deploy a signed release
-
-Operators consume built artifacts; the normal deployment path has no image
-builder guest or runtime builder cache. Import the signed release bundle,
-review its live plan, apply exactly that digest, and inspect the result:
-
-```text
-boetticher bundle import ./boetticher-0.1.0.tar.gz --site ./my-boetticher
-boetticher deploy --site ./my-boetticher
-boetticher status --site ./my-boetticher --details --live
+```sh
+sudo boetticher host apply \
+  --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
 ```
 
-The controller rejects stale or mismatched plan digests before temporary Apply
-authority is acquired. A successful deployment revokes that temporary identity
-before recording last-applied state.
+If an existing portless VLAN-aware `vmbr1` is compatible but unowned, review it
+and explicitly approve adoption:
 
-## Local maintainer image builds
-
-Image construction remains available for maintainers on a native Linux build
-host, isolated from the operator lifecycle. On macOS, configure the explicit
-SSH route first. The standard workspace is
-`/var/lib/boetticher/local-builder` on the build host's root filesystem:
-
-```text
-export BOETTICHER_LOCAL_BUILDER_SSH=root@BUILD_HOST
-export BOETTICHER_LOCAL_BUILDER_IDENTITY=/path/to/operator-key
-export BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS=/path/to/build-host-known_hosts
-make local-builder-init
-make local-image LOCAL_IMAGE_TARGET=image-firewall
-make local-images LOCAL_IMAGE_TARGETS="image-dns-blocky image-monitoring"
+```sh
+sudo boetticher host apply --adopt-existing-network --yes
 ```
 
-The optional `local-builder-storage-init` path is only for a separate
-maintainer host that deliberately keeps a dedicated build disk. It is not part
-of this lab layout and must never target the Proxmox guest-storage disk.
+Conflicting or ambiguous native state stops without mutation. Rerun `host apply`
+after resolving the reported boundary; no workflow state, resume token, plan
+digest, ledger, or transaction database is required.
 
-The native host keeps its downloads, build root, cache, and generated
-maintainer artifacts on the root filesystem. These targets are useful for local
-iteration; they do not create Proxmox guests and do not replace the official
-hosted build, scan, qualification, signed-bundle, and exact-source release
-gates.
+## Host status
 
-Qualified artifacts are reusable when their artifact coordinates, signed
-content digest, base dependency, and bytes still match. Controller,
-documentation, test, release-import, and maintainer-wrapper changes do not
-force unrelated image reconstruction. The release manifest signs the exact
-artifact bytes; source and build-definition revisions remain provenance, not a
-runtime rebuild trigger. Missing maintainer evidence is reported separately
-and does not force image reconstruction.
+`host status` is the single normal Host view and is read-only. It reports
+enrollment, Host configuration, storage, the internal network, the physical LAB
+interface, and Module state. `--details` adds the node/version, guests, storage,
+stable disks, LVM, mounts, interfaces, bridges, and routes.
 
-For a three-drive development machine, keep the operating system on the
-internal NVMe boot drive, put the persistent Linux build root, downloads,
-caches, and generated maintainer artifacts there, and use the stable 1 TB drive
-as the dedicated Proxmox guest-storage PV/VG/LVM store. The failing 2 TB drive
-is retired after its guests are removed. This is a maintainer layout. A normal operator
-chooses the one- or two-disk storage profile and downloads qualified release
-artifacts; they do not need this local build arrangement.
+The protected HOME path remains separate from the internal bridge. The current
+reference topology is `vmbr0` for management and a VLAN-aware `vmbr1` for VLANs
+5, 10, 20, 30, 40, and 99. Physical LAB networking is later Host configuration;
+it is not a Module.
 
-## Optional modules and the Companion
+## Host teardown and rebuild
 
-The default Proxmox platform is the firewall, one DNS/NTP guest, and Pulse
-monitoring. Logging is optional and off by default. Gatus is optional and is
-not required for platform health. Pulse remains narrow: historical telemetry,
-Proxmox and guest health, a health API, and the read-only Companion
-integration.
+Teardown removes exact Boetticher-owned Host configuration while preserving the
+Controller, imported Host trust, Proxmox installation, boot disk, HOME
+management, and independent recovery access.
 
-```text
-boetticher module list --site ./my-boetticher
-boetticher module configure gatus --site ./my-boetticher
-boetticher plan --site ./my-boetticher --live --json
-boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
-boetticher status --site ./my-boetticher --details --live
+Review first:
+
+```sh
+sudo boetticher host teardown --plan
 ```
 
-The Companion Pi is external to the Proxmox module model. In the physical lab
-it uses `eth0` on the SERVERS access port (VLAN 20) and `wlan0` on HOME as
-the default route. The Proxmox second NIC is the tagged internal trunk. See
-the [lab guide](lab.html) for the exact physical contract and switch
-implications.
+If the dedicated data disk is owned and will be erased, provide the exact
+configured stable identity and ordinary approval:
 
-### Add the optional Companion
-
-Finish the core deployment and confirm `status --details --live` first. Attach
-the separately guarded Proxmox physical trunk, then connect the Pi's `eth0` to
-an untagged SERVERS port and record that physical interface's MAC:
-
-```text
-boetticher companion add --mac COMPANION_ETH0_MAC --dry-run --site ./my-boetticher
-boetticher companion add --mac COMPANION_ETH0_MAC --confirm --site ./my-boetticher
-boetticher deploy --site ./my-boetticher
-boetticher companion setup --dry-run --site ./my-boetticher
-boetticher companion setup --host-key 'ssh-ed25519 VERIFIED_HOST_KEY' --confirm --site ./my-boetticher
-boetticher companion status --site ./my-boetticher
+```sh
+sudo boetticher host teardown \
+  --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
 ```
 
-For a Pi fitted with Blinkt, add `--blinkt=true` to `companion add`. Use
-`--display=false` or `--streamdeck=false` when that hardware is not fitted.
-The default screen is a local read-only dashboard controlled from StreamDeck;
-no mouse, keyboard, touchscreen, or browser login is required. Run platform
-`deploy` after changing the Companion configuration so its dedicated Pulse
-credentials are prepared before `companion setup`.
+After teardown, the Host configuration is `NOT CONFIGURED` while Host trust is
+preserved. Rebuild through the proven sequence:
 
-`companion add` changes desired state only. It derives `lab-display-01` at
-`10.10.20.50` on SERVERS; the following `deploy` applies that Kea reservation,
-DDNS identity, and the exact Proxmox-bastion route. Setup and status then use
-that address automatically. They do not accept an arbitrary target address.
-
-The Pi may retain HOME Wi-Fi as its default route, but a temporary HOME address
-is bootstrap or recovery context only. Boetticher neither saves it nor uses it
-as the managed Companion identity. Supply `--host-key` on the first setup only
-after independently verifying the Pi's SSH host key.
-
-## Everyday operations
-
-This controller pins Pulse server and agents to 6.4.1. For an existing site
-that pins 6.1.2, run `boetticher update --dry-run --site ./my-boetticher`, then
-`boetticher update --confirm --site ./my-boetticher`. This updates desired state
-only. Import a matching new signed release containing monitoring image 1.0.1,
-then deploy to update Pulse and install the module-local VPN sensors. Repeat
-`companion setup` to update the Pi agent and displays. Do not use the Pulse
-self-updater to bypass the appliance release selection.
-
-Use the consolidated read-only view first:
-
-```text
-boetticher status --site ./my-boetticher --details --live
-boetticher plan --site ./my-boetticher --live --json
+```sh
+sudo boetticher host enroll root@192.0.2.10
+sudo boetticher host apply --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
+sudo boetticher host status
 ```
 
-Change desired state with `module configure`, reservations, or `update`,
-then deploy the reviewed plan. Use `boetticher recover` only for its named,
-exact recovery target. Preserve the independent Age identity, operator/root
-recovery path, certificate material, and off-host backups.
+Teardown is retryable. Unknown guests, storage, bridges, or configuration stop
+the operation; no direct Proxmox cleanup is part of the supported journey.
+
+## Reboots
+
+Reboot the concrete target explicitly:
+
+```sh
+sudo boetticher controller reboot --yes
+sudo boetticher host reboot --yes
+```
+
+The current reference architecture is IPv4-only. The retained guest IPv6 bridge
+regression is internal to the vmbr1 implementation and is not a supported Host
+command or acceptance journey. IPv6 forwarding and security policy belong to
+explicit future firewall/network Module work.
+
+## Modules
+
+Modules are operator-visible capabilities on the Host. Their public grammar is
+always:
+
+```text
+boetticher module <capability> <action> [flags]
+```
+
+Examples for later capability work are `module firewall status`, `module dhcp
+add-reservation`, `module dns add-record`, `module ntp status`, `module vpn
+status`, `module monitoring status`, `module statuspage add-check`, and `module
+printer status`. Provider software, appliance names, daemons, guests, and
+Controller peripherals are not Module namespaces. Phase 3D documents this
+grammar; it does not start firewall or speculative Module implementation.
+
+## Recovery boundary
+
+For Controller failure, restore `/etc/boetticher/` and
+`/var/lib/boetticher/controller/ssh/`, or enroll a replacement Controller with
+the independent Host trust ceremony. For Host failure, use independent
+Mac/root recovery access, inspect native state, and rerun the bounded operation
+only when Boetticher ownership is clear.
+
+The [Controller guide](controller.html) covers local installation and
+maintenance. The [lab guide](lab.html) describes the fixed Host topology.

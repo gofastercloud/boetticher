@@ -146,6 +146,52 @@ func TestHealthResultsOmitQualificationOnlyChecks(t *testing.T) {
 	}
 }
 
+func TestLiveAirVPNChecksRetainEncryptedProfileMetadata(t *testing.T) {
+	verifyData, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "verify.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyText := string(verifyData)
+	for _, required := range []string{
+		"prepareAirVPNProfile(context.Background(), siteDir, s, ageIdentity, true, false)",
+		"firewall.PlanFromSiteWithUpstreamAndAirVPN(s, upstream, profile.Metadata)",
+		"--resolve",
+	} {
+		if !strings.Contains(verifyText, required) {
+			t.Fatalf("live verification path is missing retained AirVPN metadata handling %q", required)
+		}
+	}
+	firewallData, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "firewall.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firewallText := string(firewallData)
+	if strings.Count(firewallText, "planFromLiveUpstream(siteDir, s, ageIdentity, liveStatus.Upstream)") != 2 {
+		t.Fatal("firewall diff and verify paths do not both retain AirVPN metadata")
+	}
+}
+
+func TestLiveStatusUsesUnprivilegedEndpointChecks(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "verify.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"/usr/bin/curl",
+		"https://lab-dns-01.",
+		"/usr/bin/openssl s_client",
+		"model.DefaultAdminSSHUser",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("live status is missing unprivileged endpoint check %q", required)
+		}
+	}
+	if strings.Contains(text, "systemctl") || strings.Contains(text, "monitor.crt.pem -noout") {
+		t.Fatal("live status retains a privileged filesystem/service inspection path")
+	}
+}
+
 func TestCheckRevisionFileRequiresTheAuthoritativeRevisionField(t *testing.T) {
 	dir := t.TempDir()
 	revision := "sha256:expected"

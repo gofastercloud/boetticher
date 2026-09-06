@@ -117,6 +117,8 @@ func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, recreate
 }
 
 func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (resultErr error) {
+	ctx, cancel := withDeploymentTimeout(ctx)
+	defer cancel()
 	report := newDeploymentReport(out)
 	ctx = telemetry.WithObserver(ctx, report)
 	lockSiteDir, dryRun := deploymentLockInputs(args)
@@ -1068,7 +1070,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				}
 			}
 		}
-		if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0 {
+		if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged {
 			var upstream firewall.UpstreamObservation
 			if err := report.timed("network", "ssh", "gateway-upstream", func() error {
 				var observeErr error
@@ -1402,7 +1404,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			agentVariables = append(agentVariables, '\n')
 			for _, target := range ansible.MonitoringAgentTargets(s) {
-				if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, report, temporaryPrivateKey); err != nil {
+				if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
 					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
 				}
 			}
@@ -1443,7 +1445,17 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	return nil
 }
 
-const deploymentRootTimeout = 3 * time.Minute
+const (
+	deploymentRootTimeout = 3 * time.Minute
+	deploymentTimeout     = 30 * time.Minute
+)
+
+func withDeploymentTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, deploymentTimeout)
+}
 
 // runScopedModuleDeploy deliberately starts from a verified full deployment
 // baseline. It reuses that baseline's rendered inventory and variables, then
@@ -2589,6 +2601,13 @@ func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, var
 			target = "all managed targets"
 		}
 		report.recordTiming(report.activePhaseID(), "ansible", target, started)
+	}
+	if err != nil {
+		for _, timing := range result.TaskTimings {
+			if strings.EqualFold(timing.Status, "failed") {
+				return fmt.Errorf("%w: failed task %s (%s)", err, timing.Task, timing.Path)
+			}
+		}
 	}
 	return err
 }

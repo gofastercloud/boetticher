@@ -36,7 +36,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"gateway": rules, "firewall_plan": p, "domain": s.Network.Domain, "firewall_non_public_ipv4": firewall.NonPublicIPv4, "logging_plan": map[string]any{"enabled": true, "collector_address": "10.10.10.40"}, "host_isolation": firewall.HostIsolationForSite(s), "trusted_lab_services": model.TrustedLabServices()}); err != nil {
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"gateway": rules, "firewall_plan": p, "module_configs": s.ModuleConfig, "domain": s.Network.Domain, "firewall_non_public_ipv4": firewall.NonPublicIPv4, "logging_plan": map[string]any{"enabled": true, "collector_address": "10.10.10.40"}, "host_isolation": firewall.HostIsolationForSite(s), "trusted_lab_services": model.TrustedLabServices()}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

@@ -1987,6 +1987,9 @@ func scopedProvisionerACLPaths(node string) []string {
 	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, model.ArrVMID, 200, 210, 240, 250} {
 		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
 	}
+	for vmid := 910; vmid <= 919; vmid++ {
+		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
+	}
 	return paths
 }
 
