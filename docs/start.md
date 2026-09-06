@@ -121,7 +121,7 @@ sudo boetticher host status
 Teardown is retryable. Unknown guests, storage, bridges, or configuration stop
 the operation; no direct Proxmox cleanup is part of the supported journey.
 
-## Reboots and bounded IPv6 test
+## Reboots
 
 Reboot the concrete target explicitly:
 
@@ -130,15 +130,10 @@ sudo boetticher controller reboot --yes
 sudo boetticher host reboot --yes
 ```
 
-The Host IPv6 test is a bounded regression journey:
-
-```sh
-sudo boetticher host test-ipv6
-```
-
-It uses reserved temporary VMIDs on VLAN 40, proves bidirectional IPv6
-link-local forwarding, stops and destroys both guests, and verifies that their
-VMIDs and temporary storage volumes are absent before returning `PASS`.
+The current reference architecture is IPv4-only. The retained guest IPv6 bridge
+regression is internal to the vmbr1 implementation and is not a supported Host
+command or acceptance journey. IPv6 forwarding and security policy belong to
+explicit future firewall/network Module work.
 
 ## Modules
 

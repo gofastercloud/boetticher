@@ -20,14 +20,13 @@ type helpSpec struct {
 
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]"},
-	{Usage: "boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|test-ipv6|teardown|reboot ..."},
+	{Usage: "boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|teardown|reboot ..."},
 	{Usage: "boetticher module <capability> <action> [flags]"},
 }
 
 var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher host status --details"},
 	{Usage: "boetticher host plan-storage"},
-	{Usage: "boetticher host test-ipv6"},
 	{Usage: "boetticher module <capability> <action> [--yes] [--details] [--verbose]"},
 }
 
@@ -48,7 +47,7 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher controller reboot --yes", Purpose: "Reboot the local Controller for an approved persistence rehearsal.", Arguments: "No positional arguments.", Options: "--yes is required.", Safety: "Reboots only the local Controller; the Host and its guests are not contacted.", Examples: "boetticher controller reboot --yes", Related: "controller status, host status",
 	},
 	"host": {
-		Usage: "boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|test-ipv6|teardown|reboot ...", Purpose: "Bind, configure, inspect, test, rebuild, or reboot the single supported Proxmox Host.", Arguments: "create-identity and show-public-key manage the persistent Controller identity; import-host-key records the independently verified Host key; enroll binds the Host; apply owns the Host baseline, storage, and virtual network; status is read-only; teardown removes exact Boetticher-owned Host configuration; reboot requires --yes.", Options: "import-host-key takes --address and --key; apply takes --data-disk, --adopt-existing-network, and --yes; status accepts --details.", Safety: "Trust is never accepted automatically. Host apply stops at missing enrollment, destructive storage, or ambiguous network adoption. It never deploys Modules or changes the protected HOME path.", Examples: "boetticher host create-identity; boetticher host show-public-key; boetticher host import-host-key --address 192.0.2.10 --key 'ssh-ed25519 VERIFIED_KEY'; boetticher host enroll root@192.0.2.10; boetticher host apply --data-disk /dev/disk/by-id/DEVICE --yes; boetticher host status --details", Related: "controller status, module",
+		Usage: "boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|teardown|reboot ...", Purpose: "Bind, configure, inspect, rebuild, or reboot the single supported Proxmox Host.", Arguments: "create-identity and show-public-key manage the persistent Controller identity; import-host-key records the independently verified Host key; enroll binds the Host; apply owns the Host baseline, storage, and virtual network; status is read-only; teardown removes exact Boetticher-owned Host configuration; reboot requires --yes.", Options: "import-host-key takes --address and --key; apply takes --data-disk, --adopt-existing-network, and --yes; status accepts --details.", Safety: "Trust is never accepted automatically. Host apply stops at missing enrollment, destructive storage, or ambiguous network adoption. It never deploys Modules or changes the protected HOME path.", Examples: "boetticher host create-identity; boetticher host show-public-key; boetticher host import-host-key --address 192.0.2.10 --key 'ssh-ed25519 VERIFIED_KEY'; boetticher host enroll root@192.0.2.10; boetticher host apply --data-disk /dev/disk/by-id/DEVICE --yes; boetticher host status --details", Related: "controller status, module",
 	},
 	"host enroll": {
 		Usage: "boetticher host enroll root@IPv4", Purpose: "Verify and bind the supported Proxmox Host to the Controller.", Arguments: "The target must be root@IPv4 and must match the imported Host key.", Options: "No options.", Safety: "Read-only remote checks plus one local /etc/boetticher/lab.yml binding. It does not apply Host configuration or deploy Modules.", Examples: "boetticher host enroll root@192.0.2.10", Related: "host status, host apply",
@@ -61,9 +60,6 @@ var helpSpecs = map[string]helpSpec{
 	},
 	"host plan-storage": {
 		Usage: "boetticher host plan-storage", Purpose: "Preview the dedicated Host data-storage candidate without changing it.", Arguments: "No positional arguments.", Options: "No options.", Safety: "Read-only. It shows the protected boot disk, stable identities, and any exact candidate for Host apply.", Examples: "boetticher host plan-storage", Related: "host apply, host teardown",
-	},
-	"host test-ipv6": {
-		Usage: "boetticher host test-ipv6", Purpose: "Run the bounded temporary-guest IPv6 forwarding journey through the owned internal bridge.", Arguments: "No positional arguments.", Options: "No options.", Safety: "The temporary guests are stopped, destroyed, and verified absent, including their storage volumes, before the command passes.", Examples: "boetticher host test-ipv6", Related: "host status, host apply",
 	},
 	"host teardown": {
 		Usage: "boetticher host teardown [--plan] [--data-disk /dev/disk/by-id/DEVICE] [--yes]", Purpose: "Remove exact Boetticher-owned Host configuration while preserving trust, recovery, boot storage, and HOME management.", Arguments: "--plan is read-only; --data-disk must match the configured dedicated disk when it will be erased.", Options: "--yes approves ordinary removal; the disk binding is still required for destructive storage removal.", Safety: "Unknown guests, storage, bridges, and configuration stop the operation. Teardown is retryable and preserves the imported Host key trust.", Examples: "boetticher host teardown --plan; boetticher host teardown --data-disk /dev/disk/by-id/DEVICE --yes", Related: "host apply, host status",

@@ -23,7 +23,7 @@ boetticher host status
 
 ```text
 boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]
-boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|test-ipv6|teardown|reboot ...
+boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|teardown|reboot ...
 boetticher module <capability> <action> [flags]
 ```
 
@@ -32,7 +32,6 @@ boetticher module <capability> <action> [flags]
 ```text
 boetticher host status --details
 boetticher host plan-storage
-boetticher host test-ipv6
 boetticher module <capability> <action> [--yes] [--details] [--verbose]
 ```
 

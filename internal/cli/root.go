@@ -90,7 +90,7 @@ func retiredCommandError(args []string) error {
 	case "storage":
 		return errors.New("boetticher storage is retired; storage is Host configuration; use boetticher host apply, status, or plan-storage")
 	case "network":
-		return errors.New("boetticher network is retired; networking is Host configuration; use boetticher host apply, status, or test-ipv6")
+		return errors.New("boetticher network is retired; networking is Host configuration; use boetticher host apply or status")
 	case "host":
 		if len(args) < 2 {
 			return nil
@@ -102,6 +102,8 @@ func retiredCommandError(args []string) error {
 			return errors.New("boetticher host trust is retired; use boetticher host import-host-key")
 		case "prepare":
 			return errors.New("boetticher host prepare is retired; use boetticher host apply")
+		case "test-ipv6":
+			return errors.New("boetticher host test-ipv6 is internal-only; no supported Host acceptance command exists")
 		}
 	}
 	return nil

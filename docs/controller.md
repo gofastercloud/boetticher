@@ -313,8 +313,10 @@ sysctl net.ipv6.conf.vmbr1.disable_ipv6
 There must be no IPv6 address and the sysctl must equal `1`. Verify fresh
 Pi-to-Proxmox SSH, unchanged vmbr0/nic0/192.168.4.5/default route, no vmbr1 host
 IPv4 or physical ports, VLAN awareness, repeat configure with no changes, and
-`host status` PASS. Guest IPv6 L2 forwarding requires its own live
-traffic check; local tests do not establish that result.
+`host status` PASS. The current reference architecture is IPv4-only; guest IPv6
+forwarding is not a Host acceptance claim. The retained guest bridge regression
+is internal to vmbr1, while IPv6 forwarding and security policy belong to
+explicit future firewall/network Module work.
 
 The six VLAN numbers remain logical desired configuration for later guest
 deployment. They do not claim zone isolation in this phase. Configuration is
@@ -348,12 +350,6 @@ succeeds, `lab.yml` retains the Proxmox address and user but omits the enrolled
 node, storage, and network selections. `host status` then reports the
 intentional trust-only state and `host apply` directs the operator to
 `host enroll`.
-
-`host test-ipv6` is the bounded native regression for each rebuilt
-cycle. It requires an exact vmbr1 and an empty guest inventory, creates only
-VMIDs 991 and 992 on VLAN 40 with guest firewalls disabled, proves both
-directions of IPv6 link-local forwarding, and explicitly stops, destroys, and
-verifies the temporary guests and storage volumes.
 
 Approved reboot rehearsals are also Controller operations:
 

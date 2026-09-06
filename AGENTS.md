@@ -42,7 +42,7 @@ boetticher <target> <action> [flags]
 
 The normal Controller/Host targets are `controller` and `host`. Host actions
 include `create-identity`, `show-public-key`, `import-host-key`, `enroll`,
-`apply`, `status`, `plan-storage`, `test-ipv6`, `teardown`, and `reboot`.
+`apply`, `status`, `plan-storage`, `teardown`, and `reboot`.
 
 Modules use the one deliberate third-level namespace:
 
@@ -103,9 +103,14 @@ retain `--confirm`, `--approve`, `--non-interactive`, or
   Controller configuration, imported Host trust, Proxmox installation, boot
   storage, HOME management, and independent recovery access. Do not weaken the
   twice-qualified teardown/rebuild behavior.
-- `host status` and `host plan-storage` are read-only. `host test-ipv6` must
-  use reserved temporary VMIDs, prove both directions, explicitly stop and
-  destroy guests, and verify VMIDs and temporary volumes are absent.
+- `host status` and `host plan-storage` are read-only. The retained guest IPv6
+  bridge regression uses reserved temporary VMIDs, proves both directions,
+  explicitly stops and destroys guests, and verifies VMIDs and temporary
+  volumes are absent, but it is internal to the current vmbr1 implementation,
+  not a supported Host command or acceptance journey.
+- The current reference architecture is IPv4-only. IPv6 forwarding and
+  security policy belong to explicit future firewall/network Module work and
+  must not be inferred from the internal bridge regression.
 - Do not add persisted workflow state, resume tokens, plan digests, mutation
   ledgers, transaction databases, or generic rollback engines for Host apply.
 

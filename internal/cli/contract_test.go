@@ -78,7 +78,7 @@ func TestNoArgumentsDoesNotLaunchAnAlternateTUI(t *testing.T) {
 	}
 }
 
-func TestHostTeardownAndIPv6HelpArePublished(t *testing.T) {
+func TestHostTeardownHelpIsPublished(t *testing.T) {
 	var output bytes.Buffer
 	if err := Run([]string{"host", "teardown", "--help"}, &output, &output); err != nil {
 		t.Fatal(err)
@@ -86,19 +86,12 @@ func TestHostTeardownAndIPv6HelpArePublished(t *testing.T) {
 	if !strings.Contains(output.String(), "--data-disk") {
 		t.Fatalf("teardown help omitted exact disk confirmation: %s", output.String())
 	}
-	output.Reset()
-	if err := Run([]string{"host", "test-ipv6", "--help"}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), "IPv6 forwarding") {
-		t.Fatalf("bridge test help omitted its bounded purpose: %s", output.String())
-	}
 }
 
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"controller", "--help"}, {"controller", "bootstrap", "--help"}, {"controller", "status", "--help"},
-		{"host", "--help"}, {"host", "apply", "--help"}, {"host", "status", "--help"}, {"host", "teardown", "--help"}, {"host", "test-ipv6", "--help"},
+		{"host", "--help"}, {"host", "apply", "--help"}, {"host", "status", "--help"}, {"host", "teardown", "--help"},
 		{"firewall", "--help"}, {"dhcp", "--help"}, {"dns", "--help"}, {"access", "--help"},
 		{"module", "--help"}, {"module", "firewall", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"},
 	} {
@@ -176,7 +169,7 @@ func TestLegacyLifecycleIsDisabled(t *testing.T) {
 func TestRetiredHostLifecycleFormsDoNotExecute(t *testing.T) {
 	for _, args := range [][]string{
 		{"foundation", "status"}, {"storage", "status"}, {"network", "status"},
-		{"host", "identity", "create"}, {"host", "trust", "import"}, {"host", "prepare"},
+		{"host", "identity", "create"}, {"host", "trust", "import"}, {"host", "prepare"}, {"host", "test-ipv6"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err == nil {

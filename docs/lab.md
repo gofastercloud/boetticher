@@ -69,7 +69,10 @@ semantic VLANs are:
 The six VLAN numbers are Host configuration in this phase. They do not by
 themselves claim firewall isolation, DHCP, DNS, or application behavior.
 Physical LAB networking is a later Host configuration concern and remains
-outside the Module namespace.
+outside the Module namespace. The current reference architecture is IPv4-only;
+IPv6 forwarding and security policy are reserved for explicit future
+firewall/network Module work rather than inferred from the internal vmbr1
+regression.
 
 ## Dedicated storage
 
