@@ -90,8 +90,14 @@ func Enroll(ctx context.Context, transport Transport) (LabConfig, Inventory, err
 	}
 	config := LabConfig{Name: "home-lab", Proxmox: ProxmoxConfig{Address: transport.Address, User: "root", Node: core.Nodes[0].Node, Repository: "no-subscription"}}
 	if existing, err := LoadConfig(); err == nil {
-		if existing.Proxmox.Address != config.Proxmox.Address || existing.Proxmox.User != config.Proxmox.User || existing.Proxmox.Node != config.Proxmox.Node {
+		if existing.Proxmox.Address != config.Proxmox.Address || existing.Proxmox.User != config.Proxmox.User || (existing.Proxmox.Node != "" && existing.Proxmox.Node != config.Proxmox.Node) {
 			return LabConfig{}, Inventory{}, errors.New("existing Proxmox enrollment binding does not match this verified host")
+		}
+		if existing.Proxmox.Node == "" {
+			existing.Proxmox.Node = config.Proxmox.Node
+			if err := SaveConfig(existing); err != nil {
+				return LabConfig{}, Inventory{}, fmt.Errorf("save Proxmox enrollment binding: %w", err)
+			}
 		}
 		return existing, core, nil
 	} else if !errors.Is(err, os.ErrNotExist) {

@@ -19,6 +19,9 @@ func runNetworkWithInput(args []string, input io.Reader, out io.Writer) error {
 	if shouldRunControllerNetwork(args) {
 		return runControllerNetwork(args, input, out)
 	}
+	if len(args) == 2 && args[0] == "test" && args[1] == "bridge-ipv6" {
+		return runControllerBridgeIPv6(args[2:], out)
+	}
 	if len(args) > 0 && args[0] == "test" {
 		return runNetworkTest(args[1:], out)
 	}

@@ -15,7 +15,7 @@ import (
 type ProxmoxConfig struct {
 	Address    string `yaml:"address"`
 	User       string `yaml:"user"`
-	Node       string `yaml:"node"`
+	Node       string `yaml:"node,omitempty"`
 	Repository string `yaml:"repository"`
 }
 
@@ -57,7 +57,7 @@ func ValidateConfig(config LabConfig) error {
 	if config.Proxmox.User != "root" {
 		return errors.New("lab configuration requires Proxmox user root")
 	}
-	if !safeIdentifier(config.Proxmox.Node) {
+	if config.Proxmox.Node != "" && !safeIdentifier(config.Proxmox.Node) {
 		return errors.New("lab configuration requires a safe Proxmox node binding")
 	}
 	if config.Proxmox.Repository != "no-subscription" {

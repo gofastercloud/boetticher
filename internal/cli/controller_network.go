@@ -29,6 +29,9 @@ func runControllerNetwork(args []string, input io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if config.Proxmox.Node == "" {
+		return errors.New("host enrollment is required before network operations")
+	}
 	transport, err := controllerhost.TransportFor(config)
 	if err != nil {
 		return err

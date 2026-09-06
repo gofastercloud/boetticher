@@ -79,6 +79,43 @@ decision, and reports `No changes required.` for an established foundation.
 It never deploys a firewall, platform guests, physical trunk, or switch
 configuration.
 
+## Foundation teardown
+
+To remove the Boetticher-owned foundation while preserving Controller trust,
+the Proxmox installation, the boot disk, and HOME management, review the
+read-only plan first:
+
+```sh
+sudo boetticher foundation teardown --plan
+```
+
+Teardown refuses unexpected guests, unknown storage, ambiguous bridges, and
+unrecognized host configuration. The exact Timetec disk must be acknowledged
+explicitly; `--yes` only confirms the non-destructive parts:
+
+```sh
+sudo boetticher foundation teardown \
+  --confirm-storage /dev/disk/by-id/ata-Timetec_MS21_PL220510SCC1TB0785 \
+  --yes
+```
+
+After teardown, `foundation status` reports Controller readiness and established
+Proxmox trust, with host enrollment, baseline, storage, and network shown as
+not configured. Rerun `host enroll`, `host prepare`, `storage initialize`, and
+`network configure` to rebuild; no manual `pvesh`, LVM, network-file, or guest
+cleanup is part of the supported journey.
+
+For the bounded vmbr1 regression, run the native Controller test after each
+rebuild and after each Proxmox reboot:
+
+```sh
+sudo boetticher network test bridge-ipv6
+```
+
+It creates two temporary guests on VLAN 40, proves bidirectional IPv6
+link-local forwarding, and stops, destroys, and verifies removal of both
+guests and their temporary storage volumes.
+
 ## Recovery
 
 For Controller failure, restore `/etc/boetticher/` and

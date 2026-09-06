@@ -324,3 +324,35 @@ revalidated through a fresh strict Controller SSH session, and repeat runs on
 an exact bridge report that no changes are required. Proxmox reboot is a
 separate explicit gate; the independent Mac/root path is the recovery method
 if management verification fails. Phase 3B stops before firewall deployment.
+
+## Foundation teardown and rebuild
+
+The foundation has a bounded inverse for qualification and recovery:
+
+```sh
+sudo boetticher foundation teardown --plan
+sudo boetticher foundation teardown \
+  --confirm-storage /dev/disk/by-id/ata-Timetec_MS21_PL220510SCC1TB0785 --yes
+```
+
+The plan preserves the Controller identity, trusted Proxmox host key,
+Proxmox installation, boot storage, and HOME management. It removes only exact
+Boetticher-owned vmbr1, its host IPv6 suppression, the `boetticher-data`
+registration and LVM layout, safely removable host-baseline files, and the
+enrollment, storage, and network selections in `lab.yml`. Shared packages,
+unknown repository or power settings, guests, and unrelated storage stop the
+operation.
+
+Teardown is ordered from dependents to foundations and is retryable by rerunning
+the same command. The exact Timetec stable path is required for disk
+destruction; `--yes` confirms only non-destructive prompts. After remote work
+succeeds, `lab.yml` retains the Proxmox address and user but omits the enrolled
+node, storage, and network selections. `foundation status` then reports the
+intentional trust-only state and `foundation converge` directs the operator to
+`host enroll`.
+
+`network test bridge-ipv6` is the bounded native regression for each rebuilt
+cycle. It requires an exact vmbr1 and an empty guest inventory, creates only
+VMIDs 991 and 992 on VLAN 40 with guest firewalls disabled, proves both
+directions of IPv6 link-local forwarding, and explicitly stops, destroys, and
+verifies the temporary guests and storage volumes.

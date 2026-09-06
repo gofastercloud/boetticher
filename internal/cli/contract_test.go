@@ -86,6 +86,23 @@ func TestFoundationSubcommandDispatchesItsActualOperation(t *testing.T) {
 	}
 }
 
+func TestFoundationTeardownAndBridgeIPv6HelpArePublished(t *testing.T) {
+	var output bytes.Buffer
+	if err := Run([]string{"foundation", "teardown", "--help"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "--confirm-storage") {
+		t.Fatalf("teardown help omitted exact disk confirmation: %s", output.String())
+	}
+	output.Reset()
+	if err := Run([]string{"network", "test", "bridge-ipv6", "--help"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "link-local Ethernet forwarding") {
+		t.Fatalf("bridge test help omitted its bounded purpose: %s", output.String())
+	}
+}
+
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"controller", "--help"}, {"controller", "bootstrap", "--help"}, {"controller", "status", "--help"},

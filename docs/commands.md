@@ -26,7 +26,7 @@ boetticher controller bootstrap|status [--operator USER] [--confirm-key-login]
 boetticher host identity|trust|enroll|status|prepare ...
 boetticher storage plan|initialize|status [--device PATH] [--confirm]
 boetticher network plan|configure|status
-boetticher foundation status|converge
+boetticher foundation status|converge|teardown
 ```
 
 ## Advanced command menu
@@ -37,7 +37,7 @@ boetticher storage status
 boetticher network status
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
 boetticher aiops status [--site DIR] [--live] [--json]
-boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--cleanup-only] [--json]
+boetticher network test bridge-ipv6
 boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher dhcp status|leases [--site DIR] [--live] [--json]
 boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]

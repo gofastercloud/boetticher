@@ -306,6 +306,9 @@ func classifyExistingLayout(plan StoragePlan, config StorageConfig) (string, str
 	if bytesContain(plan.PVJSON, []byte(StorageVolumeGroup)) || bytesContain(plan.VGJSON, []byte(StorageVolumeGroup)) || bytesContain(plan.Proxmox, []byte(config.GuestStorage)) {
 		return "conflict", "partial or conflicting Boetticher storage state requires review"
 	}
+	if len(plan.Selected.Children) == 0 && plan.Selected.FSType == "" && len(plan.Selected.Mountpoints) == 0 {
+		return "empty", "configured stable disk is empty and eligible for initialization"
+	}
 	return "conflict", "configured disk is not an empty candidate"
 }
 
@@ -315,6 +318,32 @@ func bytesContain(data []byte, needle []byte) bool {
 
 func exactOwnedStorage(plan StoragePlan) bool {
 	return bytesContain(plan.PVJSON, []byte(`"vg_name":"`+StorageVolumeGroup+`"`)) && bytesContain(plan.VGJSON, []byte(`"vg_name":"`+StorageVolumeGroup+`"`)) && bytesContain(plan.LVJSON, []byte(`"lv_name":"`+StorageThinPool+`"`)) && bytesContain(plan.Proxmox, []byte(`"storage":"`+GuestStorageID+`"`)) && bytesContain(plan.Proxmox, []byte(`"type":"lvmthin"`)) && bytesContain(plan.Proxmox, []byte(`"vgname":"`+StorageVolumeGroup+`"`)) && bytesContain(plan.Proxmox, []byte(`"thinpool":"`+StorageThinPool+`"`))
+}
+
+// StorageTeardownState identifies only the native states that the bounded
+// teardown operation can safely handle. It deliberately does not infer or
+// repair an unknown disk layout.
+func StorageTeardownState(plan StoragePlan) (string, string) {
+	if len(parseGuests(plan.Guests)) != 0 {
+		return "conflict", "boetticher-data contains guest state"
+	}
+	if plan.Selected == nil || len(plan.Selected.StableIDs) == 0 {
+		return "conflict", "configured Timetec disk does not have a stable identity"
+	}
+	hasPV := bytesContain(plan.PVJSON, []byte(`"pv_name":"`+plan.Selected.Path+`"`)) && bytesContain(plan.PVJSON, []byte(`"vg_name":"`+StorageVolumeGroup+`"`))
+	hasVG := bytesContain(plan.VGJSON, []byte(`"vg_name":"`+StorageVolumeGroup+`"`))
+	hasLV := bytesContain(plan.LVJSON, []byte(`"lv_name":"`+StorageThinPool+`"`))
+	hasStorage := bytesContain(plan.Proxmox, []byte(`"storage":"`+GuestStorageID+`"`))
+	if !hasPV && !hasVG && !hasLV && !hasStorage {
+		if len(plan.Selected.Children) == 0 && plan.Selected.FSType == "" && len(plan.Selected.Mountpoints) == 0 {
+			return "absent", "the configured Timetec disk is already empty"
+		}
+		return "conflict", "the configured Timetec disk has an unknown native layout"
+	}
+	if (hasPV && !hasVG) || (hasVG && !hasLV) || (hasLV && !hasVG) {
+		return "owned-partial", "a partial Boetticher LVM layout can be removed after native revalidation"
+	}
+	return "owned", "exact Boetticher storage or a recognized partial layout is present"
 }
 
 func pvPathForVG(data []byte, wantVG string) string {
@@ -387,5 +416,49 @@ func InitializationCommand(plan StoragePlan) (string, error) {
 		"lvs --noheadings -o lv_attr boetticher-vg/data | grep -Eq '^[[:space:]]*t'",
 		"pvesm status --storage boetticher-data",
 	)
+	return strings.Join(lines, "; "), nil
+}
+
+// StorageTeardownCommand removes only the exact Boetticher LVM-thin layout on
+// the freshly resolved configured whole disk. Registration is removed before
+// the LVM layers; unrelated storage, mounts, swaps, guests, and the boot disk
+// are refused by the native checks.
+func StorageTeardownCommand(plan StoragePlan, confirmDevice string) (string, error) {
+	if plan.Selected == nil || !containsString(plan.Selected.StableIDs, confirmDevice) {
+		return "", errors.New("teardown confirmation must match the one configured stable Timetec disk identity")
+	}
+	state, detail := StorageTeardownState(plan)
+	if state != "owned" && state != "owned-partial" && state != "absent" {
+		return "", fmt.Errorf("storage state %s is not eligible for teardown: %s", state, detail)
+	}
+	device := confirmDevice
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+	lines := []string{
+		"set -eu",
+		"device=" + quote(device),
+		"test -e \"$device\"",
+		"resolved=\"$(readlink -f \"$device\")\"",
+		"test -b \"$resolved\"",
+		"test \"$(lsblk -ndo TYPE \"$resolved\")\" = disk",
+		"if lsblk -nrpo TYPE \"$resolved\" | grep -qx part; then echo 'refusing the selected disk because it has a partition' >&2; exit 54; fi",
+		"test -z \"$(lsblk -nrpo MOUNTPOINTS \"$resolved\" | awk 'NF { print; exit }')\"",
+		"root=\"$(readlink -f \"$(findmnt -no SOURCE /)\")\"",
+		"while parent=\"$(lsblk -ndo PKNAME \"$root\")\"; do [ -n \"$parent\" ] || break; root=\"/dev/$parent\"; done",
+		"test \"$resolved\" != \"$root\"",
+		"if swapon --noheadings --raw --output NAME 2>/dev/null | grep -Fqx \"$resolved\"; then echo 'refusing an active swap disk' >&2; exit 51; fi",
+		"if grep -R -Fq \"$resolved\" /etc/pve/qemu-server /etc/pve/lxc 2>/dev/null; then echo 'refusing a disk referenced by a guest' >&2; exit 52; fi",
+		"storage_json=\"$(pvesh get /storage/boetticher-data --output-format json 2>/dev/null || true)\"; storage_owned=0; if [ -n \"$storage_json\" ]; then printf %s \"$storage_json\" | grep -Fq '\"type\":\"lvmthin\"' && printf %s \"$storage_json\" | grep -Fq '\"vgname\":\"boetticher-vg\"' && printf %s \"$storage_json\" | grep -Fq '\"thinpool\":\"data\"' || { echo 'refusing a conflicting boetticher-data storage definition' >&2; exit 53; }; storage_owned=1; fi",
+		"if pvs --noheadings --separator=: -o pv_name,vg_name 2>/dev/null | awk -F: -v p=\"$resolved\" '$1 ~ p && $2 !~ /boetticher-vg/ { bad=1 } END { exit(bad ? 1 : 0) }'; then :; else echo 'refusing the selected disk because its PV is not Boetticher-owned' >&2; exit 54; fi",
+		"if lvs --noheadings --separator=: -o lv_name,vg_name 2>/dev/null | sed 's/[[:space:]]//g' | awk -F: '$2 == \"boetticher-vg\" && $1 != \"data\" { bad=1 } END { exit(bad ? 1 : 0) }'; then :; else echo 'refusing an unexpected logical volume in boetticher-vg' >&2; exit 56; fi",
+		"pv_owned=0; if pvs --noheadings --separator=: -o pv_name,vg_name 2>/dev/null | awk -F: -v p=\"$resolved\" '$1 ~ p && $2 ~ /boetticher-vg/ { found++ } END { exit(found == 1 ? 0 : 1) }'; then pv_owned=1; fi",
+		"vg_owned=0; if vgs --noheadings --separator=: -o vg_name 2>/dev/null | sed 's/[[:space:]]//g' | grep -qx 'boetticher-vg'; then vg_owned=1; fi",
+		"lv_owned=0; if lvs --noheadings --separator=: -o lv_name,vg_name 2>/dev/null | sed 's/[[:space:]]//g' | grep -qx 'data:boetticher-vg'; then lv_owned=1; fi",
+		"if [ \"$storage_owned\" = 1 ]; then pvesm remove boetticher-data; fi",
+		"if [ \"$lv_owned\" = 1 ]; then lvremove --yes boetticher-vg/data; fi",
+		"if [ \"$vg_owned\" = 1 ]; then vgremove --yes boetticher-vg; fi",
+		"if [ \"$pv_owned\" = 1 ]; then pvremove --yes --force --force \"$resolved\"; fi",
+		"wipefs --all \"$resolved\"",
+		"test -z \"$(wipefs -n \"$resolved\")\"",
+	}
 	return strings.Join(lines, "; "), nil
 }

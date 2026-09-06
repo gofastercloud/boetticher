@@ -11,12 +11,19 @@ import (
 )
 
 func runFoundation(args []string, out io.Writer) error {
+	return runFoundationWithInput(args, nil, out)
+}
+
+func runFoundationWithInput(args []string, input io.Reader, out io.Writer) error {
 	if len(args) != 0 {
 		if len(args) == 1 && args[0] == "converge" {
 			return runFoundationConverge(out)
 		}
+		if len(args) >= 1 && args[0] == "teardown" {
+			return runFoundationTeardown(args[1:], input, out)
+		}
 		if len(args) != 1 || args[0] != "status" {
-			return errors.New("usage: boetticher foundation status|converge")
+			return errors.New("usage: boetticher foundation status|converge|teardown")
 		}
 	}
 	checks, err := controller.RunStatus(context.Background(), controller.StatusOptions{})
@@ -66,6 +73,15 @@ func runFoundation(args []string, out io.Writer) error {
 		fmt.Fprintln(out, "Platform guests          Not deployed")
 		fmt.Fprintln(out, "Foundation readiness: FAIL")
 		return hostErr
+	}
+	if config.Proxmox.Node == "" {
+		fmt.Fprintln(out, "PASS  Proxmox trust     Established")
+		fmt.Fprintln(out, "\nHost enrollment       Not configured")
+		fmt.Fprintln(out, "Host baseline          Not configured")
+		fmt.Fprintln(out, "Dedicated storage     Not configured")
+		fmt.Fprintln(out, "Internal network      Not configured")
+		fmt.Fprintln(out, "\nFoundation readiness: NOT CONFIGURED\n\nNext:\n  sudo boetticher host enroll root@192.168.4.5")
+		return nil
 	}
 	hostOK := len(hostInventory.Nodes) == 1 && hostInventory.Nodes[0].Node == config.Proxmox.Node
 	baseline, baselineErr := controllerhost.CheckBaseline(context.Background(), transport)
@@ -124,6 +140,16 @@ func runFoundationConverge(out io.Writer) error {
 	transport, err := controllerhost.TransportFor(config)
 	if err != nil {
 		return err
+	}
+	if config.Proxmox.Node == "" {
+		if _, err := transport.Run(context.Background(), "hostname"); err != nil {
+			fmt.Fprintf(out, "Proxmox trust         failed: %v\n", err)
+			return err
+		}
+		fmt.Fprintln(out, "Proxmox trust         established")
+		fmt.Fprintln(out, "Host enrollment       required")
+		fmt.Fprintln(out, "Next:\n  sudo boetticher host enroll root@192.168.4.5")
+		return errors.New("host enrollment is required")
 	}
 	ctx := context.Background()
 	inventory, err := controllerhost.Collect(ctx, transport, false)

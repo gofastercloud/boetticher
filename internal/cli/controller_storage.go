@@ -26,6 +26,9 @@ func runControllerStorage(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if config.Proxmox.Node == "" {
+		return errors.New("host enrollment is required before storage operations")
+	}
 	transport, err := controllerhost.TransportFor(config)
 	if err != nil {
 		return err
