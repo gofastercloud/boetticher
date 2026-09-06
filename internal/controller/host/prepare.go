@@ -65,7 +65,7 @@ func RunPrepare(ctx context.Context, config LabConfig, transport Transport, out 
 		_ = temporary.Close()
 		return err
 	}
-	content := fmt.Sprintf("[proxmox]\nlab-proxmox ansible_host=%s ansible_user=root\n\n[proxmox:vars]\nansible_ssh_private_key_file=%s\nansible_ssh_common_args=-o UserKnownHostsFile=%s -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ControlMaster=no -o ControlPath=none\n", config.Proxmox.Address, PrivateKeyPath, KnownHostsPath)
+	content := fmt.Sprintf("[proxmox]\nlab-proxmox ansible_host=%s ansible_user=root\n\n[proxmox:vars]\nansible_ssh_private_key_file=%s\nansible_ssh_common_args=-o UserKnownHostsFile=%s -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ControlMaster=no -o ControlPath=none -o RequestTTY=no\n", config.Proxmox.Address, PrivateKeyPath, KnownHostsPath)
 	if _, err := temporary.WriteString(content); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("write temporary Proxmox inventory: %w", err)

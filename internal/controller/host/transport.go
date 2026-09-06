@@ -61,6 +61,7 @@ func (t Transport) Args(command string) ([]string, error) {
 		"-o", "ControlPath=none",
 		"-o", "ForwardAgent=no",
 		"-o", "ForwardX11=no",
+		"-o", "RequestTTY=no",
 		t.User + "@" + t.Address,
 		command,
 	}, nil
