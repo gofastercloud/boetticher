@@ -116,7 +116,7 @@ func RunStatus(ctx context.Context, options StatusOptions) ([]Check, error) {
 	checks = append(checks, Check{Name: "RAM logging", Passed: commandEquals(ctx, options.Command, "systemctl", "is-active", "--quiet", "log2ram.service") && commandEquals(ctx, options.Command, "findmnt", "-rn", "--mountpoint", "/var/log", "-o", "FSTYPE", "tmpfs"), Detail: "log2ram service and /var/log mount"})
 	checks = append(checks, Check{Name: "RAM logging timer", Passed: commandContains(ctx, options.Command, "systemctl", "list-timers", "--all", "log2ram*", "log2ram"), Detail: "Synchronization timer"})
 	checks = append(checks, Check{Name: "Reboot", Passed: rebootComplete(options.MarkerPath), Detail: "Required activation reboot completed"})
-	gpioReady := configErr == nil && config.Blinkt.Enabled && config.Blinkt.GPIOChip >= 0 && commandEquals(ctx, options.Command, "/usr/bin/python3", "-c", "import lgpio")
+	gpioReady := configErr == nil && config.Blinkt.Enabled && config.Blinkt.GPIOChip >= 0 && commandSucceeds(ctx, options.Command, "/usr/bin/python3", "-c", "import lgpio")
 	checks = append(checks, Check{Name: "GPIO", Passed: gpioReady, Detail: "Configured Blinkt hardware path"})
 	return checks, nil
 }
@@ -190,6 +190,11 @@ func commandEquals(ctx context.Context, command func(context.Context, string, ..
 	}
 	out, err := command(ctx, name, args...)
 	return err == nil && strings.TrimSpace(string(out)) == want
+}
+
+func commandSucceeds(ctx context.Context, command func(context.Context, string, ...string) ([]byte, error), name string, args ...string) bool {
+	_, err := command(ctx, name, args...)
+	return err == nil
 }
 
 func unitReady(ctx context.Context, command func(context.Context, string, ...string) ([]byte, error), unit string) bool {
