@@ -124,12 +124,15 @@ func (r Renderer) componentPixel(state State, now time.Time, index int) Pixel {
 	brightness := r.MaxBrightness
 	seconds := float64(now.UnixNano()) / float64(time.Second)
 	switch state {
-	case Healthy, Attention:
+	case Healthy:
 		phase := (math.Sin(2*math.Pi*seconds/3) + 1) / 2
 		brightness = uint8(math.Max(1, math.Round(float64(r.MaxBrightness)*(0.3+0.7*phase))))
+	case Attention:
+		phase := (math.Sin(2*math.Pi*seconds/1.2) + 1) / 2
+		brightness = uint8(math.Max(1, math.Round(float64(r.MaxBrightness)*(0.15+0.85*phase))))
 	case Checking:
-		phase := (math.Sin(2*math.Pi*seconds/1.2+float64(index)/3) + 1) / 2
-		brightness = uint8(math.Max(1, math.Round(float64(r.MaxBrightness)*(0.35+0.65*phase))))
+		// Checking is steady blue so it is distinct from the animated states.
+		brightness = r.MaxBrightness
 	case Failed:
 		if now.UnixMilli()/350%2 == 1 {
 			brightness = 0

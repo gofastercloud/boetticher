@@ -100,8 +100,8 @@ CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES
 | Display | Meaning |
 | --- | --- |
 | Breathing green | The lightweight check is healthy |
-| Pulsing blue | Startup, checking, or an active operation |
-| Breathing amber | Attention or degraded operation |
+| Steady blue | Startup, checking, or an active operation |
+| Pulsing amber | Attention or degraded operation |
 | Flashing red | A meaningful health or operation failure |
 | Off | Not configured or not applicable |
 

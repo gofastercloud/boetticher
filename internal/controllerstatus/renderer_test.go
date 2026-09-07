@@ -79,6 +79,30 @@ func TestRendererUsesOperationProgressInsteadOfDashboard(t *testing.T) {
 	}
 }
 
+func TestRendererUsesStateSpecificLightEffects(t *testing.T) {
+	renderer := NewRenderer(0.3)
+	greenAtStart := renderer.componentPixel(Healthy, time.Unix(0, 0), 0)
+	greenAtPeak := renderer.componentPixel(Healthy, time.UnixMilli(750), 0)
+	if greenAtStart.Brightness == greenAtPeak.Brightness {
+		t.Fatalf("green is not breathing: start=%d peak=%d", greenAtStart.Brightness, greenAtPeak.Brightness)
+	}
+	amberAtStart := renderer.componentPixel(Attention, time.Unix(0, 0), 0)
+	amberAtPeak := renderer.componentPixel(Attention, time.UnixMilli(300), 0)
+	if amberAtStart.Brightness == amberAtPeak.Brightness {
+		t.Fatalf("amber is not pulsing: start=%d peak=%d", amberAtStart.Brightness, amberAtPeak.Brightness)
+	}
+	blueAtStart := renderer.componentPixel(Checking, time.Unix(0, 0), 0)
+	blueLater := renderer.componentPixel(Checking, time.UnixMilli(750), 0)
+	if blueAtStart.Brightness != renderer.MaxBrightness || blueAtStart.Brightness != blueLater.Brightness {
+		t.Fatalf("blue is not steady: start=%d later=%d max=%d", blueAtStart.Brightness, blueLater.Brightness, renderer.MaxBrightness)
+	}
+	redOn := renderer.componentPixel(Failed, time.Unix(0, 0), 0)
+	redOff := renderer.componentPixel(Failed, time.UnixMilli(400), 0)
+	if redOn.Brightness == 0 || redOff.Brightness != 0 {
+		t.Fatalf("red is not flashing: on=%d off=%d", redOn.Brightness, redOff.Brightness)
+	}
+}
+
 func TestDaemonDisablesFailedDriverWithoutReturningHardwareError(t *testing.T) {
 	driver := &fakeDriver{err: errors.New("GPIO disappeared")}
 	daemon := NewDaemon(DefaultSettings(), driver)
