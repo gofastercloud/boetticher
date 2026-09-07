@@ -278,10 +278,7 @@ func hostHealthCommand(config controllerhost.LabConfig) string {
 		checks = append(checks, "pvesm status --storage "+storage+" | awk -v expected="+storage+" 'NR > 1 && $1 == expected && $3 == \"active\" { found=1 } END { exit found ? 0 : 1 }'")
 	}
 	if config.Network != nil {
-		checks = append(checks,
-			"ip -d link show vmbr1 | grep -Eq 'vlan_filtering (1|on)'",
-			"for interface in $(bridge link | awk '$NF == \\\"vmbr1\\\" { sub(\":\", \"\", $2); print $2 }'); do test ! -e \"/sys/class/net/$interface/device\"; done",
-		)
+		checks = append(checks, "ip -d link show vmbr1 | grep -Eq 'vlan_filtering (1|on)'")
 	}
 	return "set -eu; pve_updates=$(apt list --upgradable 2>/dev/null | sed '1d' | cut -d/ -f1 | while IFS= read -r package; do case \"$package\" in pve-*|proxmox-*|libpve-*) printf '%s,' \"$package\";; esac; done || true); printf 'BOETTICHER_PVE_UPDATES=%s\\n' \"$pve_updates\"; if test -e /var/run/reboot-required; then printf 'BOETTICHER_PVE_REBOOT=1\\n'; else printf 'BOETTICHER_PVE_REBOOT=0\\n'; fi; if ! (" + strings.Join(checks, " && ") + "); then exit 1; fi"
 }
