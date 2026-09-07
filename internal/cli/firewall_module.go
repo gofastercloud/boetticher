@@ -80,6 +80,9 @@ func loadFirewallContext() (model.Site, firewallmodule.DesiredState, firewallmod
 	if err != nil {
 		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, err
 	}
+	// ImageBuilder and first boot are deliberately bounded but can exceed the
+	// short default used by ordinary Host status commands.
+	transport.Timeout = 10 * time.Minute
 	return current, desired, firewallmodule.HostClient{Transport: transport}, nil
 }
 
