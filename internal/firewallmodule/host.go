@@ -2,7 +2,9 @@ package firewallmodule
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -58,10 +60,25 @@ func CaptureProviderTrustViaHost(ctx context.Context, host HostClient) ([]byte, 
 		}
 		return nil, fmt.Errorf("provider guest agent certificate command failed (%d)", output.ExitCode)
 	}
-	if !strings.Contains(output.Data, "BEGIN CERTIFICATE") {
+	trust, err := normalizeProviderCertificate([]byte(output.Data))
+	if err != nil {
+		return nil, err
+	}
+	return trust, nil
+}
+
+func normalizeProviderCertificate(data []byte) ([]byte, error) {
+	if block, _ := pem.Decode(data); block != nil && block.Type == "CERTIFICATE" {
+		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			return nil, errors.New("provider guest agent returned an invalid PEM TLS certificate")
+		}
+		return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: block.Bytes}), nil
+	}
+	certificate, err := x509.ParseCertificate(data)
+	if err != nil {
 		return nil, errors.New("provider guest agent returned no usable TLS certificate")
 	}
-	return []byte(output.Data), nil
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}), nil
 }
 
 // FirewallRuntimeActiveViaHost checks the loaded nftables table through the
