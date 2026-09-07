@@ -73,9 +73,13 @@ nouns in normal capability UX unless the operator genuinely needs them. Avoid
 hashes, manifests, evidence stores, generation counters, shadow inventories,
 and other audit machinery without a concrete operational requirement.
 
-Do not implement DHCP, DNS, status integration, VPN, physical trunking, or
-external-switch management during Phase 4A unless a strict implementation
-dependency is discovered and explicitly approved.
+Do not implement DHCP, DNS, VPN, physical trunking, or external-switch
+management during Phase 4A unless a strict implementation dependency is
+discovered and explicitly approved. The simple existing Controller status
+projection for the firewall is approved: use the existing status model,
+polling, debouncer, Blinkt slots, and StreamDeck Host-detail slots. Keep DHCP,
+DDNS/NTP, and DNS explicitly RED until their capabilities are implemented; do
+not add a status database or a second scheduler.
 
 Canonical verbs are `bootstrap`, `enroll`, `apply`, `status`, `plan`,
 `teardown`, `reboot`, and `test`. `apply` is the declarative Host operation;

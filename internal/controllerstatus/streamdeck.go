@@ -129,6 +129,9 @@ func renderHostDetail(keys []KeyImage, snapshot StatusSnapshot, telemetry Proxmo
 	}
 	keys[6] = renderDeckKey("UPDATES", stateLabel(snapshot.HostUpdates.State), "HOST", snapshot.HostUpdates.State)
 	keys[7] = renderDeckKey("REBOOT", rebootLabel(snapshot.HostUpdates), "HOST", snapshot.HostUpdates.State)
+	keys[8] = renderDeckKey("FW", stateLabel(snapshot.Firewall.State), "MODULE", snapshot.Firewall.State)
+	keys[9] = renderDeckKey("DHCP", stateLabel(snapshot.DHCPNTP.State), "MODULE", snapshot.DHCPNTP.State)
+	keys[10] = renderDeckKey("DNS", stateLabel(snapshot.DNS.State), "MODULE", snapshot.DNS.State)
 	keys[13] = renderDeckKey("BACK", "HOME", "NAV", Off)
 	keys[14] = renderDeckKey("REFRESH", "READ", "STATUS", Off)
 	return keys

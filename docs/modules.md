@@ -64,6 +64,12 @@ semantic no-op. `teardown --yes` removes only the exact firewall provider and
 Controller-local provider credential/trust, preserving Host trust, storage,
 `vmbr0`, `vmbr1`, and physical networking.
 
+The existing Controller status monitor maps the firewall provider check into
+the fixed `FW` Blinkt slot and the StreamDeck Host-detail view. `DHCP/NTP` and
+`DNS` remain RED placeholders until those capability checks are implemented;
+they use the same in-memory status model and polling loop, with no additional
+status database or scheduler.
+
 ## Capability, provider, runtime
 
 Keep these concepts separate:

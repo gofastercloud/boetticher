@@ -70,5 +70,8 @@ clean-install gate remain **NOT TESTED** until run against the enrolled
 reference Host. Local tests prove deterministic generation and ownership
 boundaries only.
 
-DHCP is Phase 4B, DNS is Phase 4C, status integration is Phase 4D, and
-physical trunking/external switching remain out of scope.
+The existing Controller status monitor now represents the firewall check on
+the `FW` Blinkt slot and the StreamDeck Host-detail view. DHCP/DDNS/NTP and DNS
+remain explicit RED placeholders until their capabilities are implemented;
+they do not require a new scheduler or status store. DHCP is Phase 4B, DNS is
+Phase 4C, and physical trunking/external switching remain out of scope.

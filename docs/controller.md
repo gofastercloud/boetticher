@@ -111,8 +111,12 @@ CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES
 | Flashing red | A meaningful health or operation failure |
 | Off | Not configured or not applicable |
 
-`CTL` is local Controller health, `HOST` is the enrolled Proxmox Host, and
-`FW`, `DHCP/NTP`, and `DNS` remain off until those capabilities exist.
+`CTL` is local Controller health and `HOST` is the enrolled Proxmox Host.
+`FW` is the firewall capability's lightweight read-only provider check;
+`DHCP/NTP` and `DNS` are explicit red placeholders until those capabilities
+exist. The firewall check uses the enrolled Host transport to confirm the
+expected provider identity is running. It is operational status, not packet
+qualification evidence.
 `CTRL-UPDATES` is green when no Controller updates are available, amber when
 updates or the native `/var/run/reboot-required` marker require attention, and
 blue when an explicit Boetticher configuration-staged event is active.
@@ -167,6 +171,11 @@ and up to eight VM/LXC guests sorted by VMID, with PAGE and REFRESH controls.
 Host and guest detail views provide BACK and REFRESH only; StreamDeck input
 cannot start, stop, reboot, deploy, or run shell commands. The old standalone
 Controller StreamDeck service is removed during Controller bootstrap.
+
+The Host detail view also shows `FW`, `DHCP`, and `DNS` using the same coarse
+component states as Blinkt. `FW` is sourced from the read-only Host provider
+identity check; DHCP/DDNS/NTP and DNS remain red placeholders until their
+capabilities are implemented.
 
 ## Installed paths and maintenance
 

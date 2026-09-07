@@ -153,8 +153,10 @@ boetticher module <capability> <action> [flags]
 
 Phase 4A operator actions are `module firewall plan`, `apply`, `status`, and
 `teardown`. OpenWrt implements this capability but remains an internal
-provider detail. DHCP, DNS, status integration, VPN, physical trunking, and
-external-switch management are later phases.
+provider detail. The existing status monitor reports the firewall provider on
+the fixed `FW` slot and keeps DHCP/DDNS/NTP and DNS explicitly red until their
+capabilities are implemented. VPN, physical trunking, and external-switch
+management are later phases.
 
 Proxmox owns operator workloads. Boetticher never adopts, imports, or deletes
 unknown guests, volumes, or network devices merely because a name or address

@@ -21,6 +21,7 @@ type Daemon struct {
 	Logger            *log.Logger
 	Controller        func(context.Context) CheckResult
 	Host              func(context.Context) CheckResult
+	Modules           func(context.Context) ModuleStatus
 	Connectivity      func(context.Context) CheckResult
 	Throughput        func(context.Context) (float64, error)
 	Telemetry         func(context.Context) (ProxmoxSnapshot, error)
@@ -31,6 +32,7 @@ type Daemon struct {
 	snapshot         StatusSnapshot
 	controller       *Debouncer
 	host             *Debouncer
+	firewall         *Debouncer
 	internet         *Debouncer
 	throughput       float64
 	throughputAt     time.Time
@@ -92,6 +94,7 @@ func NewDaemon(settings Settings, driver Driver) *Daemon {
 		renderer:         NewRenderer(settings.Brightness),
 		controller:       NewDebouncer(Checking),
 		host:             NewDebouncer(Checking),
+		firewall:         NewDebouncer(Checking),
 		internet:         NewDebouncer(Checking),
 		telemetryResults: make(chan telemetryResult, 1),
 		streamdeckFrames: make(chan []KeyImage, 1),
@@ -112,6 +115,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	if d.Host == nil {
 		d.Host = HostChecker{}.Check
+	}
+	if d.Modules == nil {
+		d.Modules = (ModuleChecker{}).Check
 	}
 	if d.Connectivity == nil {
 		d.Connectivity = (HostConnectivityChecker{}).Check
@@ -172,8 +178,9 @@ func (d *Daemon) refresh(ctx context.Context) {
 
 func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 	type result struct {
-		kind string
-		data CheckResult
+		kind    string
+		data    CheckResult
+		modules ModuleStatus
 	}
 	runConnectivity := d.connectivityAt.IsZero() || now.Sub(d.connectivityAt) >= d.Settings.PingInterval
 	checks := []struct {
@@ -189,7 +196,7 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			fn   func(context.Context) CheckResult
 		}{"internet", d.Connectivity})
 	}
-	results := make(chan result, len(checks))
+	results := make(chan result, len(checks)+1)
 	var group sync.WaitGroup
 	for _, check := range checks {
 		group.Add(1)
@@ -202,6 +209,15 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			defer cancel()
 			results <- result{kind: check.kind, data: check.fn(checkCtx)}
 		}(check)
+	}
+	if d.Modules != nil {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			results <- result{kind: "modules", modules: d.Modules(checkCtx)}
+		}()
 	}
 	group.Wait()
 	close(results)
@@ -232,6 +248,14 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			connectivity = result.data
 			d.lastConnectivity = result.data
 			d.connectivityAt = now
+		case "modules":
+			if !result.modules.Firewall.Configured {
+				d.snapshot.Firewall = Component{State: Off, Detail: result.modules.Firewall.Detail}
+			} else {
+				d.snapshot.Firewall = d.firewall.Update(result.modules.Firewall.Healthy, result.modules.Firewall.Detail)
+			}
+			d.snapshot.DHCPNTP = moduleComponent(result.modules.DHCPNTP)
+			d.snapshot.DNS = moduleComponent(result.modules.DNS)
 		}
 	}
 	if !runConnectivity {
@@ -497,6 +521,9 @@ func (d *Daemon) logTransitions() {
 	}{
 		{"CTL", d.previous.Controller.State, d.snapshot.Controller.State},
 		{"HOST", d.previous.Host.State, d.snapshot.Host.State},
+		{"FW", d.previous.Firewall.State, d.snapshot.Firewall.State},
+		{"DHCP/NTP", d.previous.DHCPNTP.State, d.snapshot.DHCPNTP.State},
+		{"DNS", d.previous.DNS.State, d.snapshot.DNS.State},
 		{"NET", d.previous.Internet.State, d.snapshot.Internet.State},
 		{"CTRL-UPDATES", d.previous.ControllerUpdates.State, d.snapshot.ControllerUpdates.State},
 		{"HOST-UPDATES", d.previous.HostUpdates.State, d.snapshot.HostUpdates.State},
