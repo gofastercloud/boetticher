@@ -84,7 +84,15 @@ func EnsureImageViaHost(ctx context.Context, host HostClient, spec ImageSpec) (I
 	}
 	defer func() { _, _ = host.Run(ctx, "rm -f "+shellQuote(remoteScript)+" "+shellQuote(remoteImage)) }()
 	command := "set -eu; chmod 700 " + shellQuote(remoteScript) + "; /bin/sh " + shellQuote(remoteScript) + " " + shellQuote(remoteImage) + " " + shellQuote(spec.ManagementAddress) + " " + shellQuote(spec.ManagementNetmask) + " " + shellQuote(spec.ManagementGateway) + " " + shellQuote(spec.ControllerAddress)
-	if _, err := host.RunWithStdin(ctx, command, strings.NewReader(spec.PasswordHash+"\n")); err != nil {
+	result, err := host.RunWithStdin(ctx, command, strings.NewReader(spec.PasswordHash+"\n"))
+	if err != nil {
+		detail := strings.TrimSpace(string(result.Stderr))
+		if detail == "" {
+			detail = strings.TrimSpace(string(result.Stdout))
+		}
+		if detail != "" {
+			return Image{}, fmt.Errorf("build pinned OpenWrt image on x86 Host: %w: %s", err, detail)
+		}
 		return Image{}, fmt.Errorf("build pinned OpenWrt image on x86 Host: %w", err)
 	}
 	temporary := path + ".tmp"
