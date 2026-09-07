@@ -309,9 +309,9 @@ func (d *Daemon) startup(ctx context.Context) {
 		return
 	}
 	for _, index := range []int{0, 1, 2, 3, 4, 5, 6, 7, 6, 4, 2, 0} {
-		logical := make([]Pixel, PixelCount)
-		logical[index] = d.renderer.componentPixel(Checking, d.Now(), index)
-		d.show(ctx, physicalFrame(logical))
+		frame := make([]Pixel, PixelCount)
+		frame[index] = d.renderer.componentPixel(Checking, d.Now(), index)
+		d.show(ctx, frame)
 		select {
 		case <-ctx.Done():
 			return

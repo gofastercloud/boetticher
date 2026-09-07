@@ -37,42 +37,42 @@ func TestRendererMapsFixedStatesToColours(t *testing.T) {
 	if len(frame) != PixelCount {
 		t.Fatalf("frame has %d pixels", len(frame))
 	}
-	if frame[7].G == 0 || frame[7].B != 35 {
-		t.Fatalf("healthy pixel = %#v", frame[7])
+	if frame[0].G == 0 || frame[0].B != 35 {
+		t.Fatalf("healthy Controller pixel = %#v", frame[0])
 	}
-	if frame[6].R == 0 || frame[6].G != 0 {
-		t.Fatalf("failed Host pixel = %#v", frame[6])
+	if frame[1].R == 0 || frame[1].G != 0 {
+		t.Fatalf("failed Host pixel = %#v", frame[1])
 	}
-	if frame[5] != (Pixel{}) {
-		t.Fatalf("off firewall pixel = %#v", frame[5])
+	if frame[2] != (Pixel{}) {
+		t.Fatalf("off firewall pixel = %#v", frame[2])
 	}
-	if frame[4].B == 0 || frame[4].G == 0 {
-		t.Fatalf("checking DHCP/NTP pixel = %#v", frame[4])
+	if frame[3].B == 0 || frame[3].G == 0 {
+		t.Fatalf("checking DHCP/NTP pixel = %#v", frame[3])
 	}
-	if frame[3].R == 0 || frame[3].G == 0 || frame[3].B != 0 {
-		t.Fatalf("attention DNS pixel = %#v", frame[3])
+	if frame[4].R == 0 || frame[4].G == 0 || frame[4].B != 0 {
+		t.Fatalf("attention DNS pixel = %#v", frame[4])
 	}
-	if frame[2].G == 0 || frame[2].B != 35 {
-		t.Fatalf("healthy Internet pixel = %#v", frame[2])
+	if frame[5].G == 0 || frame[5].B != 35 {
+		t.Fatalf("healthy Internet pixel = %#v", frame[5])
 	}
-	if frame[1].R == 0 || frame[1].G == 0 || frame[1].B != 0 {
-		t.Fatalf("attention Controller update pixel = %#v", frame[1])
+	if frame[6].R == 0 || frame[6].G == 0 || frame[6].B != 0 {
+		t.Fatalf("attention Controller update pixel = %#v", frame[6])
 	}
-	if frame[0].B == 0 || frame[0].G == 0 {
-		t.Fatalf("checking Host update pixel = %#v", frame[0])
+	if frame[7].B == 0 || frame[7].G == 0 {
+		t.Fatalf("checking Host update pixel = %#v", frame[7])
 	}
 }
 
 func TestRendererUsesOperationProgressInsteadOfDashboard(t *testing.T) {
 	renderer := NewRenderer(0.3)
 	frame := renderer.OperationFrame(OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 2, TotalSteps: 5}, time.Unix(100, 0))
-	if frame[7].G == 0 || frame[6].G == 0 || frame[5].G == 0 {
-		t.Fatalf("completed pixels were not green: %#v", frame[5:])
+	if frame[0].G == 0 || frame[1].G == 0 || frame[2].G == 0 {
+		t.Fatalf("completed pixels were not green: %#v", frame[:3])
 	}
-	if frame[4].B == 0 {
-		t.Fatalf("current pixel was not blue: %#v", frame[4])
+	if frame[3].B == 0 {
+		t.Fatalf("current pixel was not blue: %#v", frame[3])
 	}
-	for _, pixel := range frame[:4] {
+	for _, pixel := range frame[4:] {
 		if pixel != (Pixel{}) {
 			t.Fatalf("future pixel was not off: %#v", pixel)
 		}

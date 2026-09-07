@@ -54,11 +54,11 @@ func (r Renderer) Frame(snapshot StatusSnapshot, now time.Time) []Pixel {
 	for index, component := range components {
 		frame[index] = r.componentPixel(component.State, now, index)
 	}
-	return physicalFrame(frame)
+	return frame
 }
 
 func (r Renderer) OperationFrame(event OperationEvent, now time.Time) []Pixel {
-	return physicalFrame(r.operationFrame(event, now))
+	return r.operationFrame(event, now)
 }
 
 func (r Renderer) operationFrame(event OperationEvent, now time.Time) []Pixel {
@@ -96,17 +96,6 @@ func (r Renderer) FailureFrame(event OperationEvent, now time.Time) []Pixel {
 	}
 	if now.UnixMilli()/350%2 == 0 {
 		frame[failed] = r.componentPixel(Failed, now, failed)
-	}
-	return physicalFrame(frame)
-}
-
-// physicalFrame accounts for the reference strip being viewed from the end
-// opposite its data input. Logical pixel 0 is CTL; hardware pixel 0 is the
-// rightmost pixel in the operator-facing layout.
-func physicalFrame(logical []Pixel) []Pixel {
-	frame := make([]Pixel, PixelCount)
-	for logicalIndex, pixel := range logical {
-		frame[PixelCount-1-logicalIndex] = pixel
 	}
 	return frame
 }
