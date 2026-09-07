@@ -9,6 +9,7 @@ import (
 	"time"
 
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 )
 
 func TestModuleCheckerUsesReadOnlyHostProviderIdentityCheck(t *testing.T) {
@@ -34,7 +35,7 @@ func TestModuleCheckerUsesReadOnlyHostProviderIdentityCheck(t *testing.T) {
 	if result.DHCPNTP.Healthy || result.DNS.Healthy || result.DHCPNTP.Detail == "" || result.DNS.Detail == "" {
 		t.Fatalf("unimplemented capability result = %#v", result)
 	}
-	if !containsAll(command, "qm status", "qm config", "name: lab-firewall-01", "bridge=vmbr0", "bridge=vmbr1") {
+	if command != firewallmodule.ProviderHealthCommand() || !containsAll(command, "qm status", "qm config", "name: lab-firewall-01", "bridge=vmbr0", "bridge=vmbr1") {
 		t.Fatalf("provider identity check omitted required read-only checks: %s", command)
 	}
 	if containsAny(command, "apply", "start", "stop", "destroy", "rm ", "uci", "curl") {

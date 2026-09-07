@@ -14,7 +14,7 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Zones) != 6 || len(state.Network) != 13 {
+	if len(state.Zones) != 6 || len(state.Network) != 14 {
 		t.Fatalf("desired network shape = zones:%d sections:%d", len(state.Zones), len(state.Network))
 	}
 	if len(state.Firewall) < 6*2 {
@@ -24,14 +24,25 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 	for _, section := range state.Firewall {
 		joined += section.Name + " " + section.Options["src"] + " " + section.Options["dest"] + "\n"
 	}
-	for _, want := range []string{"boetticher_forward_trusted_servers", "boetticher_forward_trusted_wan", "boetticher_forward_sandbox_wan", "boetticher_allow_home_api"} {
+	for _, want := range []string{"boetticher_home_wan", "boetticher_forward_trusted_servers", "boetticher_forward_trusted_home_wan", "boetticher_forward_sandbox_home_wan", "boetticher_allow_home_api"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("policy is missing %q: %s", want, joined)
 		}
 	}
-	for _, forbidden := range []string{"boetticher_forward_sandbox_trusted", "boetticher_forward_servers_trusted", "boetticher_forward_infra_trusted", "boetticher_forward_transit_wan"} {
+	for _, forbidden := range []string{"boetticher_forward_sandbox_trusted", "boetticher_forward_servers_trusted", "boetticher_forward_infra_trusted", "boetticher_forward_transit_home_wan"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("policy unexpectedly permits %q: %s", forbidden, joined)
+		}
+	}
+	for _, section := range state.Firewall {
+		if section.Name == "boetticher_home_wan" && (section.Options["masq"] != "1" || section.Options["input"] != "DROP") {
+			t.Fatalf("HOME/WAN zone does not own NAT and default-deny input: %#v", section)
+		}
+		if section.Name == "boetticher_allow_home_api" && section.Options["src_ip"] != "192.168.4.6/32" {
+			t.Fatalf("Controller API rule is not source-scoped: %#v", section)
+		}
+		if strings.HasPrefix(section.Name, "boetticher_zone_") && section.Options["masq"] != "" {
+			t.Fatalf("LAB zone owns masquerading: %#v", section)
 		}
 	}
 }

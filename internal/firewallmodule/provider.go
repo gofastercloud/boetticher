@@ -254,3 +254,11 @@ func ProviderSummary(status Status) string {
 	}
 	return ProviderName + " " + state + " (VMID " + strconv.Itoa(ProviderVMID) + ")"
 }
+
+// ProviderHealthCommand is the one read-only Host-side identity probe used by
+// the Controller status monitor. The richer CLI health path adds provider API,
+// gateway, firewall-runtime, and route facts on top of this same capability
+// boundary.
+func ProviderHealthCommand() string {
+	return "set -eu; test \"$(qm status " + strconv.Itoa(ProviderVMID) + " | tr -d '\\r')\" = \"status: running\"; config=$(qm config " + strconv.Itoa(ProviderVMID) + "); printf '%s\\n' \"$config\" | grep -Fqx 'name: " + ProviderName + "'; printf '%s\\n' \"$config\" | grep -Eq '^net0: .*bridge=vmbr0'; printf '%s\\n' \"$config\" | grep -Eq '^net1: .*bridge=vmbr1'"
+}

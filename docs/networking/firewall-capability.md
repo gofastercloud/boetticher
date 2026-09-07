@@ -33,10 +33,13 @@ physical networking. Firewall apply verifies that `vmbr1` is present, VLAN
 aware, virtual-only, and compatible; it fails with an instruction to run or
 fix `host apply` instead of repairing Host state.
 
-The HOME management address is explicit site intent at
-`gateway.management_address` and defaults for older site files to the
-reference binding `192.168.4.28`. It is not a LAB gateway and is not used to
-alter HOME routing or DHCP.
+The HOME management binding is explicit site intent at
+`gateway.management_address`, `gateway.management_network`, and
+`gateway.management_gateway`; `gateway.controller_address` is the only HOME
+source allowed to reach provider administration. Older site files receive the
+reference defaults `192.168.4.28/22` via `192.168.4.1`, with Controller
+`192.168.4.6`. The provider uses this HOME interface for its default route and
+NAT; it does not alter HOME routing or DHCP.
 
 ## Network and policy
 
@@ -59,10 +62,12 @@ clients do not receive access to `/ubus`.
 `apply` reconciles only deterministic named provider sections and preserves
 unrelated provider-native sections. It reuses the provider credential,
 certificate, image cache, VM, and correct UCI state. `status` is a cheap
-operational view, not qualification evidence. `teardown` requires explicit
-approval and removes only the exact owned provider identity and Controller
-state. A failed first apply leaves understandable provider state for the next
-apply to inspect and continue.
+operational view, not qualification evidence; it verifies provider
+identity/running state, authenticated API reachability, six gateway interfaces,
+active firewall runtime, and an IPv4 HOME default route. `teardown` requires
+explicit approval and removes only the exact owned provider identity and
+Controller state. A failed first apply leaves understandable provider state
+for the next apply to inspect and continue.
 
 This source implementation is not live qualification evidence. The required
 packet journeys, provider reboot, teardown/rebuild rehearsal, and final

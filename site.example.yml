@@ -5,6 +5,9 @@ storage_profile: single-disk
 gateway:
   mode: managed
   management_address: 192.168.4.28
+  management_network: 192.168.4.0/22
+  management_gateway: 192.168.4.1
+  controller_address: 192.168.4.6
   upstream:
     mode: dhcp
     mac: 02:00:00:00:01:01

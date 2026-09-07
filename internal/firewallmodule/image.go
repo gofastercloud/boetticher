@@ -37,6 +37,9 @@ type Image struct {
 type ImageSpec struct {
 	CacheDir          string
 	ManagementAddress string
+	ManagementNetmask string
+	ManagementGateway string
+	ControllerAddress string
 	PasswordHash      string
 	BuilderScript     string
 }
@@ -45,8 +48,8 @@ type ImageSpec struct {
 // the one purpose-built official ImageBuilder path. PasswordHash is already a
 // crypt hash; it is streamed to the builder and never placed in argv.
 func EnsureImage(ctx context.Context, spec ImageSpec) (Image, error) {
-	if spec.CacheDir == "" || spec.ManagementAddress == "" || spec.PasswordHash == "" || spec.BuilderScript == "" {
-		return Image{}, errors.New("OpenWrt image cache, management address, password hash, and builder script are required")
+	if spec.CacheDir == "" || spec.ManagementAddress == "" || spec.ManagementNetmask == "" || spec.ManagementGateway == "" || spec.ControllerAddress == "" || spec.PasswordHash == "" || spec.BuilderScript == "" {
+		return Image{}, errors.New("OpenWrt image cache, HOME address/network/gateway, Controller address, password hash, and builder script are required")
 	}
 	name := "openwrt-" + OpenWrtVersion + "-" + OpenWrtImageBuilder + "-x86-64.img"
 	path := filepath.Join(spec.CacheDir, name)
@@ -61,7 +64,7 @@ func EnsureImage(ctx context.Context, spec ImageSpec) (Image, error) {
 	if err := pathguard.MkdirAll(spec.CacheDir, 0700); err != nil {
 		return Image{}, fmt.Errorf("create OpenWrt image cache: %w", err)
 	}
-	command := exec.CommandContext(ctx, spec.BuilderScript, path, spec.ManagementAddress)
+	command := exec.CommandContext(ctx, spec.BuilderScript, path, spec.ManagementAddress, spec.ManagementNetmask, spec.ManagementGateway, spec.ControllerAddress)
 	command.Stdin = strings.NewReader(spec.PasswordHash + "\n")
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard

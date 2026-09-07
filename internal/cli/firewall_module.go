@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -10,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/firewallmodule"
@@ -158,7 +156,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 			if builder == "" {
 				builder = filepath.Join("scripts", "build-openwrt-firewall.sh")
 			}
-			image, err = firewallmodule.EnsureImage(ctx, firewallmodule.ImageSpec{CacheDir: filepath.Join(stateDir, "image-cache"), ManagementAddress: desired.ManagementAddress, PasswordHash: hash, BuilderScript: builder})
+			image, err = firewallmodule.EnsureImage(ctx, firewallmodule.ImageSpec{CacheDir: filepath.Join(stateDir, "image-cache"), ManagementAddress: desired.ManagementAddress, ManagementNetmask: desired.ManagementNetmask, ManagementGateway: desired.ManagementGateway, ControllerAddress: desired.ControllerAddress, PasswordHash: hash, BuilderScript: builder})
 			if err != nil {
 				return err
 			}
@@ -173,7 +171,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 		if builder == "" {
 			builder = filepath.Join("scripts", "build-openwrt-firewall.sh")
 		}
-		image, err = firewallmodule.EnsureImage(ctx, firewallmodule.ImageSpec{CacheDir: filepath.Join(stateDir, "image-cache"), ManagementAddress: desired.ManagementAddress, PasswordHash: hash, BuilderScript: builder})
+		image, err = firewallmodule.EnsureImage(ctx, firewallmodule.ImageSpec{CacheDir: filepath.Join(stateDir, "image-cache"), ManagementAddress: desired.ManagementAddress, ManagementNetmask: desired.ManagementNetmask, ManagementGateway: desired.ManagementGateway, ControllerAddress: desired.ControllerAddress, PasswordHash: hash, BuilderScript: builder})
 		if err != nil {
 			return err
 		}
@@ -201,9 +199,6 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	if err != nil {
 		return err
 	}
-	if err := provider.Authenticate(ctx); err != nil {
-		return err
-	}
 	networkCurrent, err := provider.UCIGet(ctx, "network")
 	if err != nil {
 		return err
@@ -220,12 +215,12 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	if err != nil {
 		return err
 	}
-	runtimeInterfaces, err := provider.InterfaceDump(ctx)
+	health, err := firewallmodule.CheckHealth(ctx, client, node, desired, provider)
 	if err != nil {
 		return fmt.Errorf("verify firewall provider runtime: %w", err)
 	}
-	if count := runtimeGatewayCount(runtimeInterfaces, desired); count != len(desired.Zones) {
-		return fmt.Errorf("verify firewall provider runtime: %d/%d LAB gateways present", count, len(desired.Zones))
+	if !health.Healthy() {
+		return fmt.Errorf("verify firewall provider runtime: %s", health.Detail())
 	}
 	if !result.Changed && networkChanges == 0 && firewallChanges == 0 {
 		fmt.Fprintln(out, "Firewall: No changes required.")
@@ -265,18 +260,15 @@ func runFirewallStatus(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := provider.Authenticate(context.Background()); err != nil {
-		return err
-	}
-	runtimeInterfaces, err := provider.InterfaceDump(context.Background())
+	health, err := firewallmodule.CheckHealth(context.Background(), client, node, desired, provider)
 	if err != nil {
 		return err
 	}
-	gateways := runtimeGatewayCount(runtimeInterfaces, desired)
-	if gateways != len(desired.Zones) {
-		return fmt.Errorf("firewall status found %d/%d LAB gateways", gateways, len(desired.Zones))
+	if !health.Healthy() {
+		fmt.Fprintf(out, "Firewall: FAIL\nProvider: %s\n%s\n", firewallmodule.ProviderSummary(status), health.Detail())
+		return errors.New("firewall provider health check failed")
 	}
-	fmt.Fprintf(out, "Firewall: PASS\nProvider: %s\nManagement: reachable\nGateways: %d/%d present\nFirewall: active\nInternet route: active\n", firewallmodule.ProviderSummary(status), gateways, len(desired.Zones))
+	fmt.Fprintf(out, "Firewall: PASS\nProvider: %s\nManagement: reachable\nGateways: %d/%d present\nFirewall: active\nInternet route: active\n", firewallmodule.ProviderSummary(status), health.GatewaysPresent, health.GatewaysExpected)
 	return nil
 }
 
@@ -333,14 +325,4 @@ func captureProviderTrust(ctx context.Context, address string) ([]byte, error) {
 		time.Sleep(2 * time.Second)
 	}
 	return nil, fmt.Errorf("provider TLS bootstrap timeout: %w", last)
-}
-
-func runtimeGatewayCount(runtime []byte, desired firewallmodule.DesiredState) int {
-	count := 0
-	for _, zone := range desired.Zones {
-		if bytes.Contains(runtime, []byte("boetticher_iface_"+strings.ToLower(zone.Name))) {
-			count++
-		}
-	}
-	return count
 }

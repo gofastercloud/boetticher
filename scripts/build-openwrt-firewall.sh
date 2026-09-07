@@ -1,13 +1,16 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 2 ]; then
-    echo "usage: build-openwrt-firewall.sh OUTPUT.img MANAGEMENT_IPV4" >&2
+if [ "$#" -ne 5 ]; then
+    echo "usage: build-openwrt-firewall.sh OUTPUT.img MANAGEMENT_IPV4 NETMASK HOME_GATEWAY CONTROLLER_IPV4" >&2
     exit 2
 fi
 
 output=$1
 management_address=$2
+management_netmask=$3
+management_gateway=$4
+controller_address=$5
 password_hash=$(cat)
 case "$management_address" in
     *[!0-9.]*|.*|*.) echo "invalid management address" >&2; exit 2 ;;
@@ -36,14 +39,25 @@ cat >"$files/etc/uci-defaults/99-boetticher-firewall" <<EOF
 #!/bin/sh
 set -eu
 
-uci -q set network.lan.proto='static'
-uci -q set network.lan.ipaddr='$management_address'
-uci -q set network.lan.netmask='255.255.255.0'
-uci -q set network.lan.ip6assign='0'
-uci -q set dhcp.lan.ignore='1'
-uci -q set dhcp.lan.ra='disabled'
-uci -q set dhcp.lan.dhcpv6='disabled'
-uci -q set dhcp.lan.ndp='disabled'
+uci -q delete network.lan || true
+uci -q delete network.wan || true
+uci -q delete network.wan6 || true
+uci -q set network.boetticher_home='interface'
+uci -q set network.boetticher_home.device='eth0'
+uci -q set network.boetticher_home.proto='static'
+uci -q set network.boetticher_home.ipaddr='$management_address'
+uci -q set network.boetticher_home.netmask='$management_netmask'
+uci -q set network.boetticher_home.gateway='$management_gateway'
+uci -q set network.boetticher_home.delegate='0'
+uci -q set network.boetticher_home.ip6assign='0'
+uci -q delete dhcp.lan || true
+uci -q delete dhcp.wan || true
+uci -q set dhcp.boetticher_home='dhcp'
+uci -q set dhcp.boetticher_home.interface='boetticher_home'
+uci -q set dhcp.boetticher_home.ignore='1'
+uci -q set dhcp.boetticher_home.ra='disabled'
+uci -q set dhcp.boetticher_home.dhcpv6='disabled'
+uci -q set dhcp.boetticher_home.ndp='disabled'
 uci -q set rpcd.boetticher='login'
 uci -q set rpcd.boetticher.username='boetticher'
 uci -q set rpcd.boetticher.password='$password_hash'
@@ -51,6 +65,27 @@ uci -q set rpcd.boetticher.acl='boetticher'
 uci -q commit network
 uci -q commit dhcp
 uci -q commit rpcd
+uci -q delete firewall.lan || true
+uci -q delete firewall.wan || true
+uci -q delete firewall.wan6 || true
+uci -q set firewall.boetticher_home_wan='zone'
+uci -q set firewall.boetticher_home_wan.name='home_wan'
+uci -q set firewall.boetticher_home_wan.input='DROP'
+uci -q set firewall.boetticher_home_wan.output='ACCEPT'
+uci -q set firewall.boetticher_home_wan.forward='DROP'
+uci -q set firewall.boetticher_home_wan.family='ipv4'
+uci -q set firewall.boetticher_home_wan.masq='1'
+uci -q set firewall.boetticher_home_wan.mtu_fix='1'
+uci -q add_list firewall.boetticher_home_wan.network='boetticher_home'
+uci -q set firewall.boetticher_allow_home_api='rule'
+uci -q set firewall.boetticher_allow_home_api.name='Boetticher Controller management API'
+uci -q set firewall.boetticher_allow_home_api.src='home_wan'
+uci -q set firewall.boetticher_allow_home_api.src_ip='$controller_address/32'
+uci -q set firewall.boetticher_allow_home_api.proto='tcp'
+uci -q set firewall.boetticher_allow_home_api.dest_port='443'
+uci -q set firewall.boetticher_allow_home_api.family='ipv4'
+uci -q set firewall.boetticher_allow_home_api.target='ACCEPT'
+uci -q commit firewall
 uci -q set uhttpd.main.redirect_https='1'
 uci -q set uhttpd.main.listen_http='0.0.0.0:80'
 uci -q set uhttpd.main.listen_https='0.0.0.0:443'
@@ -68,7 +103,8 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
     "read": {
       "ubus": {
         "uci": ["get"],
-        "network.interface": ["dump"]
+        "network.interface": ["dump"],
+        "service": ["list"]
       }
     },
     "write": {

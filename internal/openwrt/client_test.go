@@ -117,6 +117,38 @@ func TestNewClientRequiresPinnedHTTPS(t *testing.T) {
 	}
 }
 
+func TestClientReadsFirewallServiceAndDefaultRouteState(t *testing.T) {
+	client := testClient(func(r *http.Request) (*http.Response, error) {
+		var input []any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			return nil, err
+		}
+		method, _ := input[4].(string)
+		switch method {
+		case "login":
+			return response(`[2,1,0,{"ubus_rpc_session":"session-1"}]`), nil
+		case "list":
+			return response(`[2,2,0,{"firewall":{"instances":{"firewall":{"running":true}}}}]`), nil
+		case "dump":
+			return response(`[2,3,0,{"interface":[{"interface":"boetticher_home","route":[{"target":"0.0.0.0","mask":0,"nexthop":"192.168.4.1"}]}]}]`), nil
+		default:
+			return nil, &unexpectedMethodError{method: method}
+		}
+	})
+	active, err := client.ServiceRunning(context.Background(), "firewall")
+	if err != nil || !active {
+		t.Fatalf("firewall service active=%t err=%v", active, err)
+	}
+	runtime, err := client.InterfaceDump(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := DefaultRouteActive(runtime)
+	if err != nil || !route {
+		t.Fatalf("default route active=%t err=%v", route, err)
+	}
+}
+
 func testClient(roundTrip roundTripFunc) *Client {
 	return &Client{baseURL: "https://provider.example/ubus", user: "boetticher", pass: "test-only", http: &http.Client{Transport: roundTrip}}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strconv"
 	"time"
 
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
@@ -68,17 +67,13 @@ func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 			return transport.Run(ctx, command)
 		}
 	}
-	if _, err := run(ctx, transport, firewallHealthCommand()); err != nil {
+	if _, err := run(ctx, transport, firewallmodule.ProviderHealthCommand()); err != nil {
 		status.Firewall.Configured = true
 		status.Firewall.Detail = "firewall provider health check failed"
 		return status
 	}
 	status.Firewall = CheckResult{Configured: true, Healthy: true, Detail: "firewall provider is running with the expected identity"}
 	return status
-}
-
-func firewallHealthCommand() string {
-	return "set -eu; test \"$(qm status " + strconv.Itoa(firewallmodule.ProviderVMID) + " | tr -d '\\r')\" = \"status: running\"; config=$(qm config " + strconv.Itoa(firewallmodule.ProviderVMID) + "); printf '%s\\n' \"$config\" | grep -Fqx 'name: " + firewallmodule.ProviderName + "'; printf '%s\\n' \"$config\" | grep -Eq '^net0: .*bridge=vmbr0'; printf '%s\\n' \"$config\" | grep -Eq '^net1: .*bridge=vmbr1'"
 }
 
 func moduleComponent(result CheckResult) Component {

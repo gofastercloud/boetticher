@@ -15,7 +15,7 @@ func TestEnsureImageReusesPinnedCacheWithoutRunningBuilder(t *testing.T) {
 	if err := os.WriteFile(path, []byte("qualified image bytes"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	image, err := EnsureImage(context.Background(), ImageSpec{CacheDir: dir, ManagementAddress: "192.168.4.28", PasswordHash: "hash", BuilderScript: "/does/not/run"})
+	image, err := EnsureImage(context.Background(), ImageSpec{CacheDir: dir, ManagementAddress: "192.168.4.28", ManagementNetmask: "255.255.252.0", ManagementGateway: "192.168.4.1", ControllerAddress: "192.168.4.6", PasswordHash: "hash", BuilderScript: "/does/not/run"})
 	if err != nil || image.Name != name || image.SHA256 == "" {
 		t.Fatalf("cached image = %#v err=%v", image, err)
 	}

@@ -192,7 +192,16 @@
     "Gateway": {
       "additionalProperties": false,
       "properties": {
+        "controller_address": {
+          "type": "string"
+        },
         "management_address": {
+          "type": "string"
+        },
+        "management_gateway": {
+          "type": "string"
+        },
+        "management_network": {
           "type": "string"
         },
         "mode": {

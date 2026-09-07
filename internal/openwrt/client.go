@@ -238,6 +238,88 @@ func (c *Client) InterfaceDump(ctx context.Context) (json.RawMessage, error) {
 	return append(json.RawMessage(nil), result...), nil
 }
 
+// ServiceRunning reads the native service inventory without invoking a
+// provider shell. Missing services are reported as not running.
+func (c *Client) ServiceRunning(ctx context.Context, name string) (bool, error) {
+	if name == "" {
+		return false, errors.New("provider service name is required")
+	}
+	result, err := c.callWithSession(ctx, "service", "list", map[string]any{"name": name})
+	if err != nil {
+		return false, fmt.Errorf("read provider service status: %w", err)
+	}
+	var payload any
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return false, errors.New("provider service response is malformed")
+	}
+	found, running := serviceRunningValue(payload)
+	return found && running, nil
+}
+
+func serviceRunningValue(value any) (found, running bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			if key == "running" {
+				boolean, ok := item.(bool)
+				if ok {
+					return true, boolean
+				}
+			}
+			if nestedFound, nestedRunning := serviceRunningValue(item); nestedFound {
+				return nestedFound, nestedRunning
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if nestedFound, nestedRunning := serviceRunningValue(item); nestedFound {
+				return nestedFound, nestedRunning
+			}
+		}
+	}
+	return false, false
+}
+
+// DefaultRouteActive reports whether the provider's native IPv4 interface
+// dump contains a routed default via a non-empty next hop.
+func DefaultRouteActive(runtime json.RawMessage) (bool, error) {
+	var payload any
+	if err := json.Unmarshal(runtime, &payload); err != nil {
+		return false, errors.New("provider interface response is malformed")
+	}
+	return defaultRouteValue(payload), nil
+}
+
+func defaultRouteValue(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		target, _ := typed["target"].(string)
+		if target == "0.0.0.0" {
+			mask, _ := typed["mask"].(float64)
+			if mask == 0 {
+				if nextHop, ok := typed["nexthop"].(string); ok && nextHop != "" {
+					return true
+				}
+				if gateway, ok := typed["gateway"].(string); ok && gateway != "" {
+					return true
+				}
+			}
+		}
+		for _, item := range typed {
+			if defaultRouteValue(item) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if defaultRouteValue(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (c *Client) callWithSession(ctx context.Context, object, method string, params map[string]any) (json.RawMessage, error) {
 	value := c.session.Load()
 	session, _ := value.(string)
