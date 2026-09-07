@@ -62,14 +62,22 @@ func TestClientUCIWritesActualValuesObjects(t *testing.T) {
 			return response(`{"jsonrpc":"2.0","id":1,"result":[0,{"ubus_rpc_session":"session-1"}]}`), nil
 		}
 		if stringParam(rawParams[2]) == "add" {
-			return response(`{"jsonrpc":"2.0","id":2,"result":[0,{"section":"anonymous"}]}`), nil
+			section := "anonymous"
+			var addParams map[string]any
+			if err := json.Unmarshal(rawParams[3], &addParams); err != nil {
+				return nil, err
+			}
+			if requested, ok := addParams["name"].(string); ok {
+				section = requested
+			}
+			return response(`{"jsonrpc":"2.0","id":2,"result":[0,{"section":"` + section + `"}]}`), nil
 		}
 		return response(`{"jsonrpc":"2.0","id":2,"result":[0]}`), nil
 	})
 	if _, err := client.UCIAdd(context.Background(), "network", "interface"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.UCISetSection(context.Background(), "network", "section-1", "interface"); err != nil {
+	if _, err := client.UCIAddNamed(context.Background(), "network", "interface", "named-section"); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.UCISet(context.Background(), "network", "section-1", "proto", "static"); err != nil {
@@ -87,11 +95,14 @@ func TestClientUCIWritesActualValuesObjects(t *testing.T) {
 	if err := client.UCIApply(context.Background(), 30); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(methods, ",") != "login,add,set,set,set,delete,commit,apply" {
+	if strings.Join(methods, ",") != "login,add,add,set,set,delete,commit,apply" {
 		t.Fatalf("UCI methods = %v", methods)
 	}
-	if _, hasOption := params[2]["option"]; hasOption {
-		t.Fatalf("uci.set retained retired option/value shape: %#v", params[2])
+	if params[2]["name"] != "named-section" {
+		t.Fatalf("uci.add named section payload = %#v", params[2])
+	}
+	if _, hasOption := params[3]["option"]; hasOption {
+		t.Fatalf("uci.set retained retired option/value shape: %#v", params[3])
 	}
 	values, ok := params[4]["values"].(map[string]any)
 	if !ok || len(values) != 1 {

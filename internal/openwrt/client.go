@@ -205,16 +205,6 @@ func (c *Client) UCISetList(ctx context.Context, config, section, option string,
 	return nil
 }
 
-func (c *Client) UCISetSection(ctx context.Context, config, section, sectionType string) error {
-	if config == "" || section == "" || sectionType == "" {
-		return errors.New("UCI config, section, and section type are required")
-	}
-	if _, err := c.callWithSession(ctx, "uci", "set", map[string]any{"config": config, "section": section, "type": sectionType, "values": map[string]any{}}); err != nil {
-		return fmt.Errorf("create provider UCI section %s: %w", section, err)
-	}
-	return nil
-}
-
 func (c *Client) UCIAdd(ctx context.Context, config, sectionType string) (string, error) {
 	return c.UCIAddNamed(ctx, config, sectionType, "")
 }
@@ -224,6 +214,9 @@ func (c *Client) UCIAddNamed(ctx context.Context, config, sectionType, sectionNa
 		return "", errors.New("UCI config and section type are required")
 	}
 	params := map[string]any{"config": config, "type": sectionType}
+	if sectionName != "" {
+		params["name"] = sectionName
+	}
 	result, err := c.callWithSession(ctx, "uci", "add", params)
 	if err != nil {
 		return "", fmt.Errorf("add provider UCI section: %w", err)

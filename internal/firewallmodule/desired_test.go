@@ -92,9 +92,9 @@ type fakeWriter struct {
 	operations []string
 }
 
-func (f *fakeWriter) UCISetSection(_ context.Context, _, name, typ string) error {
+func (f *fakeWriter) UCIAddNamed(_ context.Context, _, typ, name string) (string, error) {
 	f.operations = append(f.operations, "section:"+typ+":"+name)
-	return nil
+	return name, nil
 }
 func (f *fakeWriter) UCISet(_ context.Context, _, section, option, value string) error {
 	f.operations = append(f.operations, "set:"+section+":"+option+":"+value)

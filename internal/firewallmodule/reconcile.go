@@ -80,7 +80,7 @@ func sameSection(observed openwrt.UCISection, desired Section) bool {
 }
 
 type uciWriter interface {
-	UCISetSection(context.Context, string, string, string) error
+	UCIAddNamed(context.Context, string, string, string) (string, error)
 	UCISet(context.Context, string, string, string, string) error
 	UCISetList(context.Context, string, string, string, []string) error
 	UCIDelete(context.Context, string, string, string) error
@@ -99,8 +99,12 @@ func ReconcileOwned(ctx context.Context, client uciWriter, packageName string, c
 		section := mutation.Section
 		switch mutation.Kind {
 		case MutationCreate:
-			if err := client.UCISetSection(ctx, packageName, section.Name, section.Type); err != nil {
+			created, err := client.UCIAddNamed(ctx, packageName, section.Type, section.Name)
+			if err != nil {
 				return 0, fmt.Errorf("create provider section %s: %w", section.Name, err)
+			}
+			if created != section.Name {
+				return 0, fmt.Errorf("create provider section %s returned unexpected name %q", section.Name, created)
 			}
 			if err := writeSection(ctx, client, packageName, section, nil); err != nil {
 				return 0, err
