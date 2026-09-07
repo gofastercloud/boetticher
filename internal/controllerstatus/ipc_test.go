@@ -25,3 +25,19 @@ func TestMissingSocketIsAnAdvisoryError(t *testing.T) {
 	// CLI callers use NotifyBestEffort/ignore the returned error; this test
 	// preserves the explicit non-gating boundary.
 }
+
+func TestStartTestRejectsInvalidPixelLayouts(t *testing.T) {
+	if _, err := StartTest("suite", nil); err == nil {
+		t.Fatal("empty test layout was accepted")
+	}
+	if _, err := StartTest("suite", []string{"same", "same"}); err == nil {
+		t.Fatal("duplicate test names were accepted")
+	}
+	tooMany := make([]string, PixelCount+1)
+	for index := range tooMany {
+		tooMany[index] = "test"
+	}
+	if _, err := StartTest("suite", tooMany); err == nil {
+		t.Fatal("oversized test layout was accepted")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,8 +57,28 @@ func TestFirewallCapabilityHelpUsesCapabilityGrammar(t *testing.T) {
 	if err := run([]string{"module", "firewall", "status", "--help"}, strings.NewReader(""), &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(output.String(), "module openwrt") || !strings.Contains(output.String(), "module firewall plan|apply|status|teardown") {
+	if strings.Contains(output.String(), "module openwrt") || !strings.Contains(output.String(), "module firewall plan|apply|status|teardown|reboot") {
 		t.Fatalf("firewall help exposed the wrong grammar: %s", output.String())
+	}
+}
+
+func TestFirewallCapabilityUsesInstalledLabConfigNotPrivateSiteYAML(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate CLI test source")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(file), "firewall_module.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(data)
+	for _, forbidden := range []string{"site.yml", "site.Load", "loadProxmoxClient", "--age-identity"} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("firewall capability reintroduced retired site lifecycle token %q", forbidden)
+		}
+	}
+	if !strings.Contains(source, "controllerhost.LoadConfig") || !strings.Contains(source, "ValidateHostSubstrateViaSSH") {
+		t.Fatal("firewall capability does not use the installed lab.yml and strict Host lifecycle")
 	}
 }
 

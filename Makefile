@@ -41,7 +41,6 @@ controller-check:
 
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/network-probe-host/tests -p 'test_*.py' -v
 
 vet:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go vet ./...

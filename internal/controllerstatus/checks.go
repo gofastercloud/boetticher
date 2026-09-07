@@ -20,8 +20,12 @@ import (
 type CheckResult struct {
 	Configured bool
 	Healthy    bool
-	Update     Component
-	Detail     string
+	// State is an optional direct display state for capability checks. It is
+	// used for explicit action-required/config-staged states; zero preserves
+	// the existing debounced healthy/failed check behavior.
+	State  State
+	Update Component
+	Detail string
 }
 
 type CommandRunner func(context.Context, string, ...string) ([]byte, error)

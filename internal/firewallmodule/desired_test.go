@@ -24,9 +24,14 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 	for _, section := range state.Firewall {
 		joined += section.Name + " " + section.Options["src"] + " " + section.Options["dest"] + "\n"
 	}
-	for _, want := range []string{"boetticher_home_wan", "boetticher_forward_trusted_servers", "boetticher_forward_trusted_home_wan", "boetticher_forward_sandbox_home_wan", "boetticher_allow_home_api"} {
+	for _, want := range []string{"boetticher_home_wan", "boetticher_forward_trusted_servers", "boetticher_forward_trusted_home_wan", "boetticher_forward_sandbox_home_wan", "boetticher_deny_sandbox_home_management", "boetticher_allow_home_api"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("policy is missing %q: %s", want, joined)
+		}
+	}
+	for _, section := range state.Firewall {
+		if strings.Contains(section.Name, "_deny_") && strings.HasSuffix(section.Name, "_home_management") && section.Options["dest"] != "home_wan" {
+			t.Fatalf("HOME deny %s is not bound to the HOME firewall zone", section.Name)
 		}
 	}
 	for _, forbidden := range []string{"boetticher_forward_sandbox_trusted", "boetticher_forward_servers_trusted", "boetticher_forward_infra_trusted", "boetticher_forward_transit_home_wan"} {
@@ -40,6 +45,9 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 		}
 		if section.Name == "boetticher_allow_home_api" && section.Options["src_ip"] != "192.168.4.6/32" {
 			t.Fatalf("Controller API rule is not source-scoped: %#v", section)
+		}
+		if strings.HasPrefix(section.Name, "boetticher_deny_") && section.Options["dest_ip"] != "192.168.4.0/22" {
+			t.Fatalf("LAB-to-HOME deny does not cover the management prefix: %#v", section)
 		}
 		if strings.HasPrefix(section.Name, "boetticher_zone_") && section.Options["masq"] != "" {
 			t.Fatalf("LAB zone owns masquerading: %#v", section)
@@ -90,23 +98,19 @@ type fakeWriter struct {
 }
 
 func (f *fakeWriter) UCIAddNamed(_ context.Context, _, typ, name string) (string, error) {
-	f.operations = append(f.operations, "add:"+typ+":"+name)
+	f.operations = append(f.operations, "section:"+typ+":"+name)
 	return name, nil
 }
 func (f *fakeWriter) UCISet(_ context.Context, _, section, option, value string) error {
 	f.operations = append(f.operations, "set:"+section+":"+option+":"+value)
 	return nil
 }
-func (f *fakeWriter) UCIAddList(_ context.Context, _, section, option, value string) error {
-	f.operations = append(f.operations, "list:"+section+":"+option+":"+value)
+func (f *fakeWriter) UCISetList(_ context.Context, _, section, option string, values []string) error {
+	f.operations = append(f.operations, "list:"+section+":"+option+":"+strings.Join(values, ","))
 	return nil
 }
 func (f *fakeWriter) UCIDelete(_ context.Context, _, section, option string) error {
 	f.operations = append(f.operations, "delete:"+section+":"+option)
-	return nil
-}
-func (f *fakeWriter) UCICommit(_ context.Context, config string) error {
-	f.operations = append(f.operations, "commit:"+config)
 	return nil
 }
 func (f *fakeWriter) UCIApply(_ context.Context, timeout int) error {

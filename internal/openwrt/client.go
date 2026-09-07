@@ -3,6 +3,7 @@
 package openwrt
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -118,40 +119,71 @@ func (c *Client) UCIGet(ctx context.Context, config string) (map[string]UCISecti
 		return nil, fmt.Errorf("read provider UCI %s: %w", config, err)
 	}
 	var payload struct {
-		Values map[string]map[string]any `json:"values"`
+		Values map[string]any `json:"values"`
 	}
 	if err := json.Unmarshal(result, &payload); err != nil || payload.Values == nil {
 		return nil, errors.New("provider UCI response is malformed")
 	}
 	sections := make(map[string]UCISection, len(payload.Values))
-	for name, raw := range payload.Values {
-		section := UCISection{Options: map[string]string{}, Lists: map[string][]string{}}
-		for key, value := range raw {
-			switch typed := value.(type) {
-			case string:
-				if key == ".type" {
-					section.Type = typed
-				} else {
-					section.Options[key] = typed
-				}
-			case []any:
-				for _, item := range typed {
-					if text, ok := item.(string); ok {
-						section.Lists[key] = append(section.Lists[key], text)
-					}
-				}
-			}
+	if section, ok := decodeSection("", payload.Values); ok {
+		name := sectionName(payload.Values)
+		if name == "" {
+			return nil, errors.New("provider UCI response omitted section name")
+		}
+		sections[name] = section
+		return sections, nil
+	}
+	for name, value := range payload.Values {
+		raw, ok := value.(map[string]any)
+		if !ok {
+			return nil, errors.New("provider UCI section is malformed")
+		}
+		section, ok := decodeSection(name, raw)
+		if !ok {
+			return nil, errors.New("provider UCI section is malformed")
 		}
 		sections[name] = section
 	}
 	return sections, nil
 }
 
+func decodeSection(name string, raw map[string]any) (UCISection, bool) {
+	if _, hasType := raw[".type"]; !hasType {
+		return UCISection{}, false
+	}
+	section := UCISection{Options: map[string]string{}, Lists: map[string][]string{}}
+	for key, value := range raw {
+		switch typed := value.(type) {
+		case string:
+			if key == ".type" {
+				section.Type = typed
+			} else if !strings.HasPrefix(key, ".") {
+				section.Options[key] = typed
+			}
+		case []any:
+			if strings.HasPrefix(key, ".") {
+				continue
+			}
+			for _, item := range typed {
+				if text, ok := item.(string); ok {
+					section.Lists[key] = append(section.Lists[key], text)
+				}
+			}
+		}
+	}
+	return section, section.Type != ""
+}
+
+func sectionName(raw map[string]any) string {
+	name, _ := raw[".name"].(string)
+	return name
+}
+
 func (c *Client) UCISet(ctx context.Context, config, section, option, value string) error {
 	if config == "" || section == "" || option == "" {
 		return errors.New("UCI config, section, and option are required")
 	}
-	_, err := c.callWithSession(ctx, "uci", "set", map[string]any{"config": config, "section": section, "option": option, "value": value})
+	_, err := c.callWithSession(ctx, "uci", "set", map[string]any{"config": config, "section": section, "values": map[string]string{option: value}})
 	if err != nil {
 		return fmt.Errorf("set provider UCI %s.%s.%s: %w", config, section, option, err)
 	}
@@ -159,12 +191,16 @@ func (c *Client) UCISet(ctx context.Context, config, section, option, value stri
 }
 
 func (c *Client) UCIAddList(ctx context.Context, config, section, option, value string) error {
+	return c.UCISetList(ctx, config, section, option, []string{value})
+}
+
+func (c *Client) UCISetList(ctx context.Context, config, section, option string, values []string) error {
 	if config == "" || section == "" || option == "" {
 		return errors.New("UCI config, section, and option are required")
 	}
-	_, err := c.callWithSession(ctx, "uci", "add_list", map[string]any{"config": config, "section": section, "option": option, "value": value})
+	_, err := c.callWithSession(ctx, "uci", "set", map[string]any{"config": config, "section": section, "values": map[string]any{option: values}})
 	if err != nil {
-		return fmt.Errorf("add provider UCI list value %s.%s.%s: %w", config, section, option, err)
+		return fmt.Errorf("set provider UCI list %s.%s.%s: %w", config, section, option, err)
 	}
 	return nil
 }
@@ -185,11 +221,13 @@ func (c *Client) UCIAddNamed(ctx context.Context, config, sectionType, sectionNa
 	if err != nil {
 		return "", fmt.Errorf("add provider UCI section: %w", err)
 	}
-	var name string
-	if err := json.Unmarshal(result, &name); err != nil || name == "" {
+	var payload struct {
+		Section string `json:"section"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil || payload.Section == "" {
 		return "", errors.New("provider UCI add response did not contain a section name")
 	}
-	return name, nil
+	return payload.Section, nil
 }
 
 func (c *Client) UCIDelete(ctx context.Context, config, section, option string) error {
@@ -202,16 +240,6 @@ func (c *Client) UCIDelete(ctx context.Context, config, section, option string) 
 	}
 	if _, err := c.callWithSession(ctx, "uci", "delete", params); err != nil {
 		return fmt.Errorf("delete provider UCI section: %w", err)
-	}
-	return nil
-}
-
-func (c *Client) UCICommit(ctx context.Context, config string) error {
-	if config == "" {
-		return errors.New("UCI config name is required")
-	}
-	if _, err := c.callWithSession(ctx, "uci", "commit", map[string]any{"config": config}); err != nil {
-		return fmt.Errorf("commit provider UCI %s: %w", config, err)
 	}
 	return nil
 }
@@ -238,59 +266,29 @@ func (c *Client) InterfaceDump(ctx context.Context) (json.RawMessage, error) {
 	return append(json.RawMessage(nil), result...), nil
 }
 
-// ServiceRunning reads the native service inventory without invoking a
-// provider shell. Missing services are reported as not running.
-func (c *Client) ServiceRunning(ctx context.Context, name string) (bool, error) {
-	if name == "" {
-		return false, errors.New("provider service name is required")
-	}
-	result, err := c.callWithSession(ctx, "service", "list", map[string]any{"name": name})
-	if err != nil {
-		return false, fmt.Errorf("read provider service status: %w", err)
-	}
-	var payload any
-	if err := json.Unmarshal(result, &payload); err != nil {
-		return false, errors.New("provider service response is malformed")
-	}
-	found, running := serviceRunningValue(payload)
-	return found && running, nil
-}
-
-func serviceRunningValue(value any) (found, running bool) {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, item := range typed {
-			if key == "running" {
-				boolean, ok := item.(bool)
-				if ok {
-					return true, boolean
-				}
-			}
-			if nestedFound, nestedRunning := serviceRunningValue(item); nestedFound {
-				return nestedFound, nestedRunning
-			}
-		}
-	case []any:
-		for _, item := range typed {
-			if nestedFound, nestedRunning := serviceRunningValue(item); nestedFound {
-				return nestedFound, nestedRunning
-			}
-		}
-	}
-	return false, false
-}
-
 // DefaultRouteActive reports whether the provider's native IPv4 interface
 // dump contains a routed default via a non-empty next hop.
 func DefaultRouteActive(runtime json.RawMessage) (bool, error) {
+	return defaultRouteCheck(runtime, "")
+}
+
+// DefaultRouteVia verifies the IPv4 default route uses the expected next hop.
+func DefaultRouteVia(runtime json.RawMessage, expectedGateway string) (bool, error) {
+	if expectedGateway == "" {
+		return false, errors.New("expected provider default-route gateway is required")
+	}
+	return defaultRouteCheck(runtime, expectedGateway)
+}
+
+func defaultRouteCheck(runtime json.RawMessage, expectedGateway string) (bool, error) {
 	var payload any
 	if err := json.Unmarshal(runtime, &payload); err != nil {
 		return false, errors.New("provider interface response is malformed")
 	}
-	return defaultRouteValue(payload), nil
+	return defaultRouteValue(payload, expectedGateway), nil
 }
 
-func defaultRouteValue(value any) bool {
+func defaultRouteValue(value any, expectedGateway string) bool {
 	switch typed := value.(type) {
 	case map[string]any:
 		target, _ := typed["target"].(string)
@@ -298,21 +296,21 @@ func defaultRouteValue(value any) bool {
 			mask, _ := typed["mask"].(float64)
 			if mask == 0 {
 				if nextHop, ok := typed["nexthop"].(string); ok && nextHop != "" {
-					return true
+					return expectedGateway == "" || nextHop == expectedGateway
 				}
 				if gateway, ok := typed["gateway"].(string); ok && gateway != "" {
-					return true
+					return expectedGateway == "" || gateway == expectedGateway
 				}
 			}
 		}
 		for _, item := range typed {
-			if defaultRouteValue(item) {
+			if defaultRouteValue(item, expectedGateway) {
 				return true
 			}
 		}
 	case []any:
 		for _, item := range typed {
-			if defaultRouteValue(item) {
+			if defaultRouteValue(item, expectedGateway) {
 				return true
 			}
 		}
@@ -335,11 +333,16 @@ func (c *Client) callWithSession(ctx context.Context, object, method string, par
 
 func (c *Client) call(ctx context.Context, session, object, method string, params map[string]any) (json.RawMessage, error) {
 	id := atomic.AddUint64(&c.request, 1)
-	body, err := json.Marshal([]any{ubusProtocolVersion, id, session, object, method, params})
+	body, err := json.Marshal(struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      uint64 `json:"id"`
+		Method  string `json:"method"`
+		Params  []any  `json:"params"`
+	}{JSONRPC: "2.0", ID: id, Method: "call", Params: []any{session, object, method, params}})
 	if err != nil {
 		return nil, errors.New("encode provider request")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, strings.NewReader(string(body)))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, errors.New("create provider request")
 	}
@@ -356,16 +359,31 @@ func (c *Client) call(ctx context.Context, session, object, method string, param
 	if err != nil {
 		return nil, errors.New("read provider response")
 	}
-	var envelope []json.RawMessage
-	if err := json.Unmarshal(data, &envelope); err != nil || len(envelope) < 4 {
+	var envelope struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Result  json.RawMessage `json:"result"`
+		Error   json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.JSONRPC != "2.0" || len(envelope.Result) == 0 {
 		return nil, errors.New("provider response is malformed")
 	}
+	if len(envelope.Error) > 0 && string(envelope.Error) != "null" {
+		return nil, errors.New("provider JSON-RPC operation failed")
+	}
+	var result []json.RawMessage
+	if err := json.Unmarshal(envelope.Result, &result); err != nil || len(result) == 0 {
+		return nil, errors.New("provider result is malformed")
+	}
 	var code int
-	if err := json.Unmarshal(envelope[2], &code); err != nil {
+	if err := json.Unmarshal(result[0], &code); err != nil {
 		return nil, errors.New("provider response status is malformed")
 	}
 	if code != 0 {
 		return nil, fmt.Errorf("provider operation failed with status %d", code)
 	}
-	return envelope[3], nil
+	if len(result) == 1 {
+		return json.RawMessage(`{}`), nil
+	}
+	return result[1], nil
 }

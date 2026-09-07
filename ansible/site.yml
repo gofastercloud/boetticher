@@ -69,6 +69,3 @@
     - role: usb-export-host
       when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
             and not (boetticher_network_isolation_only | default(false) | bool)
-    - role: network-probe-host
-      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-            and not (boetticher_network_isolation_only | default(false) | bool)

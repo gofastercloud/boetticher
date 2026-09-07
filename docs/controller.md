@@ -106,16 +106,25 @@ CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES
 | Display | Meaning |
 | --- | --- |
 | Breathing green | The lightweight check is healthy |
-| Steady blue | Startup, checking, or an active operation |
+| Steady blue | Startup or checking |
 | Pulsing amber | Attention or degraded operation |
-| Flashing red | A meaningful health or operation failure |
+| Solid red | A meaningful health or operation failure |
 | Off | Not configured or not applicable |
 
+Apply and test commands temporarily use dedicated operation modes. Apply shows
+the blue Knight Rider chase while it is running, then holds an all-green or
+all-red result briefly. Test shows one pixel per named test group: active tests
+pulse blue, passed tests are solid green, and failed tests are solid red. The
+current firewall test uses five groups (gateway, Internet egress, inter-zone
+policy, HOME protection, and administration). The final result is held briefly
+before Standard status resumes. Display notifications remain best-effort and
+never affect the command result.
+
 `CTL` is local Controller health and `HOST` is the enrolled Proxmox Host.
-`FW` is the firewall capability's lightweight read-only provider check;
-`DHCP/NTP` and `DNS` are explicit red placeholders until those capabilities
-exist. The firewall check uses the enrolled Host transport to confirm the
-expected provider identity is running. It is operational status, not packet
+`FW` is the firewall capability's native status result; `DHCP/NTP` and `DNS`
+are red error placeholders until those capabilities exist. Amber means action
+required, blue means configuration staged or an operation is in progress, and
+green means healthy. These are operational display states, not packet
 qualification evidence.
 `CTRL-UPDATES` is green when no Controller updates are available, amber when
 updates or the native `/var/run/reboot-required` marker require attention, and
@@ -149,7 +158,7 @@ status:
   streamdeck:
     enabled: true
     brightness: 0.5
-    telemetry_interval: 60s
+    telemetry_interval: 15s
 ```
 
 The display is a lightweight operator convenience, not authoritative
@@ -173,8 +182,8 @@ cannot start, stop, reboot, deploy, or run shell commands. The old standalone
 Controller StreamDeck service is removed during Controller bootstrap.
 
 The Host detail view also shows `FW`, `DHCP`, and `DNS` using the same coarse
-component states as Blinkt. `FW` is sourced from the read-only Host provider
-identity check; DHCP/DDNS/NTP and DNS remain red placeholders until their
+component states as Blinkt. `FW` consumes the native `module firewall status`
+result; DHCP/DDNS/NTP and DNS remain red error placeholders until their
 capabilities are implemented.
 
 ## Installed paths and maintenance

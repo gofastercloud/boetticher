@@ -9,22 +9,24 @@ import (
 	"testing"
 )
 
-func TestClientAuthenticatesAndReadsUCI(t *testing.T) {
+func TestClientAuthenticatesAndReadsActualUCIJSONRPC(t *testing.T) {
 	requests := 0
 	client := testClient(func(r *http.Request) (*http.Response, error) {
 		requests++
-		var input []any
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		method, params, err := requestParts(r)
+		if err != nil {
 			return nil, err
 		}
-		method, _ := input[4].(string)
-		switch method {
-		case "login":
-			return response(`[2,1,0,{"ubus_rpc_session":"session-1"}]`), nil
-		case "get":
-			return response(`[2,2,0,{"values":{"boetticher_iface_trusted":{".type":"interface","proto":"static","ipaddr":"10.10.30.1","dns":["10.10.30.1"]},"operator_record":{".type":"rule","target":"ACCEPT"}}}]`), nil
-		default:
+		if method != "call" || len(params) != 4 {
 			return nil, &unexpectedMethodError{method: method}
+		}
+		switch stringParam(params[2]) {
+		case "login":
+			return response(`{"jsonrpc":"2.0","id":1,"result":[0,{"ubus_rpc_session":"session-1"}]}`), nil
+		case "get":
+			return response(`{"jsonrpc":"2.0","id":2,"result":[0,{"values":{"boetticher_iface_trusted":{".type":"interface",".name":"boetticher_iface_trusted","proto":"static","ipaddr":"10.10.30.1","dns":["10.10.30.1"]},"operator_record":{".type":"rule",".name":"operator_record","target":"ACCEPT"}}}]}`), nil
+		default:
+			return nil, &unexpectedMethodError{method: stringParam(params[2])}
 		}
 	})
 	sections, err := client.UCIGet(context.Background(), "network")
@@ -42,47 +44,76 @@ func TestClientAuthenticatesAndReadsUCI(t *testing.T) {
 	}
 }
 
-func TestClientUCIWriteOperationsUseTypedMethods(t *testing.T) {
+func TestClientUCIWritesActualValuesObjects(t *testing.T) {
 	var methods []string
+	var params []map[string]any
 	client := testClient(func(r *http.Request) (*http.Response, error) {
-		var input []any
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		_, rawParams, err := requestParts(r)
+		if err != nil {
 			return nil, err
 		}
-		method, _ := input[4].(string)
-		methods = append(methods, method)
-		if method == "login" {
-			return response(`[2,1,0,{"ubus_rpc_session":"session-1"}]`), nil
+		methods = append(methods, stringParam(rawParams[2]))
+		var object map[string]any
+		if err := json.Unmarshal(rawParams[3], &object); err != nil {
+			return nil, err
 		}
-		if method == "add" {
-			return response(`[2,2,0,"section-1"]`), nil
+		params = append(params, object)
+		if stringParam(rawParams[2]) == "login" {
+			return response(`{"jsonrpc":"2.0","id":1,"result":[0,{"ubus_rpc_session":"session-1"}]}`), nil
 		}
-		return response(`[2,2,0,{}]`), nil
+		if stringParam(rawParams[2]) == "add" {
+			section := "anonymous"
+			var addParams map[string]any
+			if err := json.Unmarshal(rawParams[3], &addParams); err != nil {
+				return nil, err
+			}
+			if requested, ok := addParams["name"].(string); ok {
+				section = requested
+			}
+			return response(`{"jsonrpc":"2.0","id":2,"result":[0,{"section":"` + section + `"}]}`), nil
+		}
+		return response(`{"jsonrpc":"2.0","id":2,"result":[0]}`), nil
 	})
 	if _, err := client.UCIAdd(context.Background(), "network", "interface"); err != nil {
 		t.Fatal(err)
 	}
-	for _, operation := range []func() error{
-		func() error { return client.UCISet(context.Background(), "network", "section-1", "proto", "static") },
-		func() error {
-			return client.UCIAddList(context.Background(), "network", "section-1", "device", "br-lab.30")
-		},
-		func() error { return client.UCIDelete(context.Background(), "network", "section-1", "old") },
-		func() error { return client.UCICommit(context.Background(), "network") },
-		func() error { return client.UCIApply(context.Background(), 30) },
-	} {
-		if err := operation(); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := client.UCIAddNamed(context.Background(), "network", "interface", "named-section"); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Join(methods, ",") != "login,add,set,add_list,delete,commit,apply" {
+	if err := client.UCISet(context.Background(), "network", "section-1", "proto", "static"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UCISetList(context.Background(), "network", "section-1", "device", []string{"br-lab.30", "br-lab.99"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UCIDelete(context.Background(), "network", "section-1", "old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UCIApply(context.Background(), 30); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(methods, ",") != "login,add,add,set,set,delete,apply" {
 		t.Fatalf("UCI methods = %v", methods)
+	}
+	if params[2]["name"] != "named-section" {
+		t.Fatalf("uci.add named section payload = %#v", params[2])
+	}
+	if _, hasOption := params[3]["option"]; hasOption {
+		t.Fatalf("uci.set retained retired option/value shape: %#v", params[3])
+	}
+	values, ok := params[4]["values"].(map[string]any)
+	if !ok || len(values) != 1 {
+		t.Fatalf("uci.set list values = %#v", params[4])
+	}
+	list, ok := values["device"].([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("uci.set list payload = %#v", params[4])
 	}
 }
 
 func TestClientRejectsAuthenticationFailureWithoutLeakingPassword(t *testing.T) {
 	client := testClient(func(*http.Request) (*http.Response, error) {
-		return response(`[2,1,6,{"message":"invalid credentials"}]`), nil
+		return response(`{"jsonrpc":"2.0","id":1,"result":[6]}`), nil
 	})
 	client.pass = "secret-not-for-output"
 	err := client.Authenticate(context.Background())
@@ -117,28 +148,21 @@ func TestNewClientRequiresPinnedHTTPS(t *testing.T) {
 	}
 }
 
-func TestClientReadsFirewallServiceAndDefaultRouteState(t *testing.T) {
+func TestClientReadsDefaultRouteState(t *testing.T) {
 	client := testClient(func(r *http.Request) (*http.Response, error) {
-		var input []any
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		method, params, err := requestParts(r)
+		if err != nil || method != "call" {
 			return nil, err
 		}
-		method, _ := input[4].(string)
-		switch method {
+		switch stringParam(params[2]) {
 		case "login":
-			return response(`[2,1,0,{"ubus_rpc_session":"session-1"}]`), nil
-		case "list":
-			return response(`[2,2,0,{"firewall":{"instances":{"firewall":{"running":true}}}}]`), nil
+			return response(`{"jsonrpc":"2.0","id":1,"result":[0,{"ubus_rpc_session":"session-1"}]}`), nil
 		case "dump":
-			return response(`[2,3,0,{"interface":[{"interface":"boetticher_home","route":[{"target":"0.0.0.0","mask":0,"nexthop":"192.168.4.1"}]}]}]`), nil
+			return response(`{"jsonrpc":"2.0","id":3,"result":[0,{"interface":[{"interface":"boetticher_home","route":[{"target":"0.0.0.0","mask":0,"nexthop":"192.168.4.1"}]}]}]}`), nil
 		default:
-			return nil, &unexpectedMethodError{method: method}
+			return nil, &unexpectedMethodError{method: stringParam(params[2])}
 		}
 	})
-	active, err := client.ServiceRunning(context.Background(), "firewall")
-	if err != nil || !active {
-		t.Fatalf("firewall service active=%t err=%v", active, err)
-	}
 	runtime, err := client.InterfaceDump(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +170,14 @@ func TestClientReadsFirewallServiceAndDefaultRouteState(t *testing.T) {
 	route, err := DefaultRouteActive(runtime)
 	if err != nil || !route {
 		t.Fatalf("default route active=%t err=%v", route, err)
+	}
+	wrongGateway, err := DefaultRouteVia(runtime, "192.168.4.254")
+	if err != nil || wrongGateway {
+		t.Fatalf("unexpected default route via wrong gateway=%t err=%v", wrongGateway, err)
+	}
+	correctGateway, err := DefaultRouteVia(runtime, "192.168.4.1")
+	if err != nil || !correctGateway {
+		t.Fatalf("default route via expected gateway=%t err=%v", correctGateway, err)
 	}
 }
 
@@ -160,6 +192,23 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 type unexpectedMethodError struct{ method string }
 
 func (e *unexpectedMethodError) Error() string { return "unexpected ubus method " + e.method }
+
+func requestParts(r *http.Request) (string, []json.RawMessage, error) {
+	var input struct {
+		Method string            `json:"method"`
+		Params []json.RawMessage `json:"params"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		return "", nil, err
+	}
+	return input.Method, input.Params, nil
+}
+
+func stringParam(value json.RawMessage) string {
+	var result string
+	_ = json.Unmarshal(value, &result)
+	return result
+}
 
 func response(body string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}

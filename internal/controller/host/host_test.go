@@ -74,6 +74,38 @@ func TestTransportArgsAreStrictAndRootOnly(t *testing.T) {
 	}
 }
 
+func TestTransportSCPArgsKeepStrictHostIdentity(t *testing.T) {
+	transport := Transport{Address: "192.0.2.10", User: "root", Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}
+	args, err := transport.SCPArgs("/tmp/provider.img", "/var/tmp/provider.img")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"StrictHostKeyChecking=yes", "IdentitiesOnly=yes", "PasswordAuthentication=no", "ControlMaster=no", "ControlPath=none", "/tmp/provider.img", "root@192.0.2.10:/var/tmp/provider.img"} {
+		if !containsString(args, required) {
+			t.Fatalf("SCP args missing %q: %#v", required, args)
+		}
+	}
+	if _, err := transport.SCPArgs("/tmp/provider.img\n", "/var/tmp/provider.img"); err == nil {
+		t.Fatal("unsafe SCP source was accepted")
+	}
+}
+
+func TestTransportSCPFromArgsKeepStrictHostIdentity(t *testing.T) {
+	transport := Transport{Address: "192.0.2.10", User: "root", Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}
+	args, err := transport.SCPFromArgs("/var/tmp/provider.img", "/tmp/provider.img")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"StrictHostKeyChecking=yes", "IdentitiesOnly=yes", "PasswordAuthentication=no", "ControlMaster=no", "ControlPath=none", "root@192.0.2.10:/var/tmp/provider.img", "/tmp/provider.img"} {
+		if !containsString(args, required) {
+			t.Fatalf("reverse SCP args missing %q: %#v", required, args)
+		}
+	}
+	if _, err := transport.SCPFromArgs("/var/tmp/provider.img", "/tmp/provider.img\n"); err == nil {
+		t.Fatal("unsafe reverse SCP destination was accepted")
+	}
+}
+
 func TestStorageDiscoveryHelpersTraceBootDiskAndStableIdentity(t *testing.T) {
 	devices := []BlockDevice{{Name: "nvme0n1", Path: "/dev/nvme0n1", Type: "disk", Children: []BlockDevice{{Name: "nvme0n1p3", Path: "/dev/nvme0n1p3", Type: "part", PKName: "nvme0n1", Children: []BlockDevice{{Name: "pve-root", Path: "/dev/mapper/pve-root", Type: "lvm", PKName: "nvme0n1p3"}}}}}}
 	boot := tracePhysicalDisk(devices, "/dev/mapper/pve-root")
@@ -162,7 +194,7 @@ func TestValidateNetworkConfigRequiresFixedVLANTopology(t *testing.T) {
 
 func TestBridgeStateRecognizesExactVirtualOnlyBridge(t *testing.T) {
 	state := bridgeState(
-		[]ipLink{{IfName: "vmbr1", LinkType: "bridge"}},
+		[]ipLink{{IfName: "vmbr1", LinkType: "bridge", OperState: "UP"}},
 		[]ipAddress{{IfName: "vmbr1"}},
 		[]ipRoute{},
 		"",

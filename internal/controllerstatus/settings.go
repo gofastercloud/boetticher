@@ -18,7 +18,7 @@ const (
 	DefaultInterval          = 30 * time.Second
 	DefaultPingPeriod        = 60 * time.Second
 	DefaultThroughputPeriod  = time.Hour
-	DefaultTelemetryPeriod   = 60 * time.Second
+	DefaultTelemetryPeriod   = 15 * time.Second
 	DefaultHealthyMbps       = 500.0
 	DefaultStreamDeckSerial  = ""
 )

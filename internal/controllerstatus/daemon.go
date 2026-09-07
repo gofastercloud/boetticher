@@ -136,12 +136,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		go runStreamDeck(ctx, d.StreamDeckFactory, d.streamdeckFrames, d.streamdeckEvents, d.Logger)
 	}
+	var telemetryTicker *time.Ticker
+	if d.Settings.StreamDeckEnabled {
+		telemetryTicker = time.NewTicker(d.Settings.TelemetryInterval)
+		defer telemetryTicker.Stop()
+	}
 	_, cleanup, events, err := listen(ctx, d.Settings.SocketPath)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	d.Logger.Printf("status daemon started; polling every %s", d.Settings.Interval)
+	streamDeckState := "disabled"
+	if d.Settings.StreamDeckEnabled {
+		streamDeckState = "enabled"
+	}
+	d.Logger.Printf("status daemon started; polling every %s; StreamDeck %s; telemetry every %s", d.Settings.Interval, streamDeckState, d.Settings.TelemetryInterval)
 	d.startup(ctx)
 	d.refresh(ctx)
 	d.render(ctx)
@@ -149,6 +158,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer ticker.Stop()
 	frameTicker := time.NewTicker(100 * time.Millisecond)
 	defer frameTicker.Stop()
+	var telemetryTicks <-chan time.Time
+	if telemetryTicker != nil {
+		telemetryTicks = telemetryTicker.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -162,6 +175,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.render(ctx)
 		case result := <-d.telemetryResults:
 			d.applyTelemetry(result)
+			d.render(ctx)
+		case now := <-telemetryTicks:
+			d.scheduleTelemetry(ctx, now)
 			d.render(ctx)
 		case now := <-ticker.C:
 			d.refreshAt(ctx, now)
@@ -249,11 +265,7 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			d.lastConnectivity = result.data
 			d.connectivityAt = now
 		case "modules":
-			if !result.modules.Firewall.Configured {
-				d.snapshot.Firewall = Component{State: Off, Detail: result.modules.Firewall.Detail}
-			} else {
-				d.snapshot.Firewall = d.firewall.Update(result.modules.Firewall.Healthy, result.modules.Firewall.Detail)
-			}
+			d.snapshot.Firewall = debouncedModuleComponent(d.firewall, result.modules.Firewall)
 			d.snapshot.DHCPNTP = moduleComponent(result.modules.DHCPNTP)
 			d.snapshot.DNS = moduleComponent(result.modules.DNS)
 		}
@@ -315,27 +327,29 @@ func (d *Daemon) handleEvent(event OperationEvent) {
 		d.Logger.Printf("operation started: %s", event.Name)
 	case "operation-progress":
 		if d.operation != nil && d.operation.event.Name == event.Name {
+			if event.Mode != "" {
+				d.operation.event.Mode = event.Mode
+			}
 			d.operation.event.CurrentStep = event.CurrentStep
 			d.operation.event.TotalSteps = event.totalSteps()
 			d.operation.event.Detail = event.Detail
+			if event.Tests != nil {
+				d.operation.event.Tests = append([]TestResult(nil), event.Tests...)
+			}
 		}
 	case "operation-success":
-		if d.operation == nil || d.operation.event.Name != event.Name {
-			if event.TotalSteps <= 0 && event.Steps <= 0 {
-				event.TotalSteps = PixelCount
-			}
-			d.operation = &operationDisplay{event: event}
+		if d.operation != nil && d.operation.event.Name == event.Name {
+			d.operation.event = event
+			d.operation.until = now.Add(terminalDisplayHold)
 		}
-		d.operation.event.CurrentStep = d.operation.event.totalSteps()
-		d.operation.result = Healthy
-		d.operation.until = now.Add(time.Second)
 		d.Logger.Printf("operation succeeded: %s", event.Name)
 	case "operation-failure":
 		if d.operation == nil || d.operation.event.Name != event.Name {
 			d.operation = &operationDisplay{event: event}
 		}
+		d.operation.event = event
 		d.operation.result = Failed
-		d.operation.until = now.Add(time.Second)
+		d.operation.until = now.Add(terminalDisplayHold)
 		d.Logger.Printf("operation failed: %s: %s", event.Name, event.Detail)
 	case "configuration-staged":
 		d.configStaged = true
@@ -438,7 +452,9 @@ func (d *Daemon) render(ctx context.Context) {
 	if d.Driver != nil && !d.driverBroken {
 		var frame []Pixel
 		if d.operation != nil {
-			if d.operation.result == Failed {
+			if d.operation.event.Mode == Standard {
+				frame = d.renderer.Frame(d.snapshot, now)
+			} else if d.operation.result == Failed {
 				frame = d.renderer.FailureFrame(d.operation.event, now)
 			} else {
 				frame = d.renderer.OperationFrame(d.operation.event, now)

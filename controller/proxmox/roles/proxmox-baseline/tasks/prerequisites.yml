@@ -6,10 +6,29 @@
       - rsync
       - openssh-client
       - openssh-server
+      - bash
+      - bzip2
+      - coreutils
+      - diffutils
+      - file
+      - findutils
+      - gawk
+      - gzip
+      - make
+      - patch
       - python3
       - python3-apt
       - python3-debian
+      - perl
       - sudo
+      - tar
+      - unzip
+      - util-linux
+      - iputils-arping
+      - wget
+      - which
+      - xz-utils
+      - zstd
     state: present
     update_cache: false
     lock_timeout: 300
@@ -18,6 +37,14 @@
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/libexec/boetticher-host-speedtest"
     dest: /usr/local/libexec/boetticher-host-speedtest
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the Boetticher Phase 4A firewall test helper
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/libexec/boetticher-firewall-test-host"
+    dest: /usr/local/libexec/boetticher-firewall-test-host
     owner: root
     group: root
     mode: '0755'

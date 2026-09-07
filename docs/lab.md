@@ -94,6 +94,12 @@ IPv6 forwarding and security policy are reserved for explicit future
 firewall/network Module work rather than inferred from the internal vmbr1
 regression.
 
+For the read-only `host status` health check, `vmbr1` is healthy when the link is
+up, VLAN-aware, correctly configured, and has no Host L3 address or gateway.
+Attached ports, including Module virtual ports or an explicitly configured
+physical trunk, do not make an otherwise healthy bridge fail. Host apply remains
+conservative: it does not create, repair, or re-own physical LAB networking.
+
 ## Dedicated storage
 
 The dedicated-data-disk profile uses one exact `/dev/disk/by-id/` identity and
@@ -151,12 +157,18 @@ The public grammar is capability-first:
 boetticher module <capability> <action> [flags]
 ```
 
-Phase 4A operator actions are `module firewall plan`, `apply`, `status`, and
-`teardown`. OpenWrt implements this capability but remains an internal
-provider detail. The existing status monitor reports the firewall provider on
-the fixed `FW` slot and keeps DHCP/DDNS/NTP and DNS explicitly red until their
-capabilities are implemented. VPN, physical trunking, and external-switch
-management are later phases.
+Phase 4A operator actions are `module firewall plan`, `apply`, `status`,
+`reboot`, `test`, and `teardown`. OpenWrt implements this capability but remains
+an internal provider detail. `test --plan` is read-only; `test --yes` runs the
+fixed routed IPv4 suite against the existing provider; and
+`test --cleanup-only --yes` removes only recognised temporary namespace/veth
+leftovers without provider credentials. The suite is operational acceptance,
+not `status`: it uses six temporary LAB namespaces and fixed gateway, egress,
+inter-zone, HOME, and administration journeys, then requires exact cleanup.
+The existing status monitor consumes the same native firewall status command
+for the fixed `FW` slot and keeps DHCP/DDNS/NTP and DNS explicitly red until
+their capabilities are implemented. VPN, physical trunking, and
+external-switch management are later phases.
 
 Proxmox owns operator workloads. Boetticher never adopts, imports, or deletes
 unknown guests, volumes, or network devices merely because a name or address

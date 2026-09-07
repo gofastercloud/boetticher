@@ -178,6 +178,19 @@ retain `--confirm`, `--approve`, `--non-interactive`, or
 
 ## Engineering
 
+Firewall acceptance uses the installed Controller CLI and the existing strict
+Host trust. Probe fixtures are temporary and independently cleaned up.
+Expected policy is independent of the renderer. Transport, setup, and target
+failures are not successful deny results. Do not resurrect legacy artifact,
+PKI, evidence, or deployment machinery to run packet tests. Status remains
+observational and does not run the acceptance suite.
+Readiness errors retain the last meaningful boundary without leaking secrets;
+retries never weaken trust or replace conflicting identity. Internal cleanup
+runs under its caller's ownership without recursively reacquiring the same
+operation lock, and cancellation receives a fresh cleanup budget. Physical
+input must be tested independently of rendered output. Environment-blocked
+verification remains blocked, not PASS.
+
 - Prefer concrete Go and small consumer-owned interfaces. Avoid generic
   managers, provider registries, plugin frameworks, and stringly typed state
   without a current concrete consumer.

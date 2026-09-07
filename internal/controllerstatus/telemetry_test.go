@@ -3,6 +3,7 @@ package controllerstatus
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,8 +23,8 @@ func TestParseProxmoxTelemetryNormalizesAndSorts(t *testing.T) {
 	if err != nil || len(storage) != 2 || storage[0].Name != "boetticher-data" || storage[0].Percent != 45 {
 		t.Fatalf("storage = %#v, err=%v", storage, err)
 	}
-	guests, err := parseProxmoxGuests([]byte(`{"data":[{"vmid":310,"name":"kali","type":"qemu","status":"stopped"},{"vmid":201,"name":"pulse","type":"lxc","status":"running","cpu":0.03,"mem":412,"maxmem":1024,"uptime":86400}]}`))
-	if err != nil || len(guests) != 2 || guests[0].VMID != 201 || guests[0].Kind != "lxc" || guests[1].Kind != "vm" {
+	guests, err := parseProxmoxGuests([]byte(`{"data":[{"vmid":310,"name":"kali","type":"qemu","status":"stopped"},{"vmid":201,"name":"pulse","type":"lxc","status":"running","cpu":0.03,"mem":412,"maxmem":1024,"uptime":86400},{"vmid":280,"name":"lab-firewall-01","type":"qemu","status":"running"}]}`))
+	if err != nil || len(guests) != 3 || guests[0].VMID != 201 || guests[0].Kind != "lxc" || guests[1].VMID != 280 || guests[1].Name != "lab-firewall-01" || guests[2].Kind != "vm" {
 		t.Fatalf("guests = %#v, err=%v", guests, err)
 	}
 }
@@ -76,5 +77,51 @@ func TestProxmoxCollectorRequiresEnrollment(t *testing.T) {
 	collector := ProxmoxCollector{LoadConfig: func() (controllerhost.LabConfig, error) { return controllerhost.LabConfig{}, os.ErrNotExist }}
 	if _, err := collector.Collect(context.Background()); err == nil || !strings.Contains(err.Error(), "Host not enrolled") {
 		t.Fatalf("unenrolled collector error = %v", err)
+	}
+}
+
+func TestDaemonRefreshesStreamDeckTelemetryIndependently(t *testing.T) {
+	settings := DefaultSettings()
+	settings.Interval = time.Hour
+	settings.TelemetryInterval = 20 * time.Millisecond
+	dir, err := os.MkdirTemp("/tmp", "boetticher-status-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	settings.SocketPath = filepath.Join(dir, "status.sock")
+	d := NewDaemon(settings, nil)
+	d.StreamDeckFactory = func(context.Context) (StreamDeck, error) { return nil, nil }
+	d.Controller = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }
+	d.Host = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }
+	d.Modules = func(context.Context) ModuleStatus { return ModuleStatus{} }
+	d.Connectivity = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }
+	d.Throughput = func(context.Context) (float64, error) { return 600, nil }
+	telemetryCalls := make(chan struct{}, 4)
+	d.Telemetry = func(context.Context) (ProxmoxSnapshot, error) {
+		telemetryCalls <- struct{}{}
+		return ProxmoxSnapshot{Host: ProxmoxHostStats{Node: "pve"}, FetchedAt: time.Now()}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	for call := 0; call < 2; call++ {
+		select {
+		case <-telemetryCalls:
+		case err := <-done:
+			t.Fatalf("status daemon stopped before telemetry call %d: %v", call+1, err)
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("telemetry call %d was not scheduled independently of the status interval", call+1)
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("status daemon did not stop")
 	}
 }

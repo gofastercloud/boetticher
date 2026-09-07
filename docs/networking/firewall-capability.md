@@ -13,7 +13,12 @@ Phase 4A delivers the first production Module capability:
 boetticher module firewall plan
 boetticher module firewall apply
 boetticher module firewall status
-boetticher module firewall teardown
+boetticher module firewall reboot --yes
+boetticher module firewall test --plan
+boetticher module firewall test --yes
+boetticher module firewall test --cleanup-only --yes
+boetticher module firewall teardown --plan
+boetticher module firewall teardown --yes
 ```
 
 The operator manages a firewall capability. OpenWrt 25.12.5 x86/64, built by
@@ -75,8 +80,58 @@ clean-install gate remain **NOT TESTED** until run against the enrolled
 reference Host. Local tests prove deterministic generation and ownership
 boundaries only.
 
+## Phase 4A closeout state
+
+The final enrolled-lab closeout run established fresh apply, semantic no-op,
+provider reboot/recovery, independent routed-IPv4 packet acceptance, bounded
+interruption cleanup, teardown, and preservation of the Controller and Host.
+The run ended with no firewall deployed; absent status is expected and returns
+nonzero, while the plan proposes creation again. The readiness repair retains
+the last management failure and waits for authenticated HTTPS/ubus readiness;
+the cleanup repair keeps lock ownership in the internal cleanup path and gives
+cancellation a fresh cleanup budget.
+
+Physical Blinkt/StreamDeck navigation, refresh, and unplug/replug checks were
+not executable through the available remote session. They remain **NOT
+TESTED**, so physical-peripheral acceptance is separate from the passing
+software and routed-packet gates.
+
+## Packet acceptance
+
+The supported packet command is:
+
+```text
+boetticher module firewall test [--yes|--plan|--cleanup-only --yes]
+```
+
+It runs only against an already-deployed firewall. The Host helper creates six
+temporary network namespaces (`bt4a-transit`, `bt4a-infra`,
+`bt4a-servers`, `bt4a-trusted`, `bt4a-sandbox`, and `bt4a-mgmt`), one veth
+pair per namespace, and one new vmbr1 access port with the authoritative zone
+VLAN. Each fixture receives a static address selected from `.250-.254` after a
+bounded duplicate-address check and routes through its firewall gateway.
+Existing guests, ports, VLAN globals, physical interfaces, Host routes, and
+provider policy are not changed. No DHCP, DNS, NTP, VPN, physical trunking,
+packet capture, nmap scan, iperf benchmark, signed probe artifact, application
+PKI, or persisted evidence report is involved.
+
+The fixed expectations cover all six gateway checks; HTTPS egress from INFRA,
+SERVERS, TRUSTED, SANDBOX, and MGMT with TRANSIT denied; the stated TCP and UDP
+inter-zone controls; LAB-to-HOME protection; Controller-only HTTPS API access;
+LAB administration denial at the provider HOME and gateway addresses; and one
+credential-free Host HOME attempt. A positive listener/control is established
+before a prohibited path is interpreted as a deny. Setup, transport, missing
+listeners, malformed output, TLS failure, and unavailable endpoints are
+failures or unproven results, never successful blocks.
+
+`test --plan` creates nothing. A normal run always attempts bounded cleanup
+with a fresh cleanup context, including after interruption. Failed cleanup is a
+failed test; `test --cleanup-only --yes` is the supported recovery and refuses
+ambiguous ownership. This suite validates routed IPv4 policy only; it does not
+claim same-VLAN, physical-switch, Wi-Fi, guest-firewall, or IPv6 isolation.
+
 The existing Controller status monitor now represents the firewall check on
 the `FW` Blinkt slot and the StreamDeck Host-detail view. DHCP/DDNS/NTP and DNS
-remain explicit RED placeholders until their capabilities are implemented;
+remain explicit red error placeholders until their capabilities are implemented;
 they do not require a new scheduler or status store. DHCP is Phase 4B, DNS is
 Phase 4C, and physical trunking/external switching remain out of scope.

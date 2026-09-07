@@ -12,6 +12,9 @@ management_netmask=$3
 management_gateway=$4
 controller_address=$5
 password_hash=$(cat)
+log() {
+    printf '%s\n' "OpenWrt image build: $1" >&2
+}
 case "$management_address" in
     *[!0-9.]*|.*|*.) echo "invalid management address" >&2; exit 2 ;;
 esac
@@ -25,12 +28,19 @@ builder_revision=r33051-f5dae5ece4
 builder_url="https://downloads.openwrt.org/releases/${version}/targets/x86/64/openwrt-imagebuilder-${version}-x86-64.Linux-x86_64.tar.zst"
 work=$(mktemp -d /tmp/boetticher-openwrt-image.XXXXXX)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+mkdir -p "$work/tmp"
+TMPDIR="$work/tmp"
+export TMPDIR
 
+log "downloading pinned ImageBuilder"
 curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --output "$work/imagebuilder.tar.zst" "$builder_url"
+log "extracting pinned ImageBuilder"
 tar --zstd -xf "$work/imagebuilder.tar.zst" -C "$work"
 builder=$(find "$work" -mindepth 1 -maxdepth 1 -type d -name 'openwrt-imagebuilder-*' -print -quit)
 test -n "$builder"
-grep -F "${builder_revision}" "$builder/Makefile" >/dev/null
+mkdir -p "$builder/tmp"
+log "verifying ImageBuilder revision"
+grep -F "REVISION:=${builder_revision}" "$builder/include/version.mk" >/dev/null
 test "$(uname -m)" = x86_64
 
 files="$work/files"
@@ -61,7 +71,10 @@ uci -q set dhcp.boetticher_home.ndp='disabled'
 uci -q set rpcd.boetticher='login'
 uci -q set rpcd.boetticher.username='boetticher'
 uci -q set rpcd.boetticher.password='$password_hash'
-uci -q set rpcd.boetticher.acl='boetticher'
+uci -q delete rpcd.boetticher.read || true
+uci -q delete rpcd.boetticher.write || true
+uci -q add_list rpcd.boetticher.read='boetticher'
+uci -q add_list rpcd.boetticher.write='boetticher'
 uci -q commit network
 uci -q commit dhcp
 uci -q commit rpcd
@@ -90,6 +103,11 @@ uci -q set uhttpd.main.redirect_https='1'
 uci -q set uhttpd.main.listen_http='0.0.0.0:80'
 uci -q set uhttpd.main.listen_https='0.0.0.0:443'
 uci -q commit uhttpd
+px5g selfsigned -days 3650 -newkey rsa:2048 -keyout /etc/uhttpd.key.new -out /etc/uhttpd.crt.new -subj /C=AU/ST=NSW/L=Sydney/O=Boetticher/CN=boetticher-firewall -addext subjectAltName=DNS:boetticher-firewall
+mv /etc/uhttpd.key.new /etc/uhttpd.key
+mv /etc/uhttpd.crt.new /etc/uhttpd.crt
+chmod 600 /etc/uhttpd.key
+chmod 644 /etc/uhttpd.crt
 /etc/init.d/uhttpd enable
 /etc/init.d/qemu-ga enable
 /etc/init.d/uhttpd restart || true
@@ -105,11 +123,19 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
         "uci": ["get"],
         "network.interface": ["dump"],
         "service": ["list"]
+      },
+      "uci": {
+        "network": ["read"],
+        "firewall": ["read"]
       }
     },
     "write": {
       "ubus": {
-        "uci": ["add", "set", "add_list", "delete", "commit", "apply"]
+        "uci": ["set", "add", "delete", "apply"]
+      },
+      "uci": {
+        "network": ["read", "write"],
+        "firewall": ["read", "write"]
       }
     }
   }
@@ -117,8 +143,13 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
 EOF
 
 packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables qemu-ga'
-make -C "$builder" image PROFILE=generic PACKAGES="$packages" FILES="$files" >/dev/null
-source_image=$(find "$builder/bin/targets/x86/64" -type f -name '*combined-ext4.img.gz' -print -quit)
+log "checking ImageBuilder host prerequisites"
+make -C "$builder" TOPDIR="$builder" -f include/prereq-build.mk prereq IB=1 V=s
+touch "$builder/staging_dir/host/.prereq-build"
+log "building generic x86/64 image"
+make -C "$builder" image PROFILE=generic PACKAGES="$packages" FILES="$files"
+log "locating generic ext4 combined image"
+source_image=$(find "$builder/bin/targets/x86/64" -type f -name '*generic-ext4-combined.img.gz' -print -quit)
 test -n "$source_image"
 mkdir -p "$(dirname "$output")"
 temporary="$output.tmp"

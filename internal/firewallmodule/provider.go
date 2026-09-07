@@ -157,7 +157,9 @@ func validateProviderVM(current map[string]any, storage string) error {
 	if !hasTag(tags, providerOwnerTag) || !hasTag(tags, model.TagBoetticher) {
 		return errors.New("HOLD: firewall provider ownership tag is absent")
 	}
-	if current["net0"] != ProviderNIC0 || current["net1"] != ProviderNIC1 {
+	net0, _ := current["net0"].(string)
+	net1, _ := current["net1"].(string)
+	if !nicMatches(net0, ProviderNIC0, "vmbr0") || !nicMatches(net1, ProviderNIC1, "vmbr1") {
 		return errors.New("HOLD: firewall provider NIC shape is not the expected vmbr0/vmbr1 pair")
 	}
 	for key := range current {
@@ -198,7 +200,9 @@ func ReadStatus(ctx context.Context, client *proxmox.Client, node string, desire
 	}
 	status.Name, _ = current["name"].(string)
 	status.OwnershipProven = hasTag(fmt.Sprint(current["tags"]), providerOwnerTag)
-	status.NetworkShapeOK = current["net0"] == ProviderNIC0 && current["net1"] == ProviderNIC1
+	net0, _ := current["net0"].(string)
+	net1, _ := current["net1"].(string)
+	status.NetworkShapeOK = nicMatches(net0, ProviderNIC0, "vmbr0") && nicMatches(net1, ProviderNIC1, "vmbr1")
 	status.StorageIdentity = current[ProviderDisk] != nil
 	vmStatus, err := client.QEMUStatus(ctx, node, ProviderVMID)
 	if err != nil {
@@ -253,12 +257,4 @@ func ProviderSummary(status Status) string {
 		state = "running"
 	}
 	return ProviderName + " " + state + " (VMID " + strconv.Itoa(ProviderVMID) + ")"
-}
-
-// ProviderHealthCommand is the one read-only Host-side identity probe used by
-// the Controller status monitor. The richer CLI health path adds provider API,
-// gateway, firewall-runtime, and route facts on top of this same capability
-// boundary.
-func ProviderHealthCommand() string {
-	return "set -eu; test \"$(qm status " + strconv.Itoa(ProviderVMID) + " | tr -d '\\r')\" = \"status: running\"; config=$(qm config " + strconv.Itoa(ProviderVMID) + "); printf '%s\\n' \"$config\" | grep -Fqx 'name: " + ProviderName + "'; printf '%s\\n' \"$config\" | grep -Eq '^net0: .*bridge=vmbr0'; printf '%s\\n' \"$config\" | grep -Eq '^net1: .*bridge=vmbr1'"
 }

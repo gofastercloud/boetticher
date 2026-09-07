@@ -32,7 +32,7 @@ boetticher module <capability> <action> [flags]
 ```text
 boetticher host status --details
 boetticher host plan-storage
-boetticher module <capability> <action> [--yes] [--details] [--verbose]
+boetticher module <capability> <action> [--yes]
 ```
 
 ## Need a hand?

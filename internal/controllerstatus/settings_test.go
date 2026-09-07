@@ -12,7 +12,7 @@ func TestLoadSettingsUsesSmallDefaultsAndReferenceThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.Interval != 30*time.Second || settings.PingInterval != time.Minute || settings.ThroughputInterval != time.Hour || settings.TelemetryInterval != time.Minute || settings.HealthyMbps != 500 || !settings.StreamDeckEnabled || settings.StreamDeckBrightness != 0.5 {
+	if settings.Interval != 30*time.Second || settings.PingInterval != time.Minute || settings.ThroughputInterval != time.Hour || settings.TelemetryInterval != 15*time.Second || settings.HealthyMbps != 500 || !settings.StreamDeckEnabled || settings.StreamDeckBrightness != 0.5 {
 		t.Fatalf("unexpected defaults: %#v", settings)
 	}
 }
