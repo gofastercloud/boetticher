@@ -10,6 +10,7 @@ User=root
 ExecStart=/opt/boetticher/current/bin/boetticher-status --config /etc/boetticher/controller.yml --socket /run/boetticher/status.sock --driver /opt/boetticher/current/controller/roles/controller-baseline/files/boetticher-blinkt-driver --gpiochip {{ controller_blinkt_gpiochip }}
 RuntimeDirectory=boetticher
 RuntimeDirectoryMode=0700
+WorkingDirectory=/run/boetticher
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=3s
