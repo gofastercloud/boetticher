@@ -131,7 +131,7 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
     },
     "write": {
       "ubus": {
-        "uci": ["set", "delete", "commit", "apply"]
+        "uci": ["set", "add", "delete", "commit", "apply"]
       },
       "uci": {
         "network": ["read", "write"],
