@@ -43,6 +43,24 @@ func TestModuleChangeSavesDesiredStateWithoutImplicitDeployment(t *testing.T) {
 	}
 }
 
+func TestFirewallCapabilityRejectsUnsupportedAction(t *testing.T) {
+	var output bytes.Buffer
+	err := runModuleWithInput([]string{"firewall", "openwrt"}, strings.NewReader(""), &output, &output)
+	if err == nil || !strings.Contains(err.Error(), `module capability "firewall" does not implement action "openwrt"`) {
+		t.Fatalf("unsupported provider action was accepted: %v", err)
+	}
+}
+
+func TestFirewallCapabilityHelpUsesCapabilityGrammar(t *testing.T) {
+	var output bytes.Buffer
+	if err := run([]string{"module", "firewall", "status", "--help"}, strings.NewReader(""), &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "module openwrt") || !strings.Contains(output.String(), "module firewall plan|apply|status|teardown") {
+		t.Fatalf("firewall help exposed the wrong grammar: %s", output.String())
+	}
+}
+
 func TestModulePurgeRecordsOfflinePendingOperation(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))

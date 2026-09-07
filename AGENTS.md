@@ -52,8 +52,30 @@ boetticher module <capability> <action> [flags]
 
 Capability names describe operator intent (`firewall`, `dhcp`, `dns`, `ntp`,
 `vpn`, `monitoring`, `statuspage`, `printer`), not provider-specific or runtime
-names. Phase 3D documents this grammar only; do not
-start firewall or speculative Module implementation in this phase.
+names. Phase 4 network services are delivered capability-first. OpenWrt is the
+current provider implementation, not a public Module namespace. The supported
+Module UX is `boetticher module <capability> <action>`.
+
+For Phase 4A, the firewall capability owns its provider lifecycle and consumes
+Host-owned `vmbr1`; it must not silently create, repair, or re-own Host
+substrate. Normal provider management uses verified HTTPS `/ubus` and UCI. Do
+not use SSH mutation, LuCI automation, direct provider configuration-file
+editing, or ad-hoc shell mutation as the normal lifecycle. Preserve unrelated
+provider-native state by owning deterministic semantic sections rather than
+replacing whole configuration packages. Prefer direct desired-state
+generation over provider frameworks, policy compilers, or reconciliation
+engines. `apply` is the normal mutation verb and a correct repeat is a
+semantic no-op. `status` is a cheap operational view; `plan` reports meaningful
+operator-visible changes rather than implementation-level diff noise.
+
+Do not expose OpenWrt, UCI, rpcd, firewall4, dnsmasq, Stubby, or other provider
+nouns in normal capability UX unless the operator genuinely needs them. Avoid
+hashes, manifests, evidence stores, generation counters, shadow inventories,
+and other audit machinery without a concrete operational requirement.
+
+Do not implement DHCP, DNS, status integration, VPN, physical trunking, or
+external-switch management during Phase 4A unless a strict implementation
+dependency is discovered and explicitly approved.
 
 Canonical verbs are `bootstrap`, `enroll`, `apply`, `status`, `plan`,
 `teardown`, `reboot`, and `test`. `apply` is the declarative Host operation;

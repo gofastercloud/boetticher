@@ -57,6 +57,7 @@ const (
 	ArrDownloadsVolumeGiB       = 500
 	ArrDownloadsMountPath       = "/var/lib/arr/downloads"
 	DefaultGatewayUpstreamMAC   = "02:00:00:00:01:01"
+	GatewayManagementAddress    = "192.168.4.28"
 	TransitVLAN                 = 5
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
@@ -261,6 +262,9 @@ type Gateway struct {
 	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=managed,enum=external" jsonschema_description:"Use Boetticher's managed gateway or publish a contract for an external firewall."`
 	// Upstream describes the existing HOME-side connection used by the gateway.
 	Upstream GatewayUpstream `yaml:"upstream" json:"upstream"`
+	// ManagementAddress is the explicit HOME-side address used by the
+	// capability provider for Controller management. It is not a LAB gateway.
+	ManagementAddress string `yaml:"management_address,omitempty" json:"management_address,omitempty"`
 	// Publish lists the small set of platform services that may be published upstream.
 	Publish []GatewayPublication `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
@@ -619,7 +623,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		PlatformVersion:        PlatformVersion,
 		SchemaVersion:          SchemaVersion,
 		StorageProfile:         "single-disk",
-		Gateway:                Gateway{Mode: gatewayMode, Upstream: GatewayUpstream{Mode: "dhcp", MAC: DefaultGatewayUpstreamMAC}},
+		Gateway:                Gateway{Mode: gatewayMode, ManagementAddress: GatewayManagementAddress, Upstream: GatewayUpstream{Mode: "dhcp", MAC: DefaultGatewayUpstreamMAC}},
 		LogicalProxmoxIdentity: LogicalProxmoxIdentity,
 		TestedVersions: TestedVersions{
 			Gateway: QualifiedGatewayImage,
@@ -1264,6 +1268,14 @@ func (m Component) Validate() error {
 func validateGatewayConfiguration(s Site) error {
 	if s.Gateway.Upstream.Mode != "dhcp" {
 		return fmt.Errorf("gateway.upstream.mode must be dhcp")
+	}
+	managementAddress := s.Gateway.ManagementAddress
+	if managementAddress == "" {
+		managementAddress = GatewayManagementAddress
+	}
+	parsedManagementAddress := net.ParseIP(managementAddress)
+	if parsedManagementAddress == nil || parsedManagementAddress.To4() == nil || parsedManagementAddress.To4().String() != managementAddress {
+		return fmt.Errorf("gateway.management_address must be a canonical IPv4 address")
 	}
 	if err := ValidateGatewayUpstreamMAC(s.Gateway.Upstream.MAC); err != nil {
 		return err

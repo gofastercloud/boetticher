@@ -66,8 +66,9 @@ semantic VLANs are:
 | 40 | SANDBOX | Isolated test/client traffic |
 | 99 | MGMT | Management traffic |
 
-The six VLAN numbers are Host configuration in this phase. They do not by
-themselves claim firewall isolation, DHCP, DNS, or application behavior.
+The six VLAN numbers are Host configuration. The Phase 4A firewall capability
+consumes this substrate and provides the virtual gateways and IPv4 policy; it
+does not create or repair `vmbr1`.
 Physical LAB networking is a later Host configuration concern and remains
 outside the Module namespace. The current reference architecture is IPv4-only;
 IPv6 forwarding and security policy are reserved for explicit future
@@ -131,12 +132,10 @@ The public grammar is capability-first:
 boetticher module <capability> <action> [flags]
 ```
 
-For example, future operator actions may be `module firewall add-rule`,
-`module dhcp add-reservation`, `module dns add-record`, or `module statuspage
-add-check`. Provider-specific names do not become namespaces merely because
-they are implementation choices. Phase 3D
-documents this boundary without starting firewall or speculative Module
-implementation.
+Phase 4A operator actions are `module firewall plan`, `apply`, `status`, and
+`teardown`. OpenWrt implements this capability but remains an internal
+provider detail. DHCP, DNS, status integration, VPN, physical trunking, and
+external-switch management are later phases.
 
 Proxmox owns operator workloads. Boetticher never adopts, imports, or deletes
 unknown guests, volumes, or network devices merely because a name or address

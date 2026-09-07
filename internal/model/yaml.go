@@ -43,6 +43,9 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
+	if config.Gateway.ManagementAddress == "" {
+		config.Gateway.ManagementAddress = GatewayManagementAddress
+	}
 	return config, nil
 }
 

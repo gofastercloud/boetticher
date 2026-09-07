@@ -195,6 +195,9 @@
     "Gateway": {
       "additionalProperties": false,
       "properties": {
+        "management_address": {
+          "type": "string"
+        },
         "mode": {
           "description": "Use Boetticher's managed gateway or publish a contract for an external firewall.",
           "enum": [

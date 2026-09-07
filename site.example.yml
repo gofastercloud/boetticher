@@ -4,6 +4,7 @@ schema_version: 3
 storage_profile: single-disk
 gateway:
   mode: managed
+  management_address: 192.168.4.28
   upstream:
     mode: dhcp
     mac: 02:00:00:00:01:01
