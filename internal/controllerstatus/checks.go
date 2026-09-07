@@ -274,7 +274,8 @@ func hostHealthCommand(config controllerhost.LabConfig) string {
 		"ip -json address show | grep -Fq " + quote(config.Proxmox.Address),
 	}
 	if config.Storage != nil {
-		checks = append(checks, "pvesm status --storage "+quote(config.Storage.GuestStorage)+" --output-format json | grep -Eq '\"active\"[[:space:]]*:[[:space:]]*1'")
+		storage := quote(config.Storage.GuestStorage)
+		checks = append(checks, "pvesm status --storage "+storage+" | awk -v expected="+storage+" 'NR > 1 && $1 == expected && $3 == \"active\" { found=1 } END { exit found ? 0 : 1 }'")
 	}
 	if config.Network != nil {
 		checks = append(checks,

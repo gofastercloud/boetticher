@@ -84,6 +84,9 @@ func TestHostCheckerIsOffWhenNotEnrolledAndReadOnlyWhenEnrolled(t *testing.T) {
 	if containsAny(command, "ansible", "apply", "rm -", "mktemp") {
 		t.Fatalf("Host check command contains mutation: %s", command)
 	}
+	if containsAny(command, "--output-format json") {
+		t.Fatalf("Host check used unsupported pvesm JSON output: %s", command)
+	}
 	if result := checker.Check(context.Background()); result.Update.State != Attention {
 		t.Fatalf("Host update state did not report pending Proxmox update: %#v", result.Update)
 	}
