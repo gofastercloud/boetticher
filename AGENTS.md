@@ -113,6 +113,11 @@ retain `--confirm`, `--approve`, `--non-interactive`, or
   installs the release-built Host speedtest helper. Blinkt and StreamDeck are
   optional peripherals: absent hardware may be reported as `NOT TESTED` or
   retried by its service, but never blocks Controller or Host setup.
+- The attached StreamDeck, when enabled, is owned by `boetticher-status.service`
+  and is read-only navigation/inspection. It must reuse the shared coarse
+  status, Internet, and operation state; detailed Host telemetry may be cached
+  separately in memory. No StreamDeck input may reach mutation, shell, or
+  Proxmox-credential paths.
 - Do not add hashes, manifests, evidence, persistent status databases, or
   synthetic monitoring journeys to improve LED correctness. Future Controller
   peripherals should consume the shared status snapshot rather than becoming

@@ -18,36 +18,50 @@ const (
 	DefaultInterval          = 30 * time.Second
 	DefaultPingPeriod        = 60 * time.Second
 	DefaultThroughputPeriod  = time.Hour
+	DefaultTelemetryPeriod   = 60 * time.Second
 	DefaultHealthyMbps       = 500.0
+	DefaultStreamDeckSerial  = ""
 )
 
+type StreamDeckConfig struct {
+	Serial string
+}
+
 type Settings struct {
-	ConfigPath         string
-	SocketPath         string
-	DriverPath         string
-	RebootRequiredPath string
-	GPIOChip           int
-	Interval           time.Duration
-	PingInterval       time.Duration
-	ThroughputInterval time.Duration
-	HealthyMbps        float64
-	BlinktEnabled      bool
-	Brightness         float64
+	ConfigPath           string
+	SocketPath           string
+	DriverPath           string
+	RebootRequiredPath   string
+	GPIOChip             int
+	Interval             time.Duration
+	PingInterval         time.Duration
+	ThroughputInterval   time.Duration
+	TelemetryInterval    time.Duration
+	HealthyMbps          float64
+	BlinktEnabled        bool
+	Brightness           float64
+	StreamDeckEnabled    bool
+	StreamDeckBrightness float64
+	StreamDeckSerial     string
 }
 
 func DefaultSettings() Settings {
 	return Settings{
-		ConfigPath:         DefaultConfigPath,
-		SocketPath:         DefaultSocketPath,
-		DriverPath:         DefaultDriverPath,
-		RebootRequiredPath: DefaultRebootRequired,
-		GPIOChip:           0,
-		Interval:           DefaultInterval,
-		PingInterval:       DefaultPingPeriod,
-		ThroughputInterval: DefaultThroughputPeriod,
-		HealthyMbps:        DefaultHealthyMbps,
-		BlinktEnabled:      true,
-		Brightness:         0.3,
+		ConfigPath:           DefaultConfigPath,
+		SocketPath:           DefaultSocketPath,
+		DriverPath:           DefaultDriverPath,
+		RebootRequiredPath:   DefaultRebootRequired,
+		GPIOChip:             0,
+		Interval:             DefaultInterval,
+		PingInterval:         DefaultPingPeriod,
+		ThroughputInterval:   DefaultThroughputPeriod,
+		TelemetryInterval:    DefaultTelemetryPeriod,
+		HealthyMbps:          DefaultHealthyMbps,
+		BlinktEnabled:        true,
+		Brightness:           0.3,
+		StreamDeckEnabled:    true,
+		StreamDeckBrightness: 0.5,
+		StreamDeckSerial:     DefaultStreamDeckSerial,
 	}
 }
 
@@ -68,6 +82,12 @@ type rawSettings struct {
 			Brightness *float64 `yaml:"brightness"`
 			GPIOChip   *int     `yaml:"gpiochip"`
 		} `yaml:"blinkt"`
+		StreamDeck struct {
+			Enabled           *bool    `yaml:"enabled"`
+			Brightness        *float64 `yaml:"brightness"`
+			TelemetryInterval string   `yaml:"telemetry_interval"`
+			Serial            string   `yaml:"serial"`
+		} `yaml:"streamdeck"`
 	} `yaml:"status"`
 }
 
@@ -128,11 +148,29 @@ func LoadSettings(path string) (Settings, error) {
 	if raw.Status.Blinkt.GPIOChip != nil {
 		settings.GPIOChip = *raw.Status.Blinkt.GPIOChip
 	}
+	if raw.Status.StreamDeck.Enabled != nil {
+		settings.StreamDeckEnabled = *raw.Status.StreamDeck.Enabled
+	}
+	if raw.Status.StreamDeck.Brightness != nil {
+		settings.StreamDeckBrightness = *raw.Status.StreamDeck.Brightness
+	}
+	if raw.Status.StreamDeck.TelemetryInterval != "" {
+		settings.TelemetryInterval, err = time.ParseDuration(raw.Status.StreamDeck.TelemetryInterval)
+		if err != nil || settings.TelemetryInterval <= 0 {
+			return settings, fmt.Errorf("status streamdeck telemetry_interval must be a positive duration")
+		}
+	}
+	if raw.Status.StreamDeck.Serial != "" {
+		settings.StreamDeckSerial = raw.Status.StreamDeck.Serial
+	}
 	if settings.GPIOChip < 0 {
 		return settings, fmt.Errorf("status gpiochip must not be negative")
 	}
 	if settings.Brightness <= 0 || settings.Brightness > 1 {
 		return settings, fmt.Errorf("status brightness must be greater than 0 and at most 1")
+	}
+	if settings.StreamDeckBrightness <= 0 || settings.StreamDeckBrightness > 1 {
+		return settings, fmt.Errorf("status streamdeck brightness must be greater than 0 and at most 1")
 	}
 	return settings, nil
 }

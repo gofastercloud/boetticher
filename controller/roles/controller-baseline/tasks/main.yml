@@ -17,6 +17,9 @@
 - name: Remove retired Controller Blinkt services
   ansible.builtin.include_tasks: retired-blinkt.yml
 
+- name: Remove retired standalone Controller StreamDeck service
+  ansible.builtin.include_tasks: retired-streamdeck.yml
+
 - name: Configure the self-contained Controller status service
   ansible.builtin.include_tasks: status.yml
 

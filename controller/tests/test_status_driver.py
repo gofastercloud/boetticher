@@ -9,6 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = ROOT / "controller" / "roles" / "controller-baseline" / "files" / "boetticher-blinkt-driver"
+STATUS_UNIT = ROOT / "controller" / "roles" / "controller-baseline" / "templates" / "boetticher-status.service.j2"
+RETIRED_STREAMDECK = ROOT / "controller" / "roles" / "controller-baseline" / "tasks" / "retired-streamdeck.yml"
 
 
 FAKE_LGPIO = r'''
@@ -64,6 +66,18 @@ class BlinktDriverTests(unittest.TestCase):
             self.assertEqual(events[-3:], [["free", 41, 24], ["free", 41, 23], ["close", 41]])
             writes = [event for event in events if event[0] == "write"]
             self.assertGreater(len(writes), 2 * 8 * 4)
+
+    def test_controller_status_unit_is_enabled_with_streamdeck_device_access(self):
+        service = STATUS_UNIT.read_text(encoding="utf-8")
+        self.assertIn("DeviceAllow=char-usb_device rw", service)
+        self.assertIn("DeviceAllow=char-hidraw rw", service)
+        self.assertIn("WantedBy=multi-user.target", service)
+
+    def test_retired_standalone_streamdeck_is_removed_during_controller_setup(self):
+        cleanup = RETIRED_STREAMDECK.read_text(encoding="utf-8")
+        self.assertIn("boetticher-streamdeck.service", cleanup)
+        self.assertIn("/usr/local/libexec/boetticher-streamdeck", cleanup)
+        self.assertIn("state: absent", cleanup)
 
 
 if __name__ == "__main__":

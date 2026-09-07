@@ -49,6 +49,8 @@ read-only. Controller reboot-required state remains separate from Host reboot
 state. The Controller status daemon and Host helper are always installed by
 their standard setup flows; Blinkt and StreamDeck remain optional peripherals
 whose absence does not block setup.
+If a StreamDeck is present on the Controller, the shared status daemon owns it
+alongside Blinkt and exposes detailed read-only Host and guest telemetry.
 
 ## Host configuration
 

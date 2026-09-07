@@ -1,5 +1,5 @@
 [Unit]
-Description=Boetticher Controller status and Blinkt service
+Description=Boetticher Controller status, Blinkt, and StreamDeck service
 After=local-fs.target systemd-journald.service ssh.service
 Wants=systemd-journald.service
 RequiresMountsFor=/etc/boetticher /opt/boetticher/current
@@ -27,6 +27,8 @@ LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 DevicePolicy=closed
 DeviceAllow=/dev/gpiochip{{ controller_blinkt_gpiochip }} rw
+DeviceAllow=char-usb_device rw
+DeviceAllow=char-hidraw rw
 ReadWritePaths=/run/boetticher
 UMask=0077
 StandardOutput=journal

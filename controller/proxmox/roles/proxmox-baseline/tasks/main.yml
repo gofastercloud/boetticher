@@ -5,5 +5,8 @@
 - name: Install Proxmox host prerequisites
   ansible.builtin.include_tasks: prerequisites.yml
 
+- name: Ensure required Proxmox services start on reboot
+  ansible.builtin.include_tasks: services.yml
+
 - name: Configure headless laptop behavior
   ansible.builtin.include_tasks: headless.yml

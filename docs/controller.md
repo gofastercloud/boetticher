@@ -142,6 +142,10 @@ status:
   blinkt:
     enabled: true
     brightness: 0.3
+  streamdeck:
+    enabled: true
+    brightness: 0.5
+    telemetry_interval: 60s
 ```
 
 The display is a lightweight operator convenience, not authoritative
@@ -152,9 +156,17 @@ API. The hourly speedtest uses the external speedtest.net measurement service
 only for that explicit performance sample. The Controller daemon runs with
 root privileges in the reference image because the GPIO device is root-owned;
 its systemd unit otherwise confines network, filesystem, and device access.
-The optional Companion StreamDeck service is similarly installed only when its
+An external Companion's optional StreamDeck service is installed only when its
 capability is enabled and retries until the configured USB device is present;
 its absence does not block Companion setup.
+
+When a StreamDeck is attached to the Controller, it is owned by the same
+`boetticher-status.service` daemon as Blinkt. The home screen is a detailed,
+read-only view of the enrolled Host: Host, CPU, RAM, preferred storage, NET,
+and up to eight VM/LXC guests sorted by VMID, with PAGE and REFRESH controls.
+Host and guest detail views provide BACK and REFRESH only; StreamDeck input
+cannot start, stop, reboot, deploy, or run shell commands. The old standalone
+Controller StreamDeck service is removed during Controller bootstrap.
 
 ## Installed paths and maintenance
 
@@ -250,6 +262,9 @@ no-subscription repository policy, required host prerequisites, and headless
 power behavior, and the signed release-built Host speedtest helper. It never
 formats disks, changes guests, storage, bridges, addresses, routes, firewall, or
 recovery access. Re-running it is safe; it does not upgrade or reboot Proxmox.
+The required Proxmox services (`pve-cluster`, `pvedaemon`, `pvestatd`, and
+`pveproxy`) are explicitly enabled and started by the same Host setup role so
+they return after reboot.
 
 The controller keeps the private key at
 `/var/lib/boetticher/controller/ssh/id_ed25519` with root-only permissions and

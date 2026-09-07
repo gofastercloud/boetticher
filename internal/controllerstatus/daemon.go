@@ -16,14 +16,16 @@ import (
 )
 
 type Daemon struct {
-	Settings     Settings
-	Driver       Driver
-	Logger       *log.Logger
-	Controller   func(context.Context) CheckResult
-	Host         func(context.Context) CheckResult
-	Connectivity func(context.Context) CheckResult
-	Throughput   func(context.Context) (float64, error)
-	Now          func() time.Time
+	Settings          Settings
+	Driver            Driver
+	Logger            *log.Logger
+	Controller        func(context.Context) CheckResult
+	Host              func(context.Context) CheckResult
+	Connectivity      func(context.Context) CheckResult
+	Throughput        func(context.Context) (float64, error)
+	Telemetry         func(context.Context) (ProxmoxSnapshot, error)
+	StreamDeckFactory StreamDeckFactory
+	Now               func() time.Time
 
 	renderer         Renderer
 	snapshot         StatusSnapshot
@@ -35,8 +37,19 @@ type Daemon struct {
 	throughputTry    time.Time
 	connectivityAt   time.Time
 	lastConnectivity CheckResult
+	telemetry        ProxmoxSnapshot
+	telemetryAttempt time.Time
+	telemetryRunning bool
+	telemetryResults chan telemetryResult
 	operation        *operationDisplay
 	configStaged     bool
+	streamdeckFrames chan []KeyImage
+	streamdeckEvents chan KeyEvent
+	streamdeckView   StreamDeckView
+	streamdeckPage   int
+	streamdeckGuest  int
+	manualRefreshAt  time.Time
+	streamdeckDirty  bool
 	previous         StatusSnapshot
 	driverBroken     bool
 }
@@ -45,6 +58,11 @@ type operationDisplay struct {
 	event  OperationEvent
 	result State
 	until  time.Time
+}
+
+type telemetryResult struct {
+	snapshot ProxmoxSnapshot
+	err      error
 }
 
 func NewDaemon(settings Settings, driver Driver) *Daemon {
@@ -57,6 +75,9 @@ func NewDaemon(settings Settings, driver Driver) *Daemon {
 	if settings.PingInterval <= 0 {
 		settings.PingInterval = DefaultPingPeriod
 	}
+	if settings.TelemetryInterval <= 0 {
+		settings.TelemetryInterval = DefaultTelemetryPeriod
+	}
 	if settings.HealthyMbps <= 0 {
 		settings.HealthyMbps = DefaultHealthyMbps
 	}
@@ -64,15 +85,21 @@ func NewDaemon(settings Settings, driver Driver) *Daemon {
 		settings.SocketPath = DefaultSocketPath
 	}
 	return &Daemon{
-		Settings:   settings,
-		Driver:     driver,
-		Logger:     log.New(io.Discard, "", 0),
-		Now:        time.Now,
-		renderer:   NewRenderer(settings.Brightness),
-		controller: NewDebouncer(Checking),
-		host:       NewDebouncer(Checking),
-		internet:   NewDebouncer(Checking),
-		snapshot:   NewSnapshot(false),
+		Settings:         settings,
+		Driver:           driver,
+		Logger:           log.New(io.Discard, "", 0),
+		Now:              time.Now,
+		renderer:         NewRenderer(settings.Brightness),
+		controller:       NewDebouncer(Checking),
+		host:             NewDebouncer(Checking),
+		internet:         NewDebouncer(Checking),
+		telemetryResults: make(chan telemetryResult, 1),
+		streamdeckFrames: make(chan []KeyImage, 1),
+		streamdeckEvents: make(chan KeyEvent, 16),
+		streamdeckView:   StreamDeckHome,
+		streamdeckGuest:  -1,
+		streamdeckDirty:  true,
+		snapshot:         NewSnapshot(false),
 	}
 }
 
@@ -94,6 +121,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return (HostSpeedtestChecker{}).Sample(ctx)
 		}
 	}
+	if d.Settings.StreamDeckEnabled {
+		if d.Telemetry == nil {
+			d.Telemetry = (ProxmoxCollector{}).Collect
+		}
+		if d.StreamDeckFactory == nil {
+			d.StreamDeckFactory = NewNativeStreamDeckFactory(StreamDeckConfig{Serial: d.Settings.StreamDeckSerial}, d.Settings.StreamDeckBrightness)
+		}
+		go runStreamDeck(ctx, d.StreamDeckFactory, d.streamdeckFrames, d.streamdeckEvents, d.Logger)
+	}
 	_, cleanup, events, err := listen(ctx, d.Settings.SocketPath)
 	if err != nil {
 		return err
@@ -114,6 +150,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return nil
 		case event := <-events:
 			d.handleEvent(event)
+			d.render(ctx)
+		case event := <-d.streamdeckEvents:
+			d.handleStreamDeckEvent(ctx, event)
+			d.render(ctx)
+		case result := <-d.telemetryResults:
+			d.applyTelemetry(result)
 			d.render(ctx)
 		case now := <-ticker.C:
 			d.refreshAt(ctx, now)
@@ -214,6 +256,8 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			d.throughput, d.throughputAt = value, now
 		}
 	}
+	d.snapshot.Internet.ThroughputMbps = d.throughput
+	d.snapshot.Internet.ThroughputAt = d.throughputAt
 	if d.snapshot.Internet.State != Failed && d.snapshot.Internet.State != Checking {
 		if d.throughputAt.IsZero() || now.Sub(d.throughputAt) > 2*d.Settings.ThroughputInterval {
 			d.snapshot.Internet.State = Attention
@@ -226,6 +270,8 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			d.snapshot.Internet.Detail = fmt.Sprintf("Internet reachable; recent throughput %.0f Mbps is below %.0f Mbps", d.throughput, d.Settings.HealthyMbps)
 		}
 	}
+	d.scheduleTelemetry(ctx, now)
+	d.streamdeckDirty = true
 	d.logTransitions()
 }
 
@@ -234,6 +280,7 @@ func (d *Daemon) handleEvent(event OperationEvent) {
 		d.Logger.Printf("ignored invalid operation event: %v", err)
 		return
 	}
+	d.streamdeckDirty = true
 	now := d.Now()
 	switch event.Event {
 	case "operation-start":
@@ -274,33 +321,133 @@ func (d *Daemon) handleEvent(event OperationEvent) {
 	}
 }
 
-func (d *Daemon) render(ctx context.Context) {
-	if d.Driver == nil || d.driverBroken {
+func (d *Daemon) handleStreamDeckEvent(ctx context.Context, event KeyEvent) {
+	if event.Index < 0 || event.Index >= StreamDeckKeyCount {
 		return
 	}
 	now := d.Now()
-	var frame []Pixel
-	if d.operation != nil {
-		if !d.operation.until.IsZero() && now.After(d.operation.until) {
-			d.operation = nil
-		} else if d.operation.result == Failed {
-			frame = d.renderer.FailureFrame(d.operation.event, now)
-		} else if d.operation.result == Healthy {
-			frame = d.renderer.OperationFrame(d.operation.event, now)
-		} else {
-			frame = d.renderer.OperationFrame(d.operation.event, now)
+	switch d.streamdeckView {
+	case StreamDeckHome:
+		switch {
+		case event.Index == 0:
+			d.streamdeckView = StreamDeckHostDetail
+		case event.Index >= 5 && event.Index <= 12:
+			index := d.streamdeckPage*8 + event.Index - 5
+			if index < len(d.telemetry.Guests) {
+				d.streamdeckGuest = index
+				d.streamdeckView = StreamDeckGuestDetail
+			}
+		case event.Index == 13:
+			pages := guestPageCount(len(d.telemetry.Guests))
+			if pages > 1 {
+				d.streamdeckPage = (d.streamdeckPage + 1) % pages
+			}
+		case event.Index == 14:
+			d.requestTelemetry(ctx, now)
+		}
+	case StreamDeckHostDetail, StreamDeckGuestDetail:
+		switch event.Index {
+		case 13:
+			d.streamdeckView = StreamDeckHome
+		case 14:
+			d.requestTelemetry(ctx, now)
 		}
 	}
-	if frame == nil {
-		frame = d.renderer.Frame(d.snapshot, now)
+	d.streamdeckDirty = true
+}
+
+func (d *Daemon) requestTelemetry(ctx context.Context, now time.Time) {
+	if !d.Settings.StreamDeckEnabled || d.Telemetry == nil {
+		return
 	}
-	showCtx, cancel := context.WithTimeout(ctx, time.Second)
-	err := d.Driver.Show(showCtx, frame)
-	cancel()
-	if err != nil {
-		d.driverBroken = true
-		d.Logger.Printf("Blinkt unavailable; continuing without display: %v", err)
-		_ = d.Driver.Close()
+	if !d.manualRefreshAt.IsZero() && now.Sub(d.manualRefreshAt) < 5*time.Second {
+		return
+	}
+	d.manualRefreshAt = now
+	d.telemetryAttempt = time.Time{}
+	d.scheduleTelemetry(ctx, now)
+}
+
+func (d *Daemon) scheduleTelemetry(ctx context.Context, now time.Time) {
+	if d.Telemetry == nil || d.telemetryRunning {
+		return
+	}
+	if !d.telemetryAttempt.IsZero() && now.Sub(d.telemetryAttempt) < d.Settings.TelemetryInterval {
+		return
+	}
+	d.telemetryAttempt = now
+	d.telemetryRunning = true
+	go func() {
+		checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		snapshot, err := d.Telemetry(checkCtx)
+		cancel()
+		select {
+		case d.telemetryResults <- telemetryResult{snapshot: snapshot, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (d *Daemon) applyTelemetry(result telemetryResult) {
+	d.telemetryRunning = false
+	if result.err != nil {
+		d.telemetry.Stale = true
+		d.telemetry.Error = result.err.Error()
+		if d.telemetry.FetchedAt.IsZero() {
+			d.telemetry = ProxmoxSnapshot{Stale: true, Error: result.err.Error()}
+		}
+		d.Logger.Printf("Proxmox telemetry unavailable; retaining last good snapshot: %v", result.err)
+	} else {
+		result.snapshot.Stale = false
+		result.snapshot.Error = ""
+		d.telemetry = result.snapshot
+	}
+	d.streamdeckDirty = true
+}
+
+func (d *Daemon) render(ctx context.Context) {
+	now := d.Now()
+	if d.operation != nil && !d.operation.until.IsZero() && now.After(d.operation.until) {
+		d.operation = nil
+		d.streamdeckDirty = true
+	}
+	if d.Driver != nil && !d.driverBroken {
+		var frame []Pixel
+		if d.operation != nil {
+			if d.operation.result == Failed {
+				frame = d.renderer.FailureFrame(d.operation.event, now)
+			} else {
+				frame = d.renderer.OperationFrame(d.operation.event, now)
+			}
+		}
+		if frame == nil {
+			frame = d.renderer.Frame(d.snapshot, now)
+		}
+		showCtx, cancel := context.WithTimeout(ctx, time.Second)
+		err := d.Driver.Show(showCtx, frame)
+		cancel()
+		if err != nil {
+			d.driverBroken = true
+			d.Logger.Printf("Blinkt unavailable; continuing without display: %v", err)
+			_ = d.Driver.Close()
+		}
+	}
+	d.queueStreamDeckRender()
+}
+
+func (d *Daemon) queueStreamDeckRender() {
+	if !d.Settings.StreamDeckEnabled || d.streamdeckFrames == nil || !d.streamdeckDirty {
+		return
+	}
+	frame := (StreamDeckRenderer{}).Render(d.snapshot, d.telemetry, d.operation, d.streamdeckView, d.streamdeckPage, d.streamdeckGuest)
+	select {
+	case <-d.streamdeckFrames:
+	default:
+	}
+	select {
+	case d.streamdeckFrames <- frame:
+		d.streamdeckDirty = false
+	default:
 	}
 }
 
