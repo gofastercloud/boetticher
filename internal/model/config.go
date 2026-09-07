@@ -79,7 +79,6 @@ type CompanionConfig struct {
 	Display          *CompanionCapabilityConfig `yaml:"display,omitempty" json:"display,omitempty"`
 	StreamDeck       *CompanionCapabilityConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
 	PulseAgent       *CompanionCapabilityConfig `yaml:"pulse_agent,omitempty" json:"pulse_agent,omitempty"`
-	Blinkt           *CompanionCapabilityConfig `yaml:"blinkt,omitempty" json:"blinkt,omitempty"`
 	StreamDeckSerial string                     `yaml:"streamdeck_serial,omitempty" json:"streamdeck_serial,omitempty"`
 }
 
@@ -92,7 +91,6 @@ type CompanionCapabilities struct {
 	Display    bool
 	StreamDeck bool
 	PulseAgent bool
-	Blinkt     bool
 }
 
 // Capabilities applies one simple rule: a disabled or omitted companion
@@ -108,7 +106,6 @@ func (c *CompanionConfig) Capabilities() CompanionCapabilities {
 		Display:    enabled && capabilityEnabled(c.Display),
 		StreamDeck: enabled && capabilityEnabled(c.StreamDeck),
 		PulseAgent: enabled && capabilityEnabled(c.PulseAgent),
-		Blinkt:     enabled && capabilityEnabled(c.Blinkt),
 	}
 }
 
@@ -427,9 +424,6 @@ func cloneCompanionConfig(value *CompanionConfig) *CompanionConfig {
 	}
 	if value.PulseAgent != nil {
 		result.PulseAgent = &CompanionCapabilityConfig{Enabled: cloneBool(value.PulseAgent.Enabled)}
-	}
-	if value.Blinkt != nil {
-		result.Blinkt = &CompanionCapabilityConfig{Enabled: cloneBool(value.Blinkt.Enabled)}
 	}
 	return result
 }

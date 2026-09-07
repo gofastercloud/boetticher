@@ -48,6 +48,7 @@ vet:
 
 build:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher ./cmd/boetticher
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher-status ./cmd/boetticher-status
 
 release-bundle: companion-binary
 	@test -n "$(OUTPUT)" -a -n "$(SOURCE_COMMIT)" -a -n "$(WORKFLOW)" -a -n "$(KEY_ID)" -a -n "$(PRIVATE_KEY)"

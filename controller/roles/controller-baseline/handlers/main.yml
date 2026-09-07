@@ -8,3 +8,9 @@
   ansible.builtin.systemd_service:
     name: ssh.service
     state: reloaded
+
+- name: restart boetticher-status
+  ansible.builtin.systemd_service:
+    name: boetticher-status.service
+    state: restarted
+    daemon_reload: true

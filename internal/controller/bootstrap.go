@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/controllerstatus"
 	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
 )
@@ -30,7 +31,6 @@ type BootstrapOptions struct {
 	LogPath         string
 	Command         func(context.Context, string, ...string) ([]byte, error)
 	Run             func(context.Context, string, []string, string, []string, io.Writer, io.Writer) error
-	ShowLED         func(context.Context, string, int, string) error
 	PlatformReady   func(context.Context, func(context.Context, string, ...string) ([]byte, error)) bool
 	runtimeRoot     string
 	isRoot          func() bool
@@ -74,9 +74,6 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 	}
 	if options.Run == nil {
 		options.Run = defaultRun
-	}
-	if options.ShowLED == nil {
-		options.ShowLED = showLED
 	}
 	if options.PlatformReady == nil {
 		options.PlatformReady = platformReady
@@ -136,15 +133,10 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 		fmt.Fprintln(out, "Bootstrap configuration: FAIL")
 		fmt.Fprintln(out, "Controller readiness: FAIL — reboot required to activate log2ram")
 		fmt.Fprintln(out, "\nNext:\n  sudo reboot\n\nAfter reconnecting:\n  sudo boetticher controller bootstrap --operator "+options.Operator+" --confirm-key-login")
-		_ = options.ShowLED(ctx, options.RuntimeDir, config.Blinkt.GPIOChip, "reboot")
 		return RebootRequiredError{}
 	}
 
-	if config.Blinkt.Enabled && config.Blinkt.GPIOChip >= 0 {
-		if err := options.ShowLED(ctx, options.RuntimeDir, config.Blinkt.GPIOChip, "running"); err != nil {
-			fmt.Fprintf(errOut, "Blinkt: FAIL — %s\n", err)
-		}
-	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "controller bootstrap", Steps: 4})
 	fmt.Fprintln(out, "Bootstrap configuration: RUNNING")
 	runtimeRoot := options.runtimeRoot
 	if runtimeRoot == "" {
@@ -152,7 +144,7 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 	}
 	runtimeDir, err := resolveRuntimeUnder(options.RuntimeDir, runtimeRoot)
 	if err != nil {
-		_ = options.ShowLED(ctx, options.RuntimeDir, config.Blinkt.GPIOChip, "failed")
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "controller bootstrap", Detail: err.Error()})
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(options.LogPath), 0700); err != nil {
@@ -173,12 +165,13 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 	ansible := filepath.Join(VenvPath, "bin", "ansible-playbook")
 	args := []string{"-i", "localhost,", "-c", "local", playbook, "--extra-vars", string(extra)}
 	if err := options.Run(ctx, ansible, args, runtimeDir, env, stream, stream); err != nil {
-		_ = options.ShowLED(ctx, runtimeDir, config.Blinkt.GPIOChip, "failed")
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "controller bootstrap", Detail: err.Error(), ConfigurationFailed: true})
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return fmt.Errorf("controller bootstrap interrupted: %w", ctx.Err())
 		}
 		return fmt.Errorf("controller Ansible bootstrap failed: %w", err)
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "controller bootstrap", CurrentStep: 2, TotalSteps: 4, Detail: "Controller configuration applied"})
 	checks, _ := RunStatus(ctx, StatusOptions{RuntimeDir: runtimeDir, ConfigPath: options.ConfigPath, MarkerPath: options.MarkerPath, Operator: options.Operator, Command: options.Command})
 	failed := false
 	reboot := false
@@ -196,15 +189,15 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 		if reboot {
 			fmt.Fprintln(out, "\nController readiness: FAIL — reboot required to activate log2ram")
 			fmt.Fprintln(out, "Next:\n  sudo reboot")
-			_ = options.ShowLED(ctx, runtimeDir, config.Blinkt.GPIOChip, "reboot")
 		} else {
 			fmt.Fprintln(out, "\nController readiness: FAIL")
-			_ = options.ShowLED(ctx, runtimeDir, config.Blinkt.GPIOChip, "failed")
 		}
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "controller bootstrap", Detail: "Controller readiness failed", ConfigurationFailed: true})
 		return errors.New("controller readiness failed")
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "controller bootstrap", CurrentStep: 3, TotalSteps: 4, Detail: "Controller readiness verified"})
 	fmt.Fprintln(out, "\nBootstrap configuration: PASS\nController readiness: PASS")
-	_ = options.ShowLED(ctx, runtimeDir, config.Blinkt.GPIOChip, "ready")
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "controller bootstrap"})
 	return nil
 }
 
@@ -254,15 +247,6 @@ func defaultRun(ctx context.Context, name string, args []string, dir string, env
 	command.Stdout = stdout
 	command.Stderr = stderr
 	return command.Run()
-}
-
-func showLED(ctx context.Context, runtime string, chip int, state string) error {
-	if runtime == "" {
-		runtime = CurrentRelease
-	}
-	helper := filepath.Join(runtime, "controller", "libexec", "boetticher-bootstrap-led")
-	_, err := exec.CommandContext(ctx, "/usr/bin/python3", helper, "--chip", fmt.Sprintf("%d", chip), state).CombinedOutput()
-	return err
 }
 
 func discoverGPIOChip(ctx context.Context, command func(context.Context, string, ...string) ([]byte, error)) (int, error) {

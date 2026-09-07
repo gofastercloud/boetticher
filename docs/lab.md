@@ -33,6 +33,12 @@ Host Module namespace.
 The Controller does not need a Host selector in the supported single-Host UX.
 Multi-Host support is deliberately not implemented in this phase.
 
+The Controller's fixed Blinkt layout is `CTL HOST FW DNS DHCP NET CFG RBT`.
+It is rendered by the local status daemon as a lightweight convenience; it is
+not a monitoring or qualification system. Blinkt, StreamDeck, display, and
+kiosk behavior remain Controller implementation details rather than Module
+namespaces.
+
 ## Host configuration
 
 The Host configuration is stored in `/etc/boetticher/lab.yml`. It binds the

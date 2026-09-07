@@ -10,12 +10,13 @@ import (
 	"time"
 
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"github.com/gofastercloud/boetticher/internal/controllerstatus"
 )
 
 // runHostApply is the single Host mutation entry point. The individual
 // baseline, storage, and network operations remain owned by their focused
 // packages; this function only gives them one safe operator lifecycle.
-func runHostApply(args []string, input io.Reader, out, errOut io.Writer) error {
+func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err error) {
 	fs := flag.NewFlagSet("host apply", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	yes := fs.Bool("yes", false, "approve ordinary Host changes")
@@ -41,6 +42,15 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
+	mutationAttempted := false
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "host apply", Steps: 5})
+	defer func() {
+		if err != nil {
+			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "host apply", Detail: err.Error(), ConfigurationFailed: mutationAttempted})
+			return
+		}
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "host apply"})
+	}()
 	ctx := context.Background()
 	var promptReader *bufio.Reader
 	prompt := func(message string) error {
@@ -76,6 +86,8 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) error {
 		if err := prompt("\nContinue? [y/N]: "); err != nil {
 			return err
 		}
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 1, TotalSteps: 5, Detail: "Verifying Host access"})
+		mutationAttempted = true
 		applyCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 		err := controllerhost.RunPrepare(applyCtx, config, transport, io.Discard)
 		if err == nil {
@@ -90,7 +102,10 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) error {
 			return err
 		}
 		fmt.Fprintln(out, "Host configuration: PASS")
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 2, TotalSteps: 5, Detail: "Host OS configuration verified"})
 		changed = true
+	} else {
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 2, TotalSteps: 5, Detail: "Host OS configuration already current"})
 	}
 
 	storagePlan, err := controllerhost.DiscoverStorage(ctx, transport, config)
@@ -134,6 +149,7 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
+		mutationAttempted = true
 		if _, err := transport.Run(ctx, command); err != nil {
 			return fmt.Errorf("Host storage apply failed: %w", err)
 		}
@@ -144,6 +160,7 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) error {
 		fmt.Fprintln(out, "Storage: PASS configured")
 		changed = true
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 3, TotalSteps: 5, Detail: "Storage configuration verified"})
 
 	networkPlan, err := controllerhost.DiscoverNetwork(ctx, transport, config)
 	if err != nil {
@@ -176,6 +193,7 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
+		mutationAttempted = true
 		if _, err := transport.Run(ctx, command); err != nil {
 			return fmt.Errorf("Host network apply failed: %w", err)
 		}
@@ -192,6 +210,7 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) error {
 		fmt.Fprintln(out, "Internal network: PASS configured")
 		changed = true
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 4, TotalSteps: 5, Detail: "Network configuration verified"})
 	if !changed {
 		fmt.Fprintln(out, "No changes required.")
 	}

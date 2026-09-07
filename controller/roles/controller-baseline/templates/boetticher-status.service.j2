@@ -1,0 +1,35 @@
+[Unit]
+Description=Boetticher Controller status and Blinkt service
+After=local-fs.target systemd-journald.service ssh.service
+Wants=systemd-journald.service
+RequiresMountsFor=/etc/boetticher /opt/boetticher/current
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/boetticher/current/bin/boetticher-status --config /etc/boetticher/controller.yml --socket /run/boetticher/status.sock --driver /opt/boetticher/current/controller/roles/controller-baseline/files/boetticher-blinkt-driver --gpiochip {{ controller_blinkt_gpiochip }}
+RuntimeDirectory=boetticher
+RuntimeDirectoryMode=0700
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=3s
+NoNewPrivileges=true
+CapabilityBoundingSet=
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+DevicePolicy=closed
+DeviceAllow=/dev/gpiochip{{ controller_blinkt_gpiochip }} rw
+ReadWritePaths=/run/boetticher
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

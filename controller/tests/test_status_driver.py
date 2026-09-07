@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-HELPER = ROOT / "controller" / "libexec" / "boetticher-bootstrap-led"
+DRIVER = ROOT / "controller" / "roles" / "controller-baseline" / "files" / "boetticher-blinkt-driver"
 
 
 FAKE_LGPIO = r'''
@@ -42,29 +42,28 @@ def flush():
 '''
 
 
-class BootstrapLedTests(unittest.TestCase):
-    def run_helper(self, state):
+class BlinktDriverTests(unittest.TestCase):
+    def test_driver_claims_header_pins_and_cleans_up(self):
+        frame = [{"r": 0, "g": 180, "b": 35, "brightness": 9}] * 8
         with tempfile.TemporaryDirectory() as directory:
             module = Path(directory) / "lgpio.py"
             log = Path(directory) / "events.json"
             module.write_text(FAKE_LGPIO + "\nimport atexit\natexit.register(flush)\n", encoding="utf-8")
             environment = dict(os.environ, PYTHONPATH=directory, LGPIO_LOG=str(log))
             result = subprocess.run(
-                [sys.executable, str(HELPER), "--chip", "3", state],
+                [sys.executable, str(DRIVER), "--chip", "3"],
+                input=json.dumps(frame) + "\n",
                 env=environment,
                 capture_output=True,
                 text=True,
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            return json.loads(log.read_text(encoding="utf-8"))
-
-    def test_frame_claims_header_pins_and_cleans_up(self):
-        events = self.run_helper("ready")
-        self.assertEqual(events[:3], [["open", 3], ["claim", 41, 23, 0], ["claim", 41, 24, 0]])
-        self.assertEqual(events[-3:], [["free", 41, 24], ["free", 41, 23], ["close", 41]])
-        writes = [event for event in events if event[0] == "write"]
-        self.assertGreater(len(writes), 8 * 4)
+            events = json.loads(log.read_text(encoding="utf-8"))
+            self.assertEqual(events[:3], [["open", 3], ["claim", 41, 23, 0], ["claim", 41, 24, 0]])
+            self.assertEqual(events[-3:], [["free", 41, 24], ["free", 41, 23], ["close", 41]])
+            writes = [event for event in events if event[0] == "write"]
+            self.assertGreater(len(writes), 2 * 8 * 4)
 
 
 if __name__ == "__main__":

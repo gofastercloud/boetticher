@@ -1608,7 +1608,6 @@ func TestEmbeddedCompanionSourceArchiveContainsOnlyProvisioningAssets(t *testing
 		"ansible/companion.yml",
 		"ansible/roles/kiosk/tasks/main.yml",
 		"ansible/roles/kiosk/templates/boetticher-streamdeck.service.j2",
-		"pi/kiosk/libexec/boetticher-blinkt",
 	} {
 		if !entries[required] {
 			t.Fatalf("embedded companion archive omitted %s", required)

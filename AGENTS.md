@@ -87,6 +87,23 @@ retain `--confirm`, `--approve`, `--non-interactive`, or
 - Blinkt, StreamDeck, display, kiosk, and similar peripherals remain
   Controller implementation details, not Module namespaces.
 
+### Controller UX
+
+- `boetticher-status.service` is a lightweight, self-contained Controller
+  convenience for the fixed eight-pixel Blinkt layout; it is not monitoring,
+  qualification, or evidence machinery.
+- The status daemon owns Blinkt exclusively. Controller operations send
+  best-effort status/progress events rather than writing GPIO directly.
+- Status checks are simple, read-only, and infrequent. They must not depend on
+  Pulse, Prometheus, Loki, Alertmanager, Gatus, a logging Module, or an
+  external observability system.
+- Blinkt or status-daemon failure must never gate Controller, Host, or Module
+  operations.
+- Do not add hashes, manifests, evidence, persistent status databases, or
+  synthetic monitoring journeys to improve LED correctness. Future Controller
+  peripherals should consume the shared status snapshot rather than becoming
+  Modules.
+
 ## Safety and lifecycle
 
 - Fail closed on trust, ownership, destructive, ambiguous, malformed, and

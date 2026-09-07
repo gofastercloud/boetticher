@@ -82,26 +82,63 @@ Next:
 After reconnecting with a fresh key-authenticated SSH session, rerun bootstrap
 and status. A successful final state reports `Controller readiness: PASS`.
 
-## Blinkt
+## Controller status LEDs
 
-The short-lived `/opt/boetticher/current/controller/libexec/boetticher-bootstrap-led`
-helper drives the Pimoroni Blinkt at low brightness through the discovered GPIO
-chip and header lines GPIO23/GPIO24. It writes one frame and exits; there is no
-controller daemon or socket.
+The Controller runs one local `boetticher-status.service` daemon. It is the
+exclusive owner of the Pimoroni Blinkt and its GPIO23/GPIO24 path; bootstrap and
+Host operations send best-effort progress events over its root-only Unix socket
+at `/run/boetticher/status.sock`. If the socket or hardware is unavailable,
+the operation continues normally.
 
-The colours mean:
+The fixed physical layout is:
 
-| Colour | Meaning |
+```text
+CTL HOST FW DNS DHCP NET CFG RBT
+```
+
+| Display | Meaning |
 | --- | --- |
-| Blue | Bootstrap is running |
-| Amber | A reboot is required for log2ram activation |
-| Green | Local controller readiness passed |
-| Red | Bootstrap or local readiness failed |
+| Breathing green | The lightweight check is healthy |
+| Pulsing blue | Startup, checking, or an active operation |
+| Breathing amber | Attention or degraded operation |
+| Flashing red | A meaningful health or operation failure |
+| Off | Not configured or not applicable |
 
-Software success is not physical LED acceptance. During live acceptance,
-observe each colour and record that result separately. The bootstrap command
-continues safe host setup if GPIO output is unavailable, while status reports
-the GPIO check as failed.
+`CTL` is local Controller health, `HOST` is the enrolled Proxmox Host, and
+`FW`, `DNS`, and `DHCP` remain off until those capabilities exist. `CFG` is
+normally off, turns blue during a mutating operation, and can turn red after a
+failed apply. `RBT` is amber only when the Controller OS exposes the native
+`/var/run/reboot-required` marker; Host reboot state is not shown there.
+
+`NET` is green when Internet connectivity is available and the most recent
+usable throughput sample is at least the configured threshold. It is amber
+when connectivity works but throughput is below the threshold or has not been
+measured recently, and red only after connectivity fails twice consecutively.
+The reference-lab threshold is 500 Mbps for its approximately 1000 Mbps
+service. Throughput sampling uses a small transfer approximately every ten
+minutes; normal checks run approximately every 30 seconds.
+
+The optional configuration keeps these defaults explicit without adding a
+status database or generated state:
+
+```yaml
+status:
+  interval: 30s
+  internet:
+    throughput_interval: 10m
+    healthy_mbps: 500
+  blinkt:
+    enabled: true
+    brightness: 0.3
+```
+
+The display is a lightweight operator convenience, not authoritative
+monitoring or qualification. A green LED means only that its corresponding
+simple, read-only check passed. It has no dependency on Pulse, Prometheus,
+Loki, Alertmanager, Gatus, a monitoring database, or an external monitoring
+API. The Controller daemon runs with root privileges in the reference image
+because the GPIO device is root-owned; its systemd unit otherwise confines
+network, filesystem, and device access.
 
 ## Installed paths and maintenance
 
@@ -113,6 +150,7 @@ the GPIO check as failed.
 | `/opt/boetticher/toolchains/go1.26.5/` | Pinned Go toolchain |
 | `/etc/boetticher/controller.yml` | Minimal operator and Blinkt configuration |
 | `/var/lib/boetticher/controller/` | Controller state, including the log2ram boot marker |
+| `/run/boetticher/status.sock` | Root-only best-effort operation event socket |
 | `/var/cache/boetticher/` | Downloaded package/toolchain cache |
 | `/var/log/boetticher/bootstrap.log` | Bounded bootstrap output |
 | `/var/log/boetticher/operations.log` | Bounded underlying host-operation output |

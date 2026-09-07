@@ -16,7 +16,9 @@ main() {
 
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
     go build -trimpath -o "$stage/bin/boetticher" ./cmd/boetticher
-  chmod 0755 "$stage/bin/boetticher"
+  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+    go build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
+  chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status"
   cp -R controller "$stage/controller"
   printf '%s\n' "$build_id" >"$stage/BUILD_ID"
 
