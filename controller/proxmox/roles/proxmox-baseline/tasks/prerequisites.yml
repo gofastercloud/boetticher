@@ -24,6 +24,7 @@
       - tar
       - unzip
       - util-linux
+      - iputils-arping
       - wget
       - which
       - xz-utils

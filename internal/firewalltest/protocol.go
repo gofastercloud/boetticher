@@ -15,6 +15,7 @@ import (
 
 const (
 	ProtocolVersion = 1
+	HelperVersion   = "boetticher-firewall-test-host/v6"
 	HelperPath      = "/usr/local/libexec/boetticher-firewall-test-host"
 	HelperCommand   = HelperPath
 	LockPath        = "/run/boetticher/firewall-test.lock"
@@ -62,11 +63,13 @@ type Result struct {
 }
 
 type Response struct {
-	Version   int      `json:"version"`
-	OK        bool     `json:"ok"`
-	CleanupOK bool     `json:"cleanup_ok"`
-	Results   []Result `json:"results,omitempty"`
-	Error     string   `json:"error,omitempty"`
+	Version        int      `json:"version"`
+	OK             bool     `json:"ok"`
+	CleanupOK      bool     `json:"cleanup_ok"`
+	CleanupFound   bool     `json:"cleanup_found,omitempty"`
+	CleanupRemoved bool     `json:"cleanup_removed,omitempty"`
+	Results        []Result `json:"results,omitempty"`
+	Error          string   `json:"error,omitempty"`
 }
 
 type Expectation struct {

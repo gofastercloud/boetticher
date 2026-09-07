@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestProviderDHCPConfigReadbackRequiresIgnoredHomeSection(t *testing.T) {
+	for _, test := range []struct {
+		name, config string
+		wantErr      bool
+	}{
+		{name: "disabled", config: "config dhcp 'boetticher_home'\n\toption ignore '1'\n", wantErr: false},
+		{name: "enabled", config: "config dhcp 'boetticher_home'\n\toption ignore '0'\n", wantErr: true},
+		{name: "unexpected owned section", config: "config dhcp 'boetticher_home'\n\toption ignore '1'\nconfig dhcp 'boetticher_servers'\n", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := validateProviderDHCPConfig(test.config); got != nil != test.wantErr {
+				t.Fatalf("validateProviderDHCPConfig() error = %v, wantErr=%t", got, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestParseFirewallTestOptionsRejectsContradictoryFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"--plan", "--yes"},
@@ -32,6 +49,9 @@ func TestFirewallPlanAndStatusRejectApprovalFlags(t *testing.T) {
 		if _, err := parseFirewallOptions(command, []string{"--yes"}, false); err == nil {
 			t.Fatalf("%s accepted meaningless --yes", command)
 		}
+	}
+	if options, err := parseFirewallOptions("module firewall apply", []string{"--yes"}, true); err != nil || !options.yes {
+		t.Fatalf("apply did not accept --yes: options=%#v err=%v", options, err)
 	}
 }
 

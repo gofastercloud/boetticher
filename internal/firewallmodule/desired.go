@@ -176,7 +176,7 @@ func firewallSections(zones []Zone, managementNetwork, controllerAddress string)
 	for _, zone := range zones {
 		name := strings.ToLower(zone.Name)
 		if zone.Type != model.ZoneTypeTransit {
-			sections = append(sections, Section{Name: "boetticher_deny_" + name + "_home_management", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny HOME management", "src": name, "dest_ip": managementNetwork, "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+			sections = append(sections, Section{Name: "boetticher_deny_" + name + "_home_management", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny HOME management", "src": name, "dest": "home_wan", "dest_ip": managementNetwork, "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
 			sections = append(sections, Section{Name: "boetticher_forward_" + name + "_home_wan", Type: "forwarding", Options: map[string]string{"src": name, "dest": "home_wan", "family": "ipv4"}, Lists: map[string][]string{}})
 		}
 		if zone.Type == model.ZoneTypeTrusted {

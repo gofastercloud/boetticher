@@ -29,6 +29,11 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 			t.Fatalf("policy is missing %q: %s", want, joined)
 		}
 	}
+	for _, section := range state.Firewall {
+		if strings.Contains(section.Name, "_deny_") && strings.HasSuffix(section.Name, "_home_management") && section.Options["dest"] != "home_wan" {
+			t.Fatalf("HOME deny %s is not bound to the HOME firewall zone", section.Name)
+		}
+	}
 	for _, forbidden := range []string{"boetticher_forward_sandbox_trusted", "boetticher_forward_servers_trusted", "boetticher_forward_infra_trusted", "boetticher_forward_transit_home_wan"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("policy unexpectedly permits %q: %s", forbidden, joined)

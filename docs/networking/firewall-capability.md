@@ -80,6 +80,22 @@ clean-install gate remain **NOT TESTED** until run against the enrolled
 reference Host. Local tests prove deterministic generation and ownership
 boundaries only.
 
+## Phase 4A closeout state
+
+The final enrolled-lab closeout run established fresh apply, semantic no-op,
+provider reboot/recovery, independent routed-IPv4 packet acceptance, bounded
+interruption cleanup, teardown, and preservation of the Controller and Host.
+The run ended with no firewall deployed; absent status is expected and returns
+nonzero, while the plan proposes creation again. The readiness repair retains
+the last management failure and waits for authenticated HTTPS/ubus readiness;
+the cleanup repair keeps lock ownership in the internal cleanup path and gives
+cancellation a fresh cleanup budget.
+
+Physical Blinkt/StreamDeck navigation, refresh, and unplug/replug checks were
+not executable through the available remote session. They remain **NOT
+TESTED**, so physical-peripheral acceptance is separate from the passing
+software and routed-packet gates.
+
 ## Packet acceptance
 
 The supported packet command is:

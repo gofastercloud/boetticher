@@ -94,14 +94,13 @@ func runFirewallTest(args []string, input io.Reader, out, errOut io.Writer) (err
 		}
 	}
 
-	display, err := controllerstatus.StartTest("firewall test", []string{
-		"Gateway access", "Ordinary Internet egress", "Directional inter-zone policy", "HOME protection", "Appliance administration",
-	})
-	if err != nil {
-		return err
-	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "firewall test", Steps: 3})
 	defer func() {
-		display.End(err)
+		if err != nil {
+			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "firewall test", Detail: err.Error()})
+			return
+		}
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "firewall test"})
 	}()
 	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -128,11 +127,21 @@ func runFirewallTest(args []string, input io.Reader, out, errOut io.Writer) (err
 	if err := verifyPhase4AScope(ctx, host, provider, desired); err != nil {
 		return err
 	}
-	display.Progress(1, "Provider and HOME paths verified")
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall test", CurrentStep: 1, TotalSteps: 3, Detail: "Provider and HOME paths verified"})
 
 	request := firewalltest.Request{Version: firewalltest.ProtocolVersion, Action: "run", Zones: fixtures, PublicAddress: publicAddress, PublicHost: firewalltest.PublicHost, HomeProxmox: controllerhost.HomeManagementAddress, HomeController: desired.ControllerAddress, ProviderHome: desired.ManagementAddress}
 	response, helperErr := invokeFirewallTestHost(ctx, host, request)
-	display.Progress(2, "Fixed routed packet suite completed")
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall test", CurrentStep: 2, TotalSteps: 3, Detail: "Fixed routed packet suite completed"})
+	if ctx.Err() != nil {
+		cleanupResponse, cleanupErr := cleanupFirewallTestWithRetry(host)
+		if cleanupErr != nil || !cleanupResponse.OK || !cleanupResponse.CleanupOK {
+			return fmt.Errorf("firewall test interrupted and cleanup failed: %s", helperResponseDetail(cleanupResponse, cleanupErr))
+		}
+		if cleanupResponse.CleanupRemoved {
+			return errors.New("firewall test interrupted; cleanup-only recovery removed leftover fixtures")
+		}
+		return errors.New("firewall test interrupted; automatic cleanup completed")
+	}
 
 	results := append([]firewalltest.Result(nil), response.Results...)
 	adminResult, adminErr := verifyHostAdministrationDenied(ctx, host, desired.ManagementAddress)
@@ -144,22 +153,9 @@ func runFirewallTest(args []string, input io.Reader, out, errOut io.Writer) (err
 	controllerResult := firewalltest.Result{Name: "admin/controller-provider-home", Group: "Appliance administration", Source: "Controller", Target: "firewall HOME", Protocol: "https", Expected: "allow", Observed: "authenticated", Status: "PASS", Detail: "verified HTTPS API authentication succeeded"}
 	results = append(results, controllerResult)
 	response.Results = firewalltest.SortedResults(results)
-	for _, group := range []string{"Gateway access", "Ordinary Internet egress", "Directional inter-zone policy", "HOME protection", "Appliance administration"} {
-		passed := true
-		found := false
-		for _, result := range response.Results {
-			if result.Group == group {
-				found = true
-				passed = passed && result.Status == "PASS"
-			}
-		}
-		if found {
-			_ = display.TestResult(group, passed)
-		}
-	}
 
 	cleanupResponse, cleanupErr := invokeFirewallTestHost(context.Background(), host, firewalltest.Request{Version: firewalltest.ProtocolVersion, Action: "cleanup"})
-	display.Progress(3, "Temporary fixtures cleaned")
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall test", CurrentStep: 3, TotalSteps: 3, Detail: "Temporary fixtures cleaned"})
 	if cleanupErr != nil || !cleanupResponse.OK || !cleanupResponse.CleanupOK {
 		return fmt.Errorf("firewall test cleanup failed: %s", helperResponseDetail(cleanupResponse, cleanupErr))
 	}
@@ -210,8 +206,32 @@ func runFirewallTestCleanup(host firewallmodule.HostClient, out io.Writer) error
 	if helperErr != nil || !response.OK || !response.CleanupOK {
 		return fmt.Errorf("firewall test cleanup failed: %s", helperResponseDetail(response, helperErr))
 	}
-	fmt.Fprintln(out, "Firewall test cleanup: PASS (no recognised leftovers remain)")
+	if response.CleanupRemoved {
+		fmt.Fprintln(out, "Firewall test cleanup: PASS (recognised leftovers removed)")
+	} else {
+		fmt.Fprintln(out, "Firewall test cleanup: PASS (no recognised leftovers remain)")
+	}
 	return nil
+}
+
+func cleanupFirewallTestWithRetry(host firewallmodule.HostClient) (firewalltest.Response, error) {
+	deadline := time.Now().Add(90 * time.Second)
+	var last firewalltest.Response
+	var lastErr error
+	for time.Now().Before(deadline) {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		response, err := invokeFirewallTestHost(cleanupCtx, host, firewalltest.Request{Version: firewalltest.ProtocolVersion, Action: "cleanup"})
+		cancel()
+		last, lastErr = response, err
+		if err == nil && response.OK && response.CleanupOK {
+			return response, nil
+		}
+		if !strings.Contains(helperResponseDetail(response, err), "another firewall test is already running") {
+			return response, err
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return last, lastErr
 }
 
 func invokeFirewallTestHost(ctx context.Context, host firewallmodule.HostClient, request firewalltest.Request) (firewalltest.Response, error) {
@@ -247,17 +267,12 @@ func verifyPhase4AScope(ctx context.Context, host firewallmodule.HostClient, pro
 	if _, err := host.Run(ctx, "set -eu; for unit in kea-dhcp4-server kea-dhcp-ddns-server dnsmasq; do if systemctl is-active --quiet \"$unit\" || systemctl is-enabled --quiet \"$unit\"; then echo \"unexpected active or enabled HOME DHCP service: $unit\" >&2; exit 1; fi; done"); err != nil {
 		return fmt.Errorf("read Host HOME DHCP service ownership: %w", err)
 	}
-	dhcp, err := provider.UCIGet(ctx, "dhcp")
+	dhcp, err := providerDHCPConfigViaHost(ctx, host)
 	if err != nil {
 		return fmt.Errorf("read provider DHCP scope: %w", err)
 	}
-	if section, ok := dhcp["boetticher_home"]; !ok || section.Type != "dhcp" || section.Options["ignore"] != "1" {
-		return errors.New("provider HOME DHCP ownership is not explicitly disabled")
-	}
-	for name := range dhcp {
-		if strings.HasPrefix(name, "boetticher_") && name != "boetticher_home" {
-			return fmt.Errorf("provider DHCP scope unexpectedly contains Boetticher section %s", name)
-		}
+	if err := validateProviderDHCPConfig(dhcp); err != nil {
+		return err
 	}
 	if _, err := provider.UCIGet(ctx, "network"); err != nil {
 		return fmt.Errorf("read provider network scope: %w", err)
@@ -267,6 +282,38 @@ func verifyPhase4AScope(ctx context.Context, host firewallmodule.HostClient, pro
 	}
 	if len(desired.Zones) != len(firewalltest.ZoneOrder) {
 		return errors.New("Phase 4A scope does not contain exactly six zones")
+	}
+	return nil
+}
+
+func providerDHCPConfigViaHost(ctx context.Context, host firewallmodule.HostClient) (string, error) {
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+fmt.Sprint(firewallmodule.ProviderVMID)+" --synchronous 1 -- /bin/cat /etc/config/dhcp")
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		ExitCode int    `json:"exitcode"`
+		Data     string `json:"out-data"`
+		Error    string `json:"err-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &response); err != nil {
+		return "", errors.New("provider guest agent returned malformed DHCP configuration")
+	}
+	if response.ExitCode != 0 {
+		return "", fmt.Errorf("provider guest agent DHCP configuration read failed (%d): %s", response.ExitCode, strings.TrimSpace(response.Error))
+	}
+	return response.Data, nil
+}
+
+func validateProviderDHCPConfig(config string) error {
+	if !strings.Contains(config, "config dhcp 'boetticher_home'") || !strings.Contains(config, "option ignore '1'") {
+		return errors.New("provider HOME DHCP ownership is not explicitly disabled")
+	}
+	for _, line := range strings.Split(config, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "config ") && strings.Contains(line, "'boetticher_") && !strings.Contains(line, "'boetticher_home'") {
+			return fmt.Errorf("provider DHCP scope unexpectedly contains %s", line)
+		}
 	}
 	return nil
 }

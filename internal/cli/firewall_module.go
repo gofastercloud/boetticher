@@ -157,7 +157,7 @@ func firewallPlanChanges(ctx context.Context, current model.Site, desired firewa
 }
 
 func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (err error) {
-	options, err := parseFirewallOptions("module firewall apply", args, false)
+	options, err := parseFirewallOptions("module firewall apply", args, true)
 	if err != nil {
 		return err
 	}
@@ -246,6 +246,9 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if err != nil {
 		return err
 	}
+	if err := waitProviderAPI(ctx, provider); err != nil {
+		return fmt.Errorf("wait for firewall provider management API: %w", err)
+	}
 	display.Progress(5, "Network reconciled")
 	networkCurrent, err := provider.UCIGet(ctx, "network")
 	if err != nil {
@@ -279,6 +282,24 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	fmt.Fprintf(out, "  Management: established\n  Network: applied (%d change(s))\n  Policy: applied (%d change(s))\n  Firewall: ready\n\nFirewall: PASS\n", networkChanges, firewallChanges)
 	_ = errOut
 	return nil
+}
+
+func waitProviderAPI(ctx context.Context, provider *openwrt.Client) error {
+	readinessCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var last error
+	for {
+		if err := provider.Authenticate(readinessCtx); err == nil {
+			return nil
+		} else {
+			last = err
+		}
+		select {
+		case <-readinessCtx.Done():
+			return fmt.Errorf("%w (last check: %v)", readinessCtx.Err(), last)
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func runFirewallStatus(args []string, out io.Writer) error {

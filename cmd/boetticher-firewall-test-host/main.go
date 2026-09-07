@@ -39,6 +39,10 @@ type probeObservation struct {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(firewalltest.HelperVersion)
+		return
+	}
 	if len(os.Args) > 1 {
 		if handleChild(os.Args[1:]) {
 			return
@@ -305,17 +309,23 @@ func chooseAddress(ctx context.Context, namespace string, zone firewalltest.Zone
 	if err != nil {
 		return "", fmt.Errorf("choose %s test address: %w", zone.Name, err)
 	}
+	conflicts := []string{}
 	for _, candidate := range candidates {
 		result, runErr := nativeResult(ctx, "netns", "exec", namespace, "arping", "-D", "-I", "eth0", "-c", "2", "-w", "3", candidate)
-		if runErr == nil {
-			return "", fmt.Errorf("refusing %s test address %s: duplicate address detected", zone.Name, candidate)
-		}
-		if result.exitCode == 1 && strings.Contains(result.output, "100% packet loss") {
+		if arpingAddressFree(result.output) {
 			return candidate, nil
+		}
+		if runErr == nil {
+			conflicts = append(conflicts, candidate)
+			continue
 		}
 		return "", fmt.Errorf("check %s test address %s: %s", zone.Name, candidate, strings.TrimSpace(result.output))
 	}
-	return "", fmt.Errorf("no free test address remained in %s .250-.254", zone.Name)
+	return "", fmt.Errorf("no free test address remained in %s .250-.254 (conflicts: %s)", zone.Name, strings.Join(conflicts, ", "))
+}
+
+func arpingAddressFree(output string) bool {
+	return strings.Contains(output, "100% packet loss") || strings.Contains(output, "Received 0 response(s)")
 }
 
 func startListeners(ctx context.Context, fixtures []ownedFixture) ([]*exec.Cmd, error) {
@@ -570,7 +580,10 @@ func cleanupOnly() firewalltest.Response {
 	defer lock.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := cleanupOwnedAfterCrash(ctx); err != nil {
+	report, err := cleanupOwnedAfterCrash(ctx)
+	response.CleanupFound = report.Found
+	response.CleanupRemoved = report.Removed
+	if err != nil {
 		response.OK = false
 		response.Error = err.Error()
 		return response
@@ -585,10 +598,14 @@ func cleanupCreated(ctx context.Context, fixtures []ownedFixture) error {
 	for index := len(fixtures) - 1; index >= 0; index-- {
 		fixture := fixtures[index]
 		if fixture.createdNS && resourcePresent(fixture.namespace) {
-			cleanupErr = errors.Join(cleanupErr, native(ctx, "netns", "del", fixture.namespace))
+			if err := native(ctx, "netns", "del", fixture.namespace); err != nil && resourcePresent(fixture.namespace) {
+				cleanupErr = errors.Join(cleanupErr, err)
+			}
 		}
 		if fixture.createdVeth && resourcePresent(fixture.hostVeth) {
-			cleanupErr = errors.Join(cleanupErr, native(ctx, "link", "del", fixture.hostVeth))
+			if err := native(ctx, "link", "del", fixture.hostVeth); err != nil && resourcePresent(fixture.hostVeth) {
+				cleanupErr = errors.Join(cleanupErr, err)
+			}
 		}
 		if resourcePresent(fixture.namespace) || resourcePresent(fixture.hostVeth) {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("test resource %s or %s remains", fixture.namespace, fixture.hostVeth))
@@ -597,8 +614,14 @@ func cleanupCreated(ctx context.Context, fixtures []ownedFixture) error {
 	return cleanupErr
 }
 
-func cleanupOwnedAfterCrash(ctx context.Context) error {
+type cleanupReport struct {
+	Found   bool
+	Removed bool
+}
+
+func cleanupOwnedAfterCrash(ctx context.Context) (cleanupReport, error) {
 	var cleanupErr error
+	report := cleanupReport{}
 	for _, zone := range firewalltest.ZoneOrder {
 		namespace := firewalltest.NamespaceName(zone)
 		hostVeth := firewalltest.FixtureName(zone) + "-h"
@@ -606,6 +629,7 @@ func cleanupOwnedAfterCrash(ctx context.Context) error {
 		if !nsPresent && !vethPresent {
 			continue
 		}
+		report.Found = true
 		if !nsPresent || !vethPresent {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("ownership of reserved resource %s or %s is ambiguous", namespace, hostVeth))
 			continue
@@ -624,6 +648,7 @@ func cleanupOwnedAfterCrash(ctx context.Context) error {
 		if err := native(ctx, "netns", "del", namespace); err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove %s namespace: %w", namespace, err))
 		}
+		report.Removed = true
 		if resourcePresent(hostVeth) {
 			if err := native(ctx, "link", "del", hostVeth); err != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove %s veth: %w", hostVeth, err))
@@ -633,7 +658,7 @@ func cleanupOwnedAfterCrash(ctx context.Context) error {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("verify cleanup of %s or %s", namespace, hostVeth))
 		}
 	}
-	return cleanupErr
+	return report, cleanupErr
 }
 
 func verifyOwnership(ctx context.Context, namespace, hostVeth string, zone firewalltest.Zone) (bool, error) {
@@ -755,7 +780,8 @@ func nativeResult(ctx context.Context, args ...string) (nativeOutput, error) {
 	if len(args) == 0 {
 		return nativeOutput{}, errors.New("native command is required")
 	}
-	command := exec.CommandContext(ctx, nativeTool(args[0]), args[1:]...)
+	path, commandArgs := nativeCommand(args)
+	command := exec.CommandContext(ctx, path, commandArgs...)
 	output, err := command.CombinedOutput()
 	result := nativeOutput{output: string(output), exitCode: 0}
 	if command.ProcessState != nil {
@@ -768,6 +794,20 @@ func nativeResult(ctx context.Context, args ...string) (nativeOutput, error) {
 		return result, fmt.Errorf("%s: %s", args[0], strings.TrimSpace(string(output)))
 	}
 	return result, nil
+}
+
+func nativeCommand(args []string) (string, []string) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	switch args[0] {
+	case "netns", "link":
+		return nativeTool("ip"), args
+	case "vlan":
+		return nativeTool("bridge"), append([]string{"vlan"}, args[1:]...)
+	default:
+		return nativeTool(args[0]), args[1:]
+	}
 }
 
 func nativeTool(name string) string {
