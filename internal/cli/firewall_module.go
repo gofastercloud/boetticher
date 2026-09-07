@@ -196,7 +196,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	}
 	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 3, TotalSteps: 7, Detail: "Provider running"})
 	trust, trustErr := firewallmodule.LoadTrust(stateDir)
-	if errors.Is(trustErr, os.ErrNotExist) && bootstrapNeeded {
+	if errors.Is(trustErr, os.ErrNotExist) {
 		trust, err = captureProviderTrust(ctx, host)
 		if err != nil {
 			return err
