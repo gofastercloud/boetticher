@@ -43,7 +43,7 @@ type HostApplyResult struct {
 // the authenticated Host's QEMU guest agent. It is bootstrap-only; normal API
 // requests use the stored certificate as verified TLS trust.
 func CaptureProviderTrustViaHost(ctx context.Context, host HostClient) ([]byte, error) {
-	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/busybox base64 /etc/uhttpd.crt")
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /usr/bin/base64 /etc/uhttpd.crt")
 	if err != nil {
 		return nil, fmt.Errorf("read provider certificate through Host guest agent: %w", err)
 	}

@@ -21,11 +21,12 @@ const (
 	OpenWrtImageBuilderURL   = "https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-imagebuilder-25.12.5-x86-64.Linux-x86_64.tar.zst"
 	OpenWrtImageProfile      = "generic"
 	OpenWrtImageArchitecture = "x86/64"
+	OpenWrtImageContract     = "v2"
 )
 
 var OpenWrtPackages = []string{
 	"uhttpd", "uhttpd-mod-ubus", "rpcd", "rpcd-mod-file", "rpcd-mod-iwinfo",
-	"px5g-mbedtls", "ca-bundle", "firewall4", "nftables", "qemu-ga",
+	"px5g-mbedtls", "coreutils-base64", "ca-bundle", "firewall4", "nftables", "qemu-ga",
 }
 
 type Image struct {
@@ -117,7 +118,7 @@ func prepareImagePath(spec ImageSpec) (string, error) {
 	if spec.CacheDir == "" || spec.ManagementAddress == "" || spec.ManagementNetmask == "" || spec.ManagementGateway == "" || spec.ControllerAddress == "" || spec.PasswordHash == "" || spec.BuilderScript == "" {
 		return "", errors.New("OpenWrt image cache, HOME address/network/gateway, Controller address, password hash, and builder script are required")
 	}
-	name := "openwrt-" + OpenWrtVersion + "-" + OpenWrtImageBuilder + "-x86-64.img"
+	name := "openwrt-" + OpenWrtVersion + "-" + OpenWrtImageBuilder + "-" + OpenWrtImageContract + "-x86-64.img"
 	path := filepath.Join(spec.CacheDir, name)
 	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
 		return "", err

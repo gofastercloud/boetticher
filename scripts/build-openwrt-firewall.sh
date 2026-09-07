@@ -137,7 +137,7 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
 }
 EOF
 
-packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables qemu-ga'
+packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls coreutils-base64 ca-bundle firewall4 nftables qemu-ga'
 log "checking ImageBuilder host prerequisites"
 make -C "$builder" TOPDIR="$builder" -f include/prereq-build.mk prereq IB=1 V=s
 touch "$builder/staging_dir/host/.prereq-build"

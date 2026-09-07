@@ -10,7 +10,7 @@ import (
 
 func TestEnsureImageReusesPinnedCacheWithoutRunningBuilder(t *testing.T) {
 	dir := t.TempDir()
-	name := "openwrt-" + OpenWrtVersion + "-" + OpenWrtImageBuilder + "-x86-64.img"
+	name := "openwrt-" + OpenWrtVersion + "-" + OpenWrtImageBuilder + "-" + OpenWrtImageContract + "-x86-64.img"
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte("qualified image bytes"), 0600); err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestEnsureImageReusesPinnedCacheWithoutRunningBuilder(t *testing.T) {
 }
 
 func TestImageConstantsPinOfficialBuildInputs(t *testing.T) {
-	if OpenWrtVersion != "25.12.5" || OpenWrtImageBuilder != "r33051-f5dae5ece4" || !strings.Contains(OpenWrtImageBuilderURL, OpenWrtVersion) || OpenWrtImageProfile != "generic" || OpenWrtImageArchitecture != "x86/64" {
+	if OpenWrtVersion != "25.12.5" || OpenWrtImageBuilder != "r33051-f5dae5ece4" || !strings.Contains(OpenWrtImageBuilderURL, OpenWrtVersion) || OpenWrtImageProfile != "generic" || OpenWrtImageArchitecture != "x86/64" || OpenWrtImageContract != "v2" {
 		t.Fatalf("OpenWrt build pins are incomplete")
 	}
 	if len(OpenWrtPackages) == 0 {
