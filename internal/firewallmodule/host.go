@@ -155,7 +155,7 @@ func EnsureHostProvider(ctx context.Context, host HostClient, storage string, im
 		if err := host.Copy(ctx, image.Path, hostImagePath); err != nil {
 			return HostApplyResult{}, err
 		}
-		create := "set -eu; image=" + shellQuote(hostImagePath) + "; trap 'rm -f \"$image\"' EXIT HUP INT TERM; qm create " + itoa(ProviderVMID) + " --name " + shellQuote(ProviderName) + " --memory 2048 --cores 2 --ostype l26 --onboot 1 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0;net0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+providerOwnerTag) + " --net0 " + shellQuote(hostNIC(ProviderNIC0, "vmbr0")) + " --net1 " + shellQuote(hostNIC(ProviderNIC1, "vmbr1")) + "; disk=$(qm importdisk " + itoa(ProviderVMID) + " \"$image\" " + shellQuote(storage) + " --format raw | awk -F': ' '/unused0:/ { print $2; exit }'); test -n \"$disk\"; qm set " + itoa(ProviderVMID) + " --scsi0 \"$disk\"; qm start " + itoa(ProviderVMID)
+		create := "set -eu; image=" + shellQuote(hostImagePath) + "; trap 'rm -f \"$image\"' EXIT HUP INT TERM; qm create " + itoa(ProviderVMID) + " --name " + shellQuote(ProviderName) + " --memory 2048 --cores 2 --ostype l26 --onboot 1 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0;net0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+providerOwnerTag) + " --net0 " + shellQuote(hostNIC(ProviderNIC0, "vmbr0")) + " --net1 " + shellQuote(hostNIC(ProviderNIC1, "vmbr1")) + "; import_output=$(qm importdisk " + itoa(ProviderVMID) + " \"$image\" " + shellQuote(storage) + " --format raw); disk=$(printf '%s\\n' \"$import_output\" | awk -F\"'\" '/imported disk/ { print $2; exit }'); if [ -z \"$disk\" ]; then disk=$(printf '%s\\n' \"$import_output\" | awk -F': ' '/unused0:/ { print $2; exit }'); fi; test -n \"$disk\"; case \"$disk\" in " + shellQuote(storage+":") + "*) ;; *) echo 'imported firewall disk has an unexpected storage identity' >&2; exit 1 ;; esac; qm set " + itoa(ProviderVMID) + " --scsi0 \"$disk\"; qm start " + itoa(ProviderVMID)
 		if _, err := host.Run(ctx, create); err != nil {
 			return HostApplyResult{}, fmt.Errorf("create firewall provider %s: %w", ProviderName, err)
 		}
@@ -176,13 +176,19 @@ func EnsureHostProvider(ctx context.Context, host HostClient, storage string, im
 	}
 	changed := false
 	if !strings.Contains(status.Config, "scsi0:") {
-		if err := requireImage(image); err != nil {
-			return HostApplyResult{}, err
+		disk := unusedDisk(status.Config, storage)
+		command := ""
+		if disk != "" {
+			command = "qm set " + itoa(ProviderVMID) + " --scsi0 " + shellQuote(disk)
+		} else {
+			if err := requireImage(image); err != nil {
+				return HostApplyResult{}, err
+			}
+			if err := host.Copy(ctx, image.Path, hostImagePath); err != nil {
+				return HostApplyResult{}, err
+			}
+			command = "set -eu; image=" + shellQuote(hostImagePath) + "; trap 'rm -f \"$image\"' EXIT HUP INT TERM; import_output=$(qm importdisk " + itoa(ProviderVMID) + " \"$image\" " + shellQuote(storage) + " --format raw); disk=$(printf '%s\\n' \"$import_output\" | awk -F\"'\" '/imported disk/ { print $2; exit }'); if [ -z \"$disk\" ]; then disk=$(printf '%s\\n' \"$import_output\" | awk -F': ' '/unused0:/ { print $2; exit }'); fi; test -n \"$disk\"; case \"$disk\" in " + shellQuote(storage+":") + "*) ;; *) echo 'imported firewall disk has an unexpected storage identity' >&2; exit 1 ;; esac; qm set " + itoa(ProviderVMID) + " --scsi0 \"$disk\""
 		}
-		if err := host.Copy(ctx, image.Path, hostImagePath); err != nil {
-			return HostApplyResult{}, err
-		}
-		command := "set -eu; image=" + shellQuote(hostImagePath) + "; trap 'rm -f \"$image\"' EXIT HUP INT TERM; disk=$(qm importdisk " + itoa(ProviderVMID) + " \"$image\" " + shellQuote(storage) + " --format raw | awk -F': ' '/unused0:/ { print $2; exit }'); test -n \"$disk\"; qm set " + itoa(ProviderVMID) + " --scsi0 \"$disk\""
 		if _, err := host.Run(ctx, command); err != nil {
 			return HostApplyResult{}, fmt.Errorf("attach firewall provider disk: %w", err)
 		}
@@ -281,7 +287,18 @@ func validateHostProvider(status HostProviderStatus, storage string) error {
 	if disk := configLine(status.Config, ProviderDisk); disk != "" && !strings.HasPrefix(disk, storage+":") {
 		return fmt.Errorf("HOLD: firewall provider disk is not on %s", storage)
 	}
+	if disk := configLine(status.Config, "unused0"); disk != "" && !strings.HasPrefix(disk, storage+":") {
+		return fmt.Errorf("HOLD: firewall provider unused disk is not on %s", storage)
+	}
 	return nil
+}
+
+func unusedDisk(config, storage string) string {
+	disk := configLine(config, "unused0")
+	if strings.HasPrefix(disk, storage+":") {
+		return disk
+	}
+	return ""
 }
 
 func requireImage(image Image) error {
