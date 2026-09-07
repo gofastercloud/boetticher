@@ -31,7 +31,12 @@ func openNativeStreamDeck(ctx context.Context, config StreamDeckConfig, brightne
 		_ = device.Close(context.Background())
 		return nil, fmt.Errorf("unsupported StreamDeck key count %d", device.ButtonCount())
 	}
-	deck, err := decklib.NewFromDevice(ctx, device)
+	// The pinned library starts a button-read goroutine from NewFromDevice and
+	// its USB read has no bounded URB timeout. Keep that optional input loop
+	// canceled so a faulty input endpoint cannot block the output display.
+	inputCtx, cancelInput := context.WithCancel(context.Background())
+	cancelInput()
+	deck, err := decklib.NewFromDevice(inputCtx, device)
 	if err != nil {
 		_ = device.Close(context.Background())
 		return nil, err
