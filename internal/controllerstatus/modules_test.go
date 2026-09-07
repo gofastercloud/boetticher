@@ -2,6 +2,7 @@ package controllerstatus
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,14 +14,17 @@ func TestModuleCheckerReusesNativeFirewallStatusCommand(t *testing.T) {
 		CommandPath: "/usr/local/bin/boetticher",
 		RunCommand: func(_ context.Context, path string, args ...string) ([]byte, error) {
 			command = path + " " + strings.Join(args, " ")
-			return []byte("Firewall: PASS\n"), nil
+			if strings.Join(args, " ") == "module firewall status" {
+				return []byte("Firewall: PASS\n"), nil
+			}
+			return []byte("capability: not configured\n"), errors.New("not configured")
 		},
 	}
 	result := checker.Check(context.Background())
 	if !result.Firewall.Configured || !result.Firewall.Healthy {
 		t.Fatalf("healthy firewall result = %#v", result.Firewall)
 	}
-	if !result.DHCPNTP.Configured || result.DHCPNTP.State != Failed || !result.DNS.Configured || result.DNS.State != Failed || result.DHCPNTP.Detail == "" || result.DNS.Detail == "" {
+	if result.DHCPNTP.Configured || result.DHCPNTP.State != Off || result.DNS.Configured || result.DNS.State != Off || result.DHCPNTP.Detail == "" || result.DNS.Detail == "" {
 		t.Fatalf("unimplemented capability result = %#v", result)
 	}
 	if command != "/usr/local/bin/boetticher module firewall status" {
@@ -31,14 +35,14 @@ func TestModuleCheckerReusesNativeFirewallStatusCommand(t *testing.T) {
 	}
 }
 
-func TestModuleCheckerKeepsUnimplementedCapabilitiesRed(t *testing.T) {
+func TestModuleCheckerTreatsUnconfiguredCapabilitiesAsOff(t *testing.T) {
 	checker := ModuleChecker{FirewallCommand: func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true, Detail: "ok"} }}
 	result := checker.Check(context.Background())
 	if !result.Firewall.Configured || !result.Firewall.Healthy {
 		t.Fatalf("firewall result = %#v", result.Firewall)
 	}
-	if !result.DHCPNTP.Configured || result.DHCPNTP.State != Failed || !result.DNS.Configured || result.DNS.State != Failed || !strings.Contains(result.DHCPNTP.Detail, "not implemented") || !strings.Contains(result.DNS.Detail, "not implemented") {
-		t.Fatalf("unimplemented capabilities did not remain red: %#v", result)
+	if result.DHCPNTP.Configured || result.DHCPNTP.State != Off || result.DNS.Configured || result.DNS.State != Off || !strings.Contains(result.DHCPNTP.Detail, "not configured") || !strings.Contains(result.DNS.Detail, "not configured") {
+		t.Fatalf("unconfigured capabilities were not off: %#v", result)
 	}
 }
 
@@ -51,8 +55,8 @@ func TestDaemonMapsModuleStatusToExistingDisplaySlots(t *testing.T) {
 	d.Modules = func(context.Context) ModuleStatus {
 		return ModuleStatus{
 			Firewall: CheckResult{Configured: true, Healthy: true, Detail: "firewall provider is running"},
-			DHCPNTP:  CheckResult{Configured: true, State: Failed, Detail: "DHCP/DDNS/NTP capability is not implemented"},
-			DNS:      CheckResult{Configured: true, State: Failed, Detail: "DNS capability is not implemented"},
+			DHCPNTP:  CheckResult{Configured: true, State: Failed, Detail: "DHCP/NTP capability is unavailable"},
+			DNS:      CheckResult{Configured: true, State: Failed, Detail: "DNS capability is unavailable"},
 		}
 	}
 	d.Now = func() time.Time { return time.Unix(100, 0) }

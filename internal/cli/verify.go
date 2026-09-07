@@ -214,7 +214,7 @@ func liveGatewayHealthResults(siteDir string, s model.Site, ageIdentity string) 
 	if err != nil {
 		return fail(err.Error())
 	}
-	serviceDetail := fmt.Sprintf("nftables=%s, kea-dhcp4-server=%s, kea-dhcp-ddns-server=%s, dnsmasq=%s", liveStatus.Services["nftables"], liveStatus.Services["kea-dhcp4-server"], liveStatus.Services["kea-dhcp-ddns-server"], liveStatus.Services["dnsmasq"])
+	serviceDetail := fmt.Sprintf("nftables=%s, dnsmasq=%s, stubby=%s, sysntpd=%s", liveStatus.Services["nftables"], liveStatus.Services["dnsmasq"], liveStatus.Services["stubby"], liveStatus.Services["sysntpd"])
 	services := checkResult(checkManagedGatewayServices, "PASS", serviceDetail)
 	if err := validateDHCPServices(liveStatus); err != nil {
 		services.Status = "FAIL"
@@ -266,6 +266,13 @@ func liveGatewayHealthResults(siteDir string, s model.Site, ageIdentity string) 
 		publication.Detail = strings.Join(parts, ", ")
 	}
 	return []statusmodel.CheckResult{upstream, publication, services}
+}
+
+func validateDHCPServices(status gatewayLiveStatus) error {
+	if status.Services["dnsmasq"] != "active" {
+		return errors.New("native dnsmasq service is not active")
+	}
+	return nil
 }
 
 func healthStatusReport(revision, observedAt string, results []statusmodel.CheckResult) statusmodel.Report {

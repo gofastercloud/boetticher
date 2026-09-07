@@ -31,12 +31,15 @@ const (
 var ZoneOrder = []string{"TRANSIT", "INFRA", "SERVERS", "TRUSTED", "SANDBOX", "MGMT"}
 
 type Zone struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	VLAN    int    `json:"vlan"`
-	Subnet  string `json:"subnet"`
-	Gateway string `json:"gateway"`
-	Address string `json:"address,omitempty"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	VLAN         int    `json:"vlan"`
+	Subnet       string `json:"subnet"`
+	Gateway      string `json:"gateway"`
+	Address      string `json:"address,omitempty"`
+	DHCPMode     string `json:"dhcp_mode,omitempty"`
+	ClientMAC    string `json:"client_mac,omitempty"`
+	ExpectedName string `json:"expected_name,omitempty"`
 }
 
 type Request struct {
@@ -48,6 +51,8 @@ type Request struct {
 	HomeProxmox    string `json:"home_proxmox,omitempty"`
 	HomeController string `json:"home_controller,omitempty"`
 	ProviderHome   string `json:"provider_home,omitempty"`
+	Service        string `json:"service,omitempty"`
+	DNSHost        string `json:"dns_host,omitempty"`
 }
 
 type Result struct {
@@ -126,11 +131,19 @@ func ValidateRequest(request Request) error {
 	if request.Version != ProtocolVersion {
 		return errors.New("unsupported firewall test request")
 	}
-	if request.Action != "run" && request.Action != "cleanup" {
+	if request.Action != "run" && request.Action != "cleanup" && request.Action != "client-services" {
 		return errors.New("unsupported firewall test action")
 	}
 	if request.Action == "cleanup" {
 		return nil
+	}
+	if request.Action == "client-services" {
+		if request.Service != "dhcp" && request.Service != "dns" {
+			return errors.New("client-services request requires DHCP or DNS service")
+		}
+		if len(request.Zones) != len(ZoneOrder) {
+			return errors.New("client-services request must contain six zones")
+		}
 	}
 	if len(request.Zones) != len(ZoneOrder) {
 		return errors.New("firewall test request must contain six zones")
@@ -167,9 +180,11 @@ func ValidateRequest(request Request) error {
 			if zone.VLAN < 1 || zone.VLAN > 4094 {
 				return fmt.Errorf("firewall test zone %s has an invalid VLAN", zone.Name)
 			}
-			publicAddress, publicErr := netip.ParseAddr(request.PublicAddress)
-			if publicErr != nil || !publicAddress.Is4() || request.PublicHost != PublicHost {
-				return errors.New("firewall test request has an invalid public HTTPS target")
+			if request.Action == "run" {
+				publicAddress, publicErr := netip.ParseAddr(request.PublicAddress)
+				if publicErr != nil || !publicAddress.Is4() || request.PublicHost != PublicHost {
+					return errors.New("firewall test request has an invalid public HTTPS target")
+				}
 			}
 			break
 		}
@@ -177,10 +192,12 @@ func ValidateRequest(request Request) error {
 			return fmt.Errorf("firewall test request is missing zone %s", expected)
 		}
 	}
-	for _, value := range []string{request.HomeProxmox, request.HomeController, request.ProviderHome} {
-		address, err := netip.ParseAddr(value)
-		if err != nil || !address.Is4() {
-			return errors.New("firewall test request contains an invalid HOME endpoint")
+	if request.Action == "run" {
+		for _, value := range []string{request.HomeProxmox, request.HomeController, request.ProviderHome} {
+			address, err := netip.ParseAddr(value)
+			if err != nil || !address.Is4() {
+				return errors.New("firewall test request contains an invalid HOME endpoint")
+			}
 		}
 	}
 	return nil

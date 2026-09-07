@@ -55,10 +55,6 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runAccess(args[1:], out)
 	case "firewall":
 		return runFirewall(args[1:], out)
-	case "dhcp":
-		return runDHCP(args[1:], out)
-	case "dns":
-		return runDNS(args[1:], out)
 	case "module":
 		return runModuleWithInput(args[1:], input, out, errOut)
 	case "config":
@@ -85,6 +81,10 @@ func retiredCommandError(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "dhcp":
+		return errors.New("boetticher dhcp is retired; use boetticher module dhcp")
+	case "dns":
+		return errors.New("boetticher dns is retired; use boetticher module dns")
 	case "foundation":
 		return errors.New("boetticher foundation is retired; use boetticher host apply, status, teardown, or reboot")
 	case "storage":

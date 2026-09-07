@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 const (
@@ -26,6 +28,7 @@ type VLANConfig struct {
 type NetworkConfig struct {
 	InternalBridge string     `yaml:"internal_bridge"`
 	VLANs          VLANConfig `yaml:"vlans"`
+	Domain         string     `yaml:"domain,omitempty"`
 }
 
 type ManagementPath struct {
@@ -62,12 +65,15 @@ type NetworkPlan struct {
 }
 
 func DefaultNetworkConfig() NetworkConfig {
-	return NetworkConfig{InternalBridge: InternalBridge, VLANs: VLANConfig{Transit: 5, Infra: 10, Servers: 20, Trusted: 30, Sandbox: 40, Mgmt: 99}}
+	return NetworkConfig{InternalBridge: InternalBridge, VLANs: VLANConfig{Transit: 5, Infra: 10, Servers: 20, Trusted: 30, Sandbox: 40, Mgmt: 99}, Domain: model.DefaultDomain}
 }
 
 func ValidateNetworkConfig(config NetworkConfig) error {
 	if config.InternalBridge != InternalBridge {
 		return fmt.Errorf("internal bridge must be %s", InternalBridge)
+	}
+	if config.Domain != "" && config.Domain != model.DefaultDomain {
+		return fmt.Errorf("network domain must be %s", model.DefaultDomain)
 	}
 	values := []int{config.VLANs.Transit, config.VLANs.Infra, config.VLANs.Servers, config.VLANs.Trusted, config.VLANs.Sandbox, config.VLANs.Mgmt}
 	seen := map[int]bool{}

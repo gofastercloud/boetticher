@@ -183,8 +183,9 @@ Controller StreamDeck service is removed during Controller bootstrap.
 
 The Host detail view also shows `FW`, `DHCP`, and `DNS` using the same coarse
 component states as Blinkt. `FW` consumes the native `module firewall status`
-result; DHCP/DDNS/NTP and DNS remain red error placeholders until their
-capabilities are implemented.
+result; the Phase 4B client-service slots consume the native `module dhcp
+status` and `module dns status` results. Unconfigured is off, while a
+configured-but-unavailable service is failed.
 
 ## Installed paths and maintenance
 

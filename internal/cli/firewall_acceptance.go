@@ -264,7 +264,7 @@ func firewallProviderClient(current model.Site, desired firewallmodule.DesiredSt
 }
 
 func verifyPhase4AScope(ctx context.Context, host firewallmodule.HostClient, provider *openwrt.Client, desired firewallmodule.DesiredState) error {
-	if _, err := host.Run(ctx, "set -eu; for unit in kea-dhcp4-server kea-dhcp-ddns-server dnsmasq; do if systemctl is-active --quiet \"$unit\" || systemctl is-enabled --quiet \"$unit\"; then echo \"unexpected active or enabled HOME DHCP service: $unit\" >&2; exit 1; fi; done"); err != nil {
+	if _, err := host.Run(ctx, "set -eu; for unit in dnsmasq stubby sysntpd; do if systemctl is-active --quiet \"$unit\" || systemctl is-enabled --quiet \"$unit\"; then echo \"unexpected active or enabled client service before Phase 4B: $unit\" >&2; exit 1; fi; done"); err != nil {
 		return fmt.Errorf("read Host HOME DHCP service ownership: %w", err)
 	}
 	dhcp, err := providerDHCPConfigViaHost(ctx, host)

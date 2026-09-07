@@ -50,7 +50,7 @@ Modules use the one deliberate third-level namespace:
 boetticher module <capability> <action> [flags]
 ```
 
-Capability names describe operator intent (`firewall`, `dhcp`, `dns`, `ntp`,
+Capability names describe operator intent (`firewall`, `dhcp`, `dns`,
 `vpn`, `monitoring`, `statuspage`, `printer`), not provider-specific or runtime
 names. Phase 4 network services are delivered capability-first. OpenWrt is the
 current provider implementation, not a public Module namespace. The supported
@@ -73,13 +73,12 @@ nouns in normal capability UX unless the operator genuinely needs them. Avoid
 hashes, manifests, evidence stores, generation counters, shadow inventories,
 and other audit machinery without a concrete operational requirement.
 
-Do not implement DHCP, DNS, VPN, physical trunking, or external-switch
-management during Phase 4A unless a strict implementation dependency is
-discovered and explicitly approved. The simple existing Controller status
-projection for the firewall is approved: use the existing status model,
-polling, debouncer, Blinkt slots, and StreamDeck Host-detail slots. Keep DHCP,
-DDNS/NTP, and DNS explicitly RED until their capabilities are implemented; do
-not add a status database or a second scheduler.
+Phase 4B implements DHCP and DNS as peer capabilities sharing the firewall
+appliance. DHCP-derived DNS and client-facing NTP are supporting behaviour,
+not standalone capabilities. Do not implement VPN, physical trunking, or
+external-switch management in this phase. Use the existing status model,
+polling, debouncer, Blinkt slots, and StreamDeck Host-detail slots; an
+unconfigured service is off, not a permanent red fault.
 
 Canonical verbs are `bootstrap`, `enroll`, `apply`, `status`, `plan`,
 `teardown`, `reboot`, and `test`. `apply` is the declarative Host operation;
@@ -177,6 +176,37 @@ retain `--confirm`, `--approve`, `--non-interactive`, or
   ledgers, transaction databases, or generic rollback engines for Host apply.
 
 ## Engineering
+
+### Capabilities and implementations
+
+Public commands express operator intent as `boetticher module <capability>
+<action> [flags]`. A capability may share an appliance, credentials, native
+configuration, and lifecycle resources with another capability. Handlers call
+ordinary internal functions; never delegate through hidden CLI aliases,
+recursive CLI execution, a private command namespace, or another API service.
+
+The installed `lab.yml` is authoritative for LAB and client-service intent.
+Defaults materialise only during approved mutation. Every writer preserves the
+other supported sections, and reservations/records remain desired state while
+leases and service observations remain native runtime state. Shared dnsmasq,
+Stubby, NTP, and firewall service rules have one coordinated internal owner;
+reconcile explicit owned sections and preserve unrelated provider state.
+
+Apply is the normal mutation verb; plan, status, and list operations are
+read-only, and an unchanged operation is a semantic no-op. Teardown disables
+its service, checks enabled dependants, and preserves the shared appliance.
+Provider and fixture failures are not successful deny results. Temporary probe
+fixtures are narrowly owned and cleaned after success, failure, timeout, or
+interruption; namespace time probes never set the Host clock.
+
+Readiness errors retain their failing boundary without leaking secrets. Normal
+retries never weaken trust or replace conflicting identity. Internal cleanup
+runs under its caller's ownership without recursively reacquiring the same
+operation lock, and cancellation receives a fresh cleanup budget. Physical
+input is tested independently of rendered output. Environment-blocked
+verification remains blocked, not PASS. Documentation, help, examples, and
+agent guidance change together; do not resurrect private-site, PKI, evidence,
+or deployment machinery for the supported client-service journey.
 
 Firewall acceptance uses the installed Controller CLI and the existing strict
 Host trust. Probe fixtures are temporary and independently cleaned up.

@@ -19,7 +19,7 @@ The public Module grammar has one normal third-level namespace:
 boetticher module <capability> <action> [flags]
 ```
 
-Examples of the intended shape are:
+Implemented Phase 4 capability examples are:
 
 ```text
 boetticher module firewall plan
@@ -28,16 +28,15 @@ boetticher module dhcp status
 boetticher module dhcp add-reservation
 boetticher module dns status
 boetticher module dns add-record
-boetticher module ntp status
 boetticher module vpn status
 boetticher module monitoring status
 boetticher module statuspage add-check
 boetticher module printer status
 ```
 
-These examples document the grammar and operator intent. The firewall
-capability is the first Phase 4 implementation; the remaining examples remain
-future capability contracts until their own phase is qualified.
+DHCP-derived DNS and client-facing NTP are supporting behaviour of the peer
+`dhcp` and `dns` capabilities, not standalone capabilities. VPN remains a
+future capability.
 
 ## Phase 4A firewall capability
 
@@ -62,8 +61,8 @@ OpenWrt is not a public Module namespace. The provider consumes the Host-owned
 VLAN-aware `vmbr1`; it never creates, repairs, or re-owns that bridge.
 
 Phase 4A configures IPv4 routing, inter-zone default-deny policy, and
-Controller-only provider management. DHCP and DNS are deliberately not
-configured. Provider state outside deterministic Boetticher-owned sections is
+Controller-only provider management. Provider state outside deterministic
+Boetticher-owned sections is
 preserved. Repeating `apply` when the provider and owned state are correct is a
 semantic no-op. `teardown --yes` removes only the exact firewall provider and
 Controller-local provider credential/trust, preserving Host trust, storage,
@@ -88,12 +87,12 @@ prompt. The acceptance rehearsal ends with `module firewall teardown --yes`
 and no firewall deployed; a later `status` reports absence with a nonzero exit
 and does not claim PASS.
 
-The existing Controller status monitor maps the same native firewall status
-command into the fixed `FW` Blinkt slot and the StreamDeck Host-detail view.
-`DHCP/NTP` and `DNS` remain red error placeholders until those capability
-checks are implemented;
-they use the same in-memory status model and polling loop, with no additional
-status database or scheduler.
+Phase 4B adds `module dns` and `module dhcp` as peer capabilities sharing this
+appliance. DHCP-derived DNS and client-facing NTP are supporting behaviour,
+not standalone modules. The status monitor consumes their bounded native
+status facts in the existing `DHCP/NTP` and `DNS` slots; unconfigured is off,
+configured-but-unavailable is failed, and no status database or scheduler is
+introduced.
 
 ## Capability, provider, runtime
 
@@ -101,7 +100,7 @@ Keep these concepts separate:
 
 | Concept | Meaning | Examples |
 | --- | --- | --- |
-| Capability | What the operator manages | firewall, DHCP, DNS, NTP, VPN, monitoring, status page, printer |
+| Capability | What the operator manages | firewall, DHCP, DNS, VPN, monitoring, status page, printer |
 | Provider | Software or appliance implementing a capability | gateway appliance, DNS resolver, monitoring service, status-page server |
 | Runtime | Where the provider executes | a gateway VM, a monitoring VM/LXC, or the Controller |
 

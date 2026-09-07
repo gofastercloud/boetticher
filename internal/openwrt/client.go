@@ -266,6 +266,16 @@ func (c *Client) InterfaceDump(ctx context.Context) (json.RawMessage, error) {
 	return append(json.RawMessage(nil), result...), nil
 }
 
+// ServiceList reads the provider's native service state for bounded
+// capability readiness checks. It does not start, stop, or reload services.
+func (c *Client) ServiceList(ctx context.Context) (json.RawMessage, error) {
+	result, err := c.callWithSession(ctx, "service", "list", map[string]any{})
+	if err != nil {
+		return nil, fmt.Errorf("read provider service status: %w", err)
+	}
+	return append(json.RawMessage(nil), result...), nil
+}
+
 // DefaultRouteActive reports whether the provider's native IPv4 interface
 // dump contains a routed default via a non-empty next hop.
 func DefaultRouteActive(runtime json.RawMessage) (bool, error) {

@@ -83,6 +83,16 @@ type OperationLock struct {
 
 func AcquireOperationLock(dir string) (*OperationLock, error) {
 	path := filepath.Join(dir, operationLockPath)
+	return acquireOperationLockPath(path)
+}
+
+// AcquireOperationLockAt reuses the same advisory lock implementation for a
+// supported installed runtime that does not have a private site directory.
+func AcquireOperationLockAt(path string) (*OperationLock, error) {
+	return acquireOperationLockPath(path)
+}
+
+func acquireOperationLockPath(path string) (*OperationLock, error) {
 	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
 		return nil, fmt.Errorf("validate deployment lock path: %w", err)
 	}

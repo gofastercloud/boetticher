@@ -23,13 +23,15 @@ type ModuleChecker struct {
 
 func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 	status := ModuleStatus{
-		DHCPNTP: CheckResult{Configured: true, State: Failed, Detail: "DHCP/DDNS/NTP capability is not implemented"},
-		DNS:     CheckResult{Configured: true, State: Failed, Detail: "DNS capability is not implemented"},
+		DHCPNTP: CheckResult{State: Off, Detail: "DHCP/NTP capability not configured"},
+		DNS:     CheckResult{State: Off, Detail: "DNS capability not configured"},
 	}
 	if c.FirewallCommand != nil {
 		status.Firewall = c.FirewallCommand(ctx)
 		return status
 	}
+	status.DHCPNTP = c.checkCapability(ctx, "module", "dhcp", "status", "DHCP/NTP")
+	status.DNS = c.checkCapability(ctx, "module", "dns", "status", "DNS")
 	run := c.RunCommand
 	if run == nil {
 		run = defaultCommand
@@ -49,6 +51,31 @@ func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 		status.Firewall = CheckResult{Configured: true, State: Failed, Detail: "firewall capability status is not healthy"}
 	}
 	return status
+}
+
+func (c ModuleChecker) checkCapability(ctx context.Context, args ...string) CheckResult {
+	label := args[len(args)-1]
+	commandArgs := args[:len(args)-1]
+	run := c.RunCommand
+	if run == nil {
+		run = defaultCommand
+	}
+	path := c.CommandPath
+	if path == "" {
+		path = "/usr/local/bin/boetticher"
+	}
+	output, err := run(ctx, path, commandArgs...)
+	text := strings.TrimSpace(string(output))
+	if strings.Contains(strings.ToLower(text), "not configured") {
+		return CheckResult{State: Off, Detail: label + " capability not configured"}
+	}
+	if err != nil {
+		return CheckResult{Configured: true, State: Failed, Detail: label + " capability status check failed"}
+	}
+	if strings.Contains(text, ": PASS") {
+		return CheckResult{Configured: true, Healthy: true, State: Healthy, Detail: label + " capability is healthy"}
+	}
+	return CheckResult{Configured: true, State: Failed, Detail: label + " capability is not healthy"}
 }
 
 func moduleComponent(result CheckResult) Component {

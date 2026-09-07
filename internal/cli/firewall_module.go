@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 	"github.com/gofastercloud/boetticher/internal/controllerstatus"
 	"github.com/gofastercloud/boetticher/internal/firewallmodule"
@@ -69,6 +70,9 @@ func loadFirewallContext() (model.Site, firewallmodule.DesiredState, firewallmod
 	if hostConfig.Network != nil {
 		configuredNetwork = *hostConfig.Network
 	}
+	if configuredNetwork.Domain == "" {
+		configuredNetwork.Domain = model.DefaultDomain
+	}
 	if err := controllerhost.ValidateNetworkConfig(configuredNetwork); err != nil {
 		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, fmt.Errorf("validate Host network intent: %w", err)
 	}
@@ -77,7 +81,8 @@ func loadFirewallContext() (model.Site, firewallmodule.DesiredState, firewallmod
 		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, errors.New("Host VLAN intent does not match the six-zone firewall contract; run or fix host apply")
 	}
 	current := model.NewSite(hostConfig.Name, "controller-local", model.GatewayModeManaged)
-	desired, err := firewallmodule.DesiredFromSite(current)
+	current.Network.Domain = configuredNetwork.Domain
+	desired, err := firewallmodule.DesiredFromSiteWithServices(current, hostConfig.Modules)
 	if err != nil {
 		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, fmt.Errorf("validate firewall network intent: %w", err)
 	}
@@ -165,6 +170,11 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if err != nil {
 		return err
 	}
+	lock, err := acquireClientServicesLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	display := controllerstatus.StartApply("firewall apply", 7)
 	defer func() {
 		display.End(err)
@@ -353,6 +363,21 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 	if err != nil {
 		return err
 	}
+	hostConfig, err := controllerhost.LoadConfig()
+	if err != nil {
+		return err
+	}
+	if hostConfig.Modules.DNS != nil && clientservices.Enabled(hostConfig.Modules.DNS.Enabled) {
+		return errors.New("firewall teardown refused while DNS is enabled; run module dns teardown first")
+	}
+	if hostConfig.Modules.DHCP != nil && clientservices.Enabled(hostConfig.Modules.DHCP.Enabled) {
+		return errors.New("firewall teardown refused while DHCP is enabled; run module dhcp teardown first")
+	}
+	lock, err := acquireClientServicesLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	status, err := firewallmodule.InspectHostProvider(ctx, host)
@@ -442,6 +467,11 @@ func runFirewallReboot(args []string, input io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	lock, err := acquireClientServicesLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {

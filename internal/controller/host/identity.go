@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	SSHDirectory     = "/var/lib/boetticher/controller/ssh"
-	PrivateKeyPath   = SSHDirectory + "/id_ed25519"
-	PublicKeyPath    = SSHDirectory + "/id_ed25519.pub"
-	KnownHostsPath   = SSHDirectory + "/known_hosts"
-	LabConfigPath    = "/etc/boetticher/lab.yml"
-	ControllerKeyTag = "boetticher-controller"
+	SSHDirectory           = "/var/lib/boetticher/controller/ssh"
+	PrivateKeyPath         = SSHDirectory + "/id_ed25519"
+	PublicKeyPath          = SSHDirectory + "/id_ed25519.pub"
+	KnownHostsPath         = SSHDirectory + "/known_hosts"
+	LabConfigPath          = "/etc/boetticher/lab.yml"
+	ClientServicesLockPath = "/var/lib/boetticher/controller/client-services.lock"
+	ControllerKeyTag       = "boetticher-controller"
 )
 
 type CommandFunc func(context.Context, string, ...string) ([]byte, error)

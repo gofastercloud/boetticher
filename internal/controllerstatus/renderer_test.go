@@ -127,8 +127,8 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 	snapshot.Internet = InternetStatus{Component: Component{State: Healthy}, ThroughputMbps: 812, ThroughputAt: time.Now()}
 	snapshot.HostUpdates = Component{State: Attention, Detail: "Proxmox Host updates available"}
 	snapshot.Firewall = Component{State: Healthy, Detail: "firewall provider is running"}
-	snapshot.DHCPNTP = Component{State: Failed, Detail: "DHCP/DDNS/NTP capability is not implemented"}
-	snapshot.DNS = Component{State: Failed, Detail: "DNS capability is not implemented"}
+	snapshot.DHCPNTP = Component{State: Failed, Detail: "DHCP/NTP capability is unavailable"}
+	snapshot.DNS = Component{State: Failed, Detail: "DNS capability is unavailable"}
 	telemetry := ProxmoxSnapshot{
 		Host:      ProxmoxHostStats{Node: "lab-proxmox-01", Version: "pve-manager/9.2.2", CPUPercent: 18, MemoryUsed: 4 << 30, MemoryTotal: 8 << 30, Uptime: 25 * time.Hour},
 		Storage:   []StorageStats{{Name: "boetticher-data", Used: 45 << 30, Total: 100 << 30, Percent: 45}},

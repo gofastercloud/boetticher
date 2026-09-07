@@ -144,12 +144,13 @@ always:
 boetticher module <capability> <action> [flags]
 ```
 
-Examples for later capability work are `module firewall status`, `module dhcp
-add-reservation`, `module dns add-record`, `module ntp status`, `module vpn
-status`, `module monitoring status`, `module statuspage add-check`, and `module
-printer status`. Provider software, appliance names, daemons, guests, and
-Controller peripherals are not Module namespaces. Phase 3D documents this
-grammar; it does not start firewall or speculative Module implementation.
+The supported client-service order is `module firewall apply`, `module dns
+apply`, then `module dhcp apply`. DHCP-derived DNS and client-facing NTP are
+supporting behaviour of those two capabilities, not standalone Modules.
+Provider software, appliance names, daemons, guests, and Controller
+peripherals are not Module namespaces. Use the bounded resource commands under
+`module dhcp` and `module dns`; arbitrary provider configuration is not part of
+the public grammar.
 
 ## Recovery boundary
 

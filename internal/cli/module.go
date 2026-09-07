@@ -28,6 +28,9 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 			return fmt.Errorf("module capability %q does not implement action %q", capability, action)
 		}
 	}
+	if capability == "dns" || capability == "dhcp" {
+		return runClientServiceCapability(capability, action, remaining, input, out, errOut)
+	}
 	switch action {
 	case "status":
 		return runModuleStatus(capability, remaining, out)

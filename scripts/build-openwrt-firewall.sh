@@ -44,7 +44,7 @@ grep -F "REVISION:=${builder_revision}" "$builder/include/version.mk" >/dev/null
 test "$(uname -m)" = x86_64
 
 files="$work/files"
-mkdir -p "$files/etc/uci-defaults" "$files/usr/share/rpcd/acl.d"
+mkdir -p "$files/etc/uci-defaults" "$files/usr/share/rpcd/acl.d" "$files/etc/boetticher"
 cat >"$files/etc/uci-defaults/99-boetticher-firewall" <<EOF
 #!/bin/sh
 set -eu
@@ -62,6 +62,7 @@ uci -q set network.boetticher_home.delegate='0'
 uci -q set network.boetticher_home.ip6assign='0'
 uci -q delete dhcp.lan || true
 uci -q delete dhcp.wan || true
+uci -q delete dhcp.dnsmasq || true
 uci -q set dhcp.boetticher_home='dhcp'
 uci -q set dhcp.boetticher_home.interface='boetticher_home'
 uci -q set dhcp.boetticher_home.ignore='1'
@@ -103,6 +104,22 @@ uci -q set uhttpd.main.redirect_https='1'
 uci -q set uhttpd.main.listen_http='0.0.0.0:80'
 uci -q set uhttpd.main.listen_https='0.0.0.0:443'
 uci -q commit uhttpd
+mkdir -p /etc/boetticher
+touch /etc/boetticher/dhcp.leases
+chown dnsmasq:dnsmasq /etc/boetticher/dhcp.leases
+chmod 0640 /etc/boetticher/dhcp.leases
+uci -q delete system.ntp || true
+uci -q set system.ntp='timeserver'
+uci -q delete system.ntp.server || true
+uci -q add_list system.ntp.server='162.159.200.1'
+uci -q add_list system.ntp.server='162.159.200.123'
+uci -q add_list system.ntp.server='216.239.35.0'
+uci -q set system.ntp.enable_server='0'
+uci -q commit system
+/etc/init.d/dnsmasq disable 2>/dev/null || true
+/etc/init.d/stubby disable 2>/dev/null || true
+/etc/init.d/sysntpd disable 2>/dev/null || true
+/etc/init.d/odhcpd disable 2>/dev/null || true
 px5g selfsigned -days 3650 -newkey rsa:2048 -keyout /etc/uhttpd.key.new -out /etc/uhttpd.crt.new -subj /C=AU/ST=NSW/L=Sydney/O=Boetticher/CN=boetticher-firewall -addext subjectAltName=DNS:boetticher-firewall
 mv /etc/uhttpd.key.new /etc/uhttpd.key
 mv /etc/uhttpd.crt.new /etc/uhttpd.crt
@@ -126,7 +143,10 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
       },
       "uci": {
         "network": ["read"],
-        "firewall": ["read"]
+        "firewall": ["read"],
+        "dhcp": ["read"],
+        "stubby": ["read"],
+        "system": ["read"]
       }
     },
     "write": {
@@ -135,14 +155,17 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
       },
       "uci": {
         "network": ["read", "write"],
-        "firewall": ["read", "write"]
+        "firewall": ["read", "write"],
+        "dhcp": ["read", "write"],
+        "stubby": ["read", "write"],
+        "system": ["read", "write"]
       }
     }
   }
 }
 EOF
 
-packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables qemu-ga'
+packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables dnsmasq-full stubby qemu-ga'
 log "checking ImageBuilder host prerequisites"
 make -C "$builder" TOPDIR="$builder" -f include/prereq-build.mk prereq IB=1 V=s
 touch "$builder/staging_dir/host/.prereq-build"
