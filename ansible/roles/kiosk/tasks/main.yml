@@ -17,6 +17,9 @@
 - name: Configure the Companion baseline
   ansible.builtin.include_tasks: baseline.yml
 
+- name: Remove the retired standalone Blinkt service
+  ansible.builtin.include_tasks: retired-blinkt.yml
+
 - name: Require the separately streamed Companion read credential
   ansible.builtin.include_tasks: credential.yml
   vars:
@@ -37,10 +40,6 @@
   ansible.builtin.include_tasks: streamdeck.yml
   when: kiosk_streamdeck_enabled | bool
 
-- name: Configure Blinkt
-  ansible.builtin.include_tasks: blinkt.yml
-  when: kiosk_blinkt_enabled | default(false) | bool
-
 - name: Stop only installed disabled capability services
   ansible.builtin.include_tasks: disabled.yml
   loop:
@@ -49,7 +48,6 @@
     - {unit: pulse-kiosk.service, enabled: "{{ kiosk_display_enabled | bool }}"}
     - {unit: pulse-agent.service, enabled: "{{ kiosk_pulse_agent_enabled | bool }}"}
     - {unit: boetticher-streamdeck.service, enabled: "{{ kiosk_streamdeck_enabled | bool }}"}
-    - {unit: boetticher-blinkt.service, enabled: "{{ kiosk_blinkt_enabled | default(false) | bool }}"}
   loop_control:
     loop_var: capability
 
@@ -69,7 +67,6 @@
     that:
       - (companion_status.stdout | from_json).display == (kiosk_display_enabled | bool)
       - (companion_status.stdout | from_json).streamdeck == (kiosk_streamdeck_enabled | bool)
-      - (companion_status.stdout | from_json).blinkt == (kiosk_blinkt_enabled | default(false) | bool)
 
 - name: Remove superseded browser identity and telemetry assets after acceptance
   ansible.builtin.file:

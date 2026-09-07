@@ -109,6 +109,42 @@ retain `--confirm`, `--approve`, `--non-interactive`, or
 - Blinkt, StreamDeck, display, kiosk, and similar peripherals remain
   Controller implementation details, not Module namespaces.
 
+### Controller UX
+
+- `boetticher-status.service` is a lightweight, self-contained Controller
+  convenience for the fixed eight-pixel Blinkt layout; it is not monitoring,
+  qualification, or evidence machinery.
+- The status daemon owns Blinkt exclusively. Controller operations send
+  best-effort status/progress events rather than writing GPIO directly.
+- Status checks are simple, read-only, and infrequent. They must not depend on
+  Pulse, Prometheus, Loki, Alertmanager, Gatus, a logging Module, or an
+  external observability system.
+- Blinkt or status-daemon failure must never gate Controller, Host, or Module
+  operations.
+- The fixed operator layout is `CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES
+  HOST-UPDATES`; Controller and Host update indicators are read-only status,
+  not update or reboot workflows.
+- Controller update status may be green with no available updates, amber for
+  pending updates or the native reboot-required marker, or blue for an
+  explicit Boetticher configuration-staged event. Host update status may be
+  green with no Proxmox update/reboot requirement or amber when one exists.
+- Host Internet ping checks may run every 60 seconds, but the full speedtest
+  runs from the enrolled Host no more than hourly. Do not refresh APT lists,
+  install packages, or reboot from a status check.
+- Controller bootstrap always installs the status daemon and Host apply always
+  installs the release-built Host speedtest helper. Blinkt and StreamDeck are
+  optional peripherals: absent hardware may be reported as `NOT TESTED` or
+  retried by its service, but never blocks Controller or Host setup.
+- The attached StreamDeck, when enabled, is owned by `boetticher-status.service`
+  and is read-only navigation/inspection. It must reuse the shared coarse
+  status, Internet, and operation state; detailed Host telemetry may be cached
+  separately in memory. No StreamDeck input may reach mutation, shell, or
+  Proxmox-credential paths.
+- Do not add hashes, manifests, evidence, persistent status databases, or
+  synthetic monitoring journeys to improve LED correctness. Future Controller
+  peripherals should consume the shared status snapshot rather than becoming
+  Modules.
+
 ## Safety and lifecycle
 
 - Fail closed on trust, ownership, destructive, ambiguous, malformed, and

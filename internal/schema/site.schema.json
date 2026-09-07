@@ -135,9 +135,6 @@
     "CompanionConfig": {
       "additionalProperties": false,
       "properties": {
-        "blinkt": {
-          "$ref": "#/$defs/CompanionCapabilityConfig"
-        },
         "display": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
         },

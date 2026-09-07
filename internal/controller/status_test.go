@@ -24,6 +24,19 @@ func TestEvaluateSnapshotReportsEveryControllerCheck(t *testing.T) {
 	}
 }
 
+func TestMissingOptionalBlinktDoesNotBlockReadiness(t *testing.T) {
+	checks := EvaluateSnapshot(StatusSnapshot{Platform: true})
+	for _, check := range checks {
+		if check.Name == "GPIO" {
+			if check.Passed || !check.Optional || check.BlocksReadiness() {
+				t.Fatalf("missing Blinkt check = %#v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("GPIO check was omitted")
+}
+
 func TestResolveRuntimeRequiresVersionedReleasePath(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "releases", "one"), 0755); err != nil {

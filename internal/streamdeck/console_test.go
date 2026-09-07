@@ -1,8 +1,12 @@
 package streamdeck
 
 import (
-	"github.com/gofastercloud/boetticher/internal/companion"
+	"context"
+	"errors"
 	"testing"
+	"time"
+
+	"github.com/gofastercloud/boetticher/internal/companion"
 )
 
 func TestConsoleNavigationRemainsInBottomRow(t *testing.T) {
@@ -17,5 +21,22 @@ func TestConsoleNavigationRemainsInBottomRow(t *testing.T) {
 	}
 	if home[3].Target != "dns" || home[9].Action != "refresh" {
 		t.Fatal("wrong local actions")
+	}
+}
+
+func TestRunConsoleKeepsRetryingWhenStreamDeckIsAbsent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	err := RunConsole(ctx, Config{
+		PulseURL:      "https://monitor.example",
+		VendorID:      DefaultVendorID,
+		ProductID:     DefaultProductID,
+		Model:         DefaultModel,
+		CACertificate: "ca",
+	}, func(context.Context, Config) (Deck, error) {
+		return nil, errors.New("StreamDeck not present")
+	})
+	if err != nil {
+		t.Fatalf("missing StreamDeck blocked the console: %v", err)
 	}
 }

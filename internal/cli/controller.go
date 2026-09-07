@@ -86,6 +86,8 @@ func runControllerStatus(args []string, out io.Writer) error {
 		state := "FAIL"
 		if check.Passed {
 			state = "PASS"
+		} else if check.Optional {
+			state = "NOT TESTED"
 		} else {
 			fail = true
 		}

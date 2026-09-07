@@ -143,7 +143,7 @@ main() {
   [ -f "$payload/BUILD_ID" ] || die 'payload BUILD_ID is missing'
   build_id=$(tr -d '\r\n' <"$payload/BUILD_ID")
   case "$build_id" in ''|*[!A-Za-z0-9._-]*) die 'payload BUILD_ID is invalid' ;; esac
-  for required in "$payload/bin/boetticher" "$payload/controller/bootstrap.yml" "$payload/controller/requirements.txt" "$payload/controller/ansible.cfg" "$payload/controller/libexec/boetticher-bootstrap-led"; do
+  for required in "$payload/bin/boetticher" "$payload/bin/boetticher-status" "$payload/controller/bootstrap.yml" "$payload/controller/requirements.txt" "$payload/controller/ansible.cfg" "$payload/controller/roles/controller-baseline/files/boetticher-blinkt-driver" "$payload/controller/proxmox/libexec/boetticher-host-speedtest"; do
     [ -f "$required" ] || die "payload file is missing: $required"
   done
   [ -x "$payload/bin/boetticher" ] || die 'payload controller is not executable'
@@ -162,7 +162,7 @@ main() {
     mkdir -p "$install_stage"
     cp -R "$payload/bin" "$payload/controller" "$payload/BUILD_ID" "$install_stage/"
     chown -R root:root "$install_stage"
-    chmod 0755 "$install_stage/bin/boetticher" "$install_stage/controller/libexec/boetticher-bootstrap-led"
+    chmod 0755 "$install_stage/bin/boetticher" "$install_stage/bin/boetticher-status" "$install_stage/controller/roles/controller-baseline/files/boetticher-blinkt-driver" "$install_stage/controller/proxmox/libexec/boetticher-host-speedtest"
     chmod 0644 "$install_stage/BUILD_ID" "$install_stage/controller/requirements.txt" "$install_stage/controller/ansible.cfg" "$install_stage/controller/bootstrap.yml"
     mv "$install_stage" "$release"
   fi

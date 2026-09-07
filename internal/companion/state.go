@@ -33,7 +33,6 @@ type Config struct {
 	Display       bool   `json:"display"`
 	StreamDeck    bool   `json:"streamdeck"`
 	PulseAgent    bool   `json:"pulse_agent"`
-	Blinkt        bool   `json:"blinkt"`
 	AirVPN        bool   `json:"airvpn"`
 	Tailnet       bool   `json:"tailnet"`
 }
@@ -68,10 +67,8 @@ type Snapshot struct {
 	Brightness string     `json:"brightness"`
 	Display    bool       `json:"display"`
 	StreamDeck bool       `json:"streamdeck"`
-	Blinkt     bool       `json:"blinkt"`
 	RenderedAt time.Time  `json:"rendered_at"`
 	DeckAt     time.Time  `json:"deck_at"`
-	BlinktAt   time.Time  `json:"blinkt_at"`
 }
 type State struct {
 	mu      sync.Mutex
@@ -85,7 +82,7 @@ var itemLabels = []string{"Pi health", "Lab link", "Gateway", "DNS", "Proxmox", 
 var views = []string{"overview", "core", "resources", "pi"}
 
 func NewState(c Config) *State {
-	s := &State{Refresh: make(chan struct{}, 1), data: Snapshot{Version: 1, View: "overview", Brightness: "normal", Display: c.Display, StreamDeck: c.StreamDeck, Blinkt: c.Blinkt, Resources: []Resource{}}}
+	s := &State{Refresh: make(chan struct{}, 1), data: Snapshot{Version: 1, View: "overview", Brightness: "normal", Display: c.Display, StreamDeck: c.StreamDeck, Resources: []Resource{}}}
 	for i, id := range itemIDs {
 		s.data.Items = append(s.data.Items, Item{ID: id, Label: itemLabels[i], Status: Waiting, Reason: "Waiting for the first observation"})
 	}
@@ -312,8 +309,6 @@ func (s *State) Heartbeat(device string) error {
 		s.data.RenderedAt = now
 	case "streamdeck":
 		s.data.DeckAt = now
-	case "blinkt":
-		s.data.BlinktAt = now
 	default:
 		return errors.New("unknown display")
 	}

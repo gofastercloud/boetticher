@@ -37,7 +37,7 @@ controller-check:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s controller/tests -p 'test_*.py'
 	ANSIBLE_CONFIG=controller/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i localhost, controller/bootstrap.yml
 	ANSIBLE_CONFIG=controller/proxmox/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i proxmox, controller/proxmox/prepare.yml
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/controller ./internal/controller/host ./internal/cli
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/controller ./internal/controller/host ./internal/controllerstatus ./internal/cli
 
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
@@ -48,6 +48,8 @@ vet:
 
 build:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher ./cmd/boetticher
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher-status ./cmd/boetticher-status
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/boetticher-host-speedtest-linux-amd64 ./cmd/boetticher-host-speedtest
 
 release-bundle: companion-binary
 	@test -n "$(OUTPUT)" -a -n "$(SOURCE_COMMIT)" -a -n "$(WORKFLOW)" -a -n "$(KEY_ID)" -a -n "$(PRIVATE_KEY)"

@@ -188,9 +188,6 @@ func Check(snapshot Snapshot) error {
 			return fmt.Errorf("%s: %s", item.Label, item.Reason)
 		}
 	}
-	if snapshot.Blinkt && time.Since(snapshot.BlinktAt) > 10*time.Second {
-		return errors.New("Blinkt renderer is not updating")
-	}
 	for _, module := range snapshot.Modules {
 		if module.Status != Healthy && module.Status != Disabled {
 			return fmt.Errorf("%s: %s", module.Label, module.Reason)

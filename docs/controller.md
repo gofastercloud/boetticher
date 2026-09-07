@@ -62,7 +62,8 @@ sudo boetticher controller status
 
 `controller bootstrap` runs one local Ansible playbook and then local readiness
 checks. `controller status` is read-only: it does not repair the host, run
-Ansible, change Blinkt, load lab state, or contact Proxmox.
+Ansible, or change Blinkt. The status daemon may contact the enrolled Host for
+its lightweight health, update, and connectivity checks.
 
 The controller installs Go 1.26.5 under
 `/opt/boetticher/toolchains/go1.26.5/` and Ansible Core 2.19.11 in
@@ -82,26 +83,90 @@ Next:
 After reconnecting with a fresh key-authenticated SSH session, rerun bootstrap
 and status. A successful final state reports `Controller readiness: PASS`.
 
-## Blinkt
+## Controller status LEDs
 
-The short-lived `/opt/boetticher/current/controller/libexec/boetticher-bootstrap-led`
-helper drives the Pimoroni Blinkt at low brightness through the discovered GPIO
-chip and header lines GPIO23/GPIO24. It writes one frame and exits; there is no
-controller daemon or socket.
+The Controller runs one local `boetticher-status.service` daemon. It is the
+exclusive owner of the Pimoroni Blinkt and its GPIO23/GPIO24 path; bootstrap and
+Host operations send best-effort progress events over its root-only Unix socket
+at `/run/boetticher/status.sock`. If the socket or hardware is unavailable,
+the operation continues normally.
 
-The colours mean:
+Controller bootstrap always installs the status daemon and its packaged driver.
+Blinkt is optional hardware: if it is absent, the daemon remains installed and
+running without a display, and the GPIO check is reported as `NOT TESTED` rather
+than blocking Controller readiness. Host apply always installs the packaged
+Host speedtest helper; it does not depend on Blinkt or StreamDeck hardware.
 
-| Colour | Meaning |
+The fixed physical layout, viewed from the operator side, is:
+
+```text
+CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES
+```
+
+| Display | Meaning |
 | --- | --- |
-| Blue | Bootstrap is running |
-| Amber | A reboot is required for log2ram activation |
-| Green | Local controller readiness passed |
-| Red | Bootstrap or local readiness failed |
+| Breathing green | The lightweight check is healthy |
+| Steady blue | Startup, checking, or an active operation |
+| Pulsing amber | Attention or degraded operation |
+| Flashing red | A meaningful health or operation failure |
+| Off | Not configured or not applicable |
 
-Software success is not physical LED acceptance. During live acceptance,
-observe each colour and record that result separately. The bootstrap command
-continues safe host setup if GPIO output is unavailable, while status reports
-the GPIO check as failed.
+`CTL` is local Controller health, `HOST` is the enrolled Proxmox Host, and
+`FW`, `DHCP/NTP`, and `DNS` remain off until those capabilities exist.
+`CTRL-UPDATES` is green when no Controller updates are available, amber when
+updates or the native `/var/run/reboot-required` marker require attention, and
+blue when an explicit Boetticher configuration-staged event is active.
+`HOST-UPDATES` is green when no Proxmox package updates or Host reboot are
+reported, and amber when either is reported. Both update views are read-only;
+they do not run package installation, refresh package lists, or reboot.
+
+`NET` runs a lightweight Host-side ping/connectivity check every 60 seconds.
+It is green when Host Internet connectivity is available and the most recent
+full speedtest download meets the configured threshold. It is amber when
+connectivity works but the speedtest is below the threshold or has no usable
+recent result, and red only after connectivity fails twice consecutively. The
+full speedtest runs from the Host approximately every hour using the
+release-built `showwin/speedtest-go` helper on `vmbr0`; the reference-lab
+threshold is 500 Mbps for its approximately 1000 Mbps service.
+
+The optional configuration keeps these defaults explicit without adding a
+status database or generated state:
+
+```yaml
+status:
+  interval: 30s
+  ping_interval: 60s
+  internet:
+    throughput_interval: 1h
+    healthy_mbps: 500
+  blinkt:
+    enabled: true
+    brightness: 0.3
+  streamdeck:
+    enabled: true
+    brightness: 0.5
+    telemetry_interval: 60s
+```
+
+The display is a lightweight operator convenience, not authoritative
+monitoring or qualification. A green LED means only that its corresponding
+simple, read-only check passed. It has no dependency on Pulse, Prometheus,
+Loki, Alertmanager, Gatus, a monitoring database, or an external monitoring
+API. The hourly speedtest uses the external speedtest.net measurement service
+only for that explicit performance sample. The Controller daemon runs with
+root privileges in the reference image because the GPIO device is root-owned;
+its systemd unit otherwise confines network, filesystem, and device access.
+An external Companion's optional StreamDeck service is installed only when its
+capability is enabled and retries until the configured USB device is present;
+its absence does not block Companion setup.
+
+When a StreamDeck is attached to the Controller, it is owned by the same
+`boetticher-status.service` daemon as Blinkt. The home screen is a detailed,
+read-only view of the enrolled Host: Host, CPU, RAM, preferred storage, NET,
+and up to eight VM/LXC guests sorted by VMID, with PAGE and REFRESH controls.
+Host and guest detail views provide BACK and REFRESH only; StreamDeck input
+cannot start, stop, reboot, deploy, or run shell commands. The old standalone
+Controller StreamDeck service is removed during Controller bootstrap.
 
 ## Installed paths and maintenance
 
@@ -113,6 +178,7 @@ the GPIO check as failed.
 | `/opt/boetticher/toolchains/go1.26.5/` | Pinned Go toolchain |
 | `/etc/boetticher/controller.yml` | Minimal operator and Blinkt configuration |
 | `/var/lib/boetticher/controller/` | Controller state, including the log2ram boot marker |
+| `/run/boetticher/status.sock` | Root-only best-effort operation event socket |
 | `/var/cache/boetticher/` | Downloaded package/toolchain cache |
 | `/var/log/boetticher/bootstrap.log` | Bounded bootstrap output |
 | `/var/log/boetticher/operations.log` | Bounded underlying host-operation output |
@@ -193,9 +259,12 @@ host is reported as requiring preparation, not as unhealthy.
 `host apply` displays its bounded Host change set and requires confirmation (or
 `--yes`). Its dedicated Ansible role only configures the known Proxmox
 no-subscription repository policy, required host prerequisites, and headless
-power behavior. It never formats disks, changes guests, storage, bridges,
-addresses, routes, firewall, or recovery access. Re-running it is safe; it does
-not upgrade or reboot Proxmox.
+power behavior, and the signed release-built Host speedtest helper. It never
+formats disks, changes guests, storage, bridges, addresses, routes, firewall, or
+recovery access. Re-running it is safe; it does not upgrade or reboot Proxmox.
+The required Proxmox services (`pve-cluster`, `pvedaemon`, `pvestatd`, and
+`pveproxy`) are explicitly enabled and started by the same Host setup role so
+they return after reboot.
 
 The controller keeps the private key at
 `/var/lib/boetticher/controller/ssh/id_ed25519` with root-only permissions and

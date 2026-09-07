@@ -1,0 +1,22 @@
+---
+- name: Inspect the retired standalone Blinkt service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/boetticher-blinkt.service
+  register: retired_blinkt_service
+
+- name: Stop and disable the retired standalone Blinkt service
+  ansible.builtin.systemd_service:
+    name: boetticher-blinkt.service
+    state: stopped
+    enabled: false
+  when: retired_blinkt_service.stat.exists
+
+- name: Remove retired standalone Blinkt assets
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/boetticher-blinkt.service
+    - /usr/local/libexec/boetticher-blinkt
+  when: retired_blinkt_service.stat.exists
+  notify: reload systemd

@@ -14,6 +14,15 @@
 - name: Configure bounded controller logging
   ansible.builtin.include_tasks: logging.yml
 
+- name: Remove retired Controller Blinkt services
+  ansible.builtin.include_tasks: retired-blinkt.yml
+
+- name: Remove retired standalone Controller StreamDeck service
+  ansible.builtin.include_tasks: retired-streamdeck.yml
+
+- name: Configure the self-contained Controller status service
+  ansible.builtin.include_tasks: status.yml
+
 - name: Apply handlers before log2ram installation
   ansible.builtin.meta: flush_handlers
 

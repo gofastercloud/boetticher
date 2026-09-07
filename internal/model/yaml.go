@@ -78,7 +78,7 @@ func validateModuleConfigShape(data []byte) error {
 				}
 				continue
 			}
-			if name != "display" && name != "streamdeck" && name != "pulse_agent" && name != "blinkt" {
+			if name != "display" && name != "streamdeck" && name != "pulse_agent" {
 				return fmt.Errorf("site.yml: companion.%s: unknown field", name)
 			}
 			if value.Kind != yaml.MappingNode {

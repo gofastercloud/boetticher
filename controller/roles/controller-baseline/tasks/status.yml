@@ -1,0 +1,34 @@
+---
+- name: Require the packaged Controller status binary
+  ansible.builtin.stat:
+    path: /opt/boetticher/current/bin/boetticher-status
+  register: controller_status_binary
+
+- name: Require the packaged Blinkt driver
+  ansible.builtin.stat:
+    path: /opt/boetticher/current/controller/roles/controller-baseline/files/boetticher-blinkt-driver
+  register: controller_blinkt_driver
+
+- name: Validate the packaged Controller status assets
+  ansible.builtin.assert:
+    that:
+      - controller_status_binary.stat.isreg
+      - controller_status_binary.stat.executable
+      - controller_blinkt_driver.stat.isreg
+      - controller_blinkt_driver.stat.executable
+    fail_msg: "Controller status binary or Blinkt driver is missing from the installed release"
+
+- name: Install the Controller status service
+  ansible.builtin.template:
+    src: boetticher-status.service.j2
+    dest: /etc/systemd/system/boetticher-status.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable and restart the Controller status service for the active release
+  ansible.builtin.systemd_service:
+    name: boetticher-status.service
+    enabled: true
+    state: restarted
+    daemon_reload: true

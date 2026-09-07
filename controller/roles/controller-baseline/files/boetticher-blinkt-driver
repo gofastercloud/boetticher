@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+"""Small stdin-driven Blinkt hardware adapter owned by boetticher-status."""
+import argparse
+import json
+import sys
+
+import lgpio
+
+
+DATA = 23
+CLOCK = 24
+PIXELS = 8
+
+
+def write_bit(chip, value):
+    lgpio.gpio_write(chip, DATA, int(bool(value)))
+    lgpio.gpio_write(chip, CLOCK, 1)
+    lgpio.gpio_write(chip, CLOCK, 0)
+
+
+def write_byte(chip, value):
+    for shift in range(7, -1, -1):
+        write_bit(chip, value & (1 << shift))
+
+
+def write_frame(chip, frame):
+    if not isinstance(frame, list) or len(frame) != PIXELS:
+        raise ValueError("Blinkt frame must contain exactly eight pixels")
+    for pixel in frame:
+        if not isinstance(pixel, dict):
+            raise ValueError("Blinkt pixel must be an object")
+        values = [pixel.get(name) for name in ("r", "g", "b", "brightness")]
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+            raise ValueError("Blinkt pixel values must be integers")
+        if any(value < 0 or value > 255 for value in values[:3]) or not 0 <= values[3] <= 31:
+            raise ValueError("Blinkt pixel value is outside its safe range")
+
+    for _ in range(4):
+        write_byte(chip, 0)
+    for pixel in frame:
+        for value in (0xE0 | pixel["brightness"], pixel["b"], pixel["g"], pixel["r"]):
+            write_byte(chip, value)
+    for _ in range(36):
+        write_bit(chip, 0)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--chip", required=True, type=int)
+    args = parser.parse_args()
+    if args.chip < 0:
+        raise ValueError("GPIO chip must not be negative")
+
+    chip = lgpio.gpiochip_open(args.chip)
+    claimed = []
+    try:
+        for pin in (DATA, CLOCK):
+            lgpio.gpio_claim_output(chip, pin, 0)
+            claimed.append(pin)
+        for line in sys.stdin:
+            if not line.strip():
+                continue
+            write_frame(chip, json.loads(line))
+    finally:
+        if len(claimed) == 2:
+            try:
+                write_frame(chip, [{"r": 0, "g": 0, "b": 0, "brightness": 1}] * PIXELS)
+            except Exception:
+                pass
+        for pin in reversed(claimed):
+            lgpio.gpio_free(chip, pin)
+        lgpio.gpiochip_close(chip)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        pass
+    except Exception as error:
+        print(f"Blinkt driver failed: {error}", file=sys.stderr)
+        sys.exit(1)

@@ -33,6 +33,25 @@ Host Module namespace.
 The Controller does not need a Host selector in the supported single-Host UX.
 Multi-Host support is deliberately not implemented in this phase.
 
+The Controller's fixed Blinkt layout is
+`CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES`.
+It is rendered by the local status daemon as a lightweight convenience; it is
+not a monitoring or qualification system. Blinkt, StreamDeck, display, and
+kiosk behavior remain Controller implementation details rather than Module
+namespaces.
+
+The Controller performs its 60-second Internet connectivity check and its
+hourly full speedtest from the enrolled Proxmox Host over the existing strict
+SSH relationship. The speedtest helper is a one-shot Host binary installed by
+Host apply; the status daemon never installs packages or changes Host state.
+Controller and Host update indicators inspect existing local/cached APT state
+read-only. Controller reboot-required state remains separate from Host reboot
+state. The Controller status daemon and Host helper are always installed by
+their standard setup flows; Blinkt and StreamDeck remain optional peripherals
+whose absence does not block setup.
+If a StreamDeck is present on the Controller, the shared status daemon owns it
+alongside Blinkt and exposes detailed read-only Host and guest telemetry.
+
 ## Host configuration
 
 The Host configuration is stored in `/etc/boetticher/lab.yml`. It binds the

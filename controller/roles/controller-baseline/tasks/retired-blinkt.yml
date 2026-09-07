@@ -1,0 +1,50 @@
+---
+- name: Inspect retired Controller Blinkt service files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/systemd/system/blinkt-pattern.service
+    - /etc/systemd/system/boetticher-blinkt.service
+  register: retired_controller_blinkt_units
+
+- name: Inspect the retired standalone Blinkt implementation
+  ansible.builtin.stat:
+    path: /usr/local/libexec/blinkt-pattern
+    checksum_algorithm: sha256
+  register: retired_blinkt_pattern
+  when: retired_controller_blinkt_units.results[0].stat.exists
+
+- name: Require the known standalone Blinkt implementation before removal
+  ansible.builtin.assert:
+    that:
+      - retired_blinkt_pattern.stat.checksum | default('') in ['00acd8dde8c4ce6008bfb34c50bb1b4623aeff30ec409287b5409d60bb20d1e4', '51aa655f21eb325b4ce18c4ce8295b74cd517b4cfb005e16a4c2ae38d37aef65', '317299fe409b54895c391c0cb04fae57bfa2d0a763072b6f86308b1d7456206c']
+    fail_msg: "An unidentified blinkt-pattern implementation exists; stop and remove it explicitly before enabling the managed status daemon"
+  when: retired_controller_blinkt_units.results[0].stat.exists
+
+- name: Stop and disable retired Controller Blinkt services
+  ansible.builtin.systemd_service:
+    name: "{{ item.item | basename }}"
+    state: stopped
+    enabled: false
+  loop: "{{ retired_controller_blinkt_units.results }}"
+  when: item.stat.exists
+
+- name: Remove retired standalone Blinkt assets
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/blinkt-pattern.service
+    - /usr/local/libexec/blinkt-pattern
+  when: retired_controller_blinkt_units.results[0].stat.exists
+  notify: reload systemd
+
+- name: Remove retired Boetticher Blinkt assets
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/boetticher-blinkt.service
+    - /usr/local/libexec/boetticher-blinkt
+  when: retired_controller_blinkt_units.results[1].stat.exists
+  notify: reload systemd
