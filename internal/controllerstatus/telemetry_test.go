@@ -22,8 +22,8 @@ func TestParseProxmoxTelemetryNormalizesAndSorts(t *testing.T) {
 	if err != nil || len(storage) != 2 || storage[0].Name != "boetticher-data" || storage[0].Percent != 45 {
 		t.Fatalf("storage = %#v, err=%v", storage, err)
 	}
-	guests, err := parseProxmoxGuests([]byte(`{"data":[{"vmid":310,"name":"kali","type":"qemu","status":"stopped"},{"vmid":201,"name":"pulse","type":"lxc","status":"running","cpu":0.03,"mem":412,"maxmem":1024,"uptime":86400}]}`))
-	if err != nil || len(guests) != 2 || guests[0].VMID != 201 || guests[0].Kind != "lxc" || guests[1].Kind != "vm" {
+	guests, err := parseProxmoxGuests([]byte(`{"data":[{"vmid":310,"name":"kali","type":"qemu","status":"stopped"},{"vmid":201,"name":"pulse","type":"lxc","status":"running","cpu":0.03,"mem":412,"maxmem":1024,"uptime":86400},{"vmid":280,"name":"lab-firewall-01","type":"qemu","status":"running"}]}`))
+	if err != nil || len(guests) != 3 || guests[0].VMID != 201 || guests[0].Kind != "lxc" || guests[1].VMID != 280 || guests[1].Name != "lab-firewall-01" || guests[2].Kind != "vm" {
 		t.Fatalf("guests = %#v, err=%v", guests, err)
 	}
 }

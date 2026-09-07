@@ -23,8 +23,8 @@ type ModuleChecker struct {
 
 func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 	status := ModuleStatus{
-		DHCPNTP: CheckResult{Detail: "DHCP/DDNS/NTP capability is not configured"},
-		DNS:     CheckResult{Detail: "DNS capability is not configured"},
+		DHCPNTP: CheckResult{Configured: true, State: Failed, Detail: "DHCP/DDNS/NTP capability is not implemented"},
+		DNS:     CheckResult{Configured: true, State: Failed, Detail: "DNS capability is not implemented"},
 	}
 	if c.FirewallCommand != nil {
 		status.Firewall = c.FirewallCommand(ctx)
@@ -44,9 +44,9 @@ func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 		return status
 	}
 	if strings.Contains(string(output), "Firewall: PASS") {
-		status.Firewall = CheckResult{Configured: true, Healthy: true, Detail: "firewall capability status is healthy"}
+		status.Firewall = CheckResult{Configured: true, Healthy: true, State: Healthy, Detail: "firewall capability status is healthy"}
 	} else {
-		status.Firewall = CheckResult{Configured: true, Detail: "firewall capability status is not healthy"}
+		status.Firewall = CheckResult{Configured: true, State: Failed, Detail: "firewall capability status is not healthy"}
 	}
 	return status
 }
@@ -55,8 +55,21 @@ func moduleComponent(result CheckResult) Component {
 	if !result.Configured {
 		return Component{State: Off, Detail: result.Detail}
 	}
+	if result.State != "" {
+		return Component{State: result.State, Detail: result.Detail}
+	}
 	if result.Healthy {
 		return Component{State: Healthy, Detail: result.Detail}
 	}
 	return Component{State: Failed, Detail: result.Detail}
+}
+
+func debouncedModuleComponent(debouncer *Debouncer, result CheckResult) Component {
+	if !result.Configured {
+		return moduleComponent(result)
+	}
+	if result.State == Attention || result.State == Checking {
+		return moduleComponent(result)
+	}
+	return debouncer.Update(result.Healthy, result.Detail)
 }

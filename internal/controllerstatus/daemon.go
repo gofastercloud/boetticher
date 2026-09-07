@@ -249,11 +249,7 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			d.lastConnectivity = result.data
 			d.connectivityAt = now
 		case "modules":
-			if !result.modules.Firewall.Configured {
-				d.snapshot.Firewall = Component{State: Off, Detail: result.modules.Firewall.Detail}
-			} else {
-				d.snapshot.Firewall = d.firewall.Update(result.modules.Firewall.Healthy, result.modules.Firewall.Detail)
-			}
+			d.snapshot.Firewall = debouncedModuleComponent(d.firewall, result.modules.Firewall)
 			d.snapshot.DHCPNTP = moduleComponent(result.modules.DHCPNTP)
 			d.snapshot.DNS = moduleComponent(result.modules.DNS)
 		}

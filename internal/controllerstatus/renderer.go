@@ -74,6 +74,9 @@ func (r Renderer) operationFrame(event OperationEvent, now time.Time) []Pixel {
 	if current > total {
 		current = total
 	}
+	if current < total {
+		return r.blueChase(now)
+	}
 	completed := current * PixelCount / total
 	for index := 0; index < completed && index < PixelCount; index++ {
 		frame[index] = r.colourPixel(0, 180, 35, r.MaxBrightness)
@@ -81,6 +84,26 @@ func (r Renderer) operationFrame(event OperationEvent, now time.Time) []Pixel {
 	if current < total && completed < PixelCount {
 		frame[completed] = r.componentPixel(Checking, now, completed)
 	}
+	return frame
+}
+
+func (r Renderer) blueChase(now time.Time) []Pixel {
+	frame := make([]Pixel, PixelCount)
+	phase := int((now.UnixMilli() / 100) % 14)
+	position := phase
+	if position > PixelCount-1 {
+		position = 2*(PixelCount-1) - position
+	}
+	for distance := 2; distance >= 1; distance-- {
+		for _, candidate := range []int{position - distance, position + distance} {
+			if candidate < 0 || candidate >= PixelCount {
+				continue
+			}
+			brightness := uint8(int(r.MaxBrightness) * (3 - distance) / 3)
+			frame[candidate] = r.colourPixel(0, 15, 80, brightness)
+		}
+	}
+	frame[position] = r.componentPixel(Checking, now, position)
 	return frame
 }
 

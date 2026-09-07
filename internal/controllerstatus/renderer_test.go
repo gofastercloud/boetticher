@@ -63,18 +63,34 @@ func TestRendererMapsFixedStatesToColours(t *testing.T) {
 	}
 }
 
-func TestRendererUsesOperationProgressInsteadOfDashboard(t *testing.T) {
+func TestRendererUsesBlueChaseDuringOperationAndGreenOnCompletion(t *testing.T) {
 	renderer := NewRenderer(0.3)
-	frame := renderer.OperationFrame(OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 2, TotalSteps: 5}, time.Unix(100, 0))
-	if frame[0].G == 0 || frame[1].G == 0 || frame[2].G == 0 {
-		t.Fatalf("completed pixels were not green: %#v", frame[:3])
+	event := OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 2, TotalSteps: 5}
+	frame := renderer.OperationFrame(event, time.Unix(100, 0))
+	later := renderer.OperationFrame(event, time.Unix(100, 0).Add(300*time.Millisecond))
+	blue := 0
+	for _, pixel := range frame {
+		if pixel.B > 0 {
+			blue++
+		}
 	}
-	if frame[3].B == 0 {
-		t.Fatalf("current pixel was not blue: %#v", frame[3])
+	if blue < 2 {
+		t.Fatalf("operation chase was not blue: %#v", frame)
 	}
-	for _, pixel := range frame[4:] {
-		if pixel != (Pixel{}) {
-			t.Fatalf("future pixel was not off: %#v", pixel)
+	different := false
+	for index := range frame {
+		if frame[index] != later[index] {
+			different = true
+			break
+		}
+	}
+	if !different {
+		t.Fatalf("operation chase did not move: %#v", frame)
+	}
+	complete := renderer.OperationFrame(OperationEvent{Event: "operation-success", Name: "host apply", CurrentStep: 5, TotalSteps: 5}, time.Unix(100, 0))
+	for _, pixel := range complete {
+		if pixel.G == 0 || pixel.B != 35 {
+			t.Fatalf("completed operation was not green: %#v", complete)
 		}
 	}
 }
@@ -111,8 +127,8 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 	snapshot.Internet = InternetStatus{Component: Component{State: Healthy}, ThroughputMbps: 812, ThroughputAt: time.Now()}
 	snapshot.HostUpdates = Component{State: Attention, Detail: "Proxmox Host updates available"}
 	snapshot.Firewall = Component{State: Healthy, Detail: "firewall provider is running"}
-	snapshot.DHCPNTP = Component{State: Off, Detail: "DHCP/DDNS/NTP capability is not configured"}
-	snapshot.DNS = Component{State: Off, Detail: "DNS capability is not configured"}
+	snapshot.DHCPNTP = Component{State: Failed, Detail: "DHCP/DDNS/NTP capability is not implemented"}
+	snapshot.DNS = Component{State: Failed, Detail: "DNS capability is not implemented"}
 	telemetry := ProxmoxSnapshot{
 		Host:      ProxmoxHostStats{Node: "lab-proxmox-01", Version: "pve-manager/9.2.2", CPUPercent: 18, MemoryUsed: 4 << 30, MemoryTotal: 8 << 30, Uptime: 25 * time.Hour},
 		Storage:   []StorageStats{{Name: "boetticher-data", Used: 45 << 30, Total: 100 << 30, Percent: 45}},
@@ -129,7 +145,7 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 		t.Fatalf("home status keys = %#v %#v %#v", home[0], home[4], home[5])
 	}
 	host := renderer.Render(snapshot, telemetry, nil, StreamDeckHostDetail, 0, -1)
-	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Off || host[10].State != Off || host[13].Title != "BACK" {
+	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].State != Failed || host[13].Title != "BACK" {
 		t.Fatalf("host detail keys = %#v", host)
 	}
 	guest := renderer.Render(snapshot, telemetry, nil, StreamDeckGuestDetail, 0, 0)

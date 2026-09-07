@@ -66,9 +66,9 @@ Controller-local provider credential/trust, preserving Host trust, storage,
 `vmbr0`, `vmbr1`, and physical networking.
 
 The existing Controller status monitor maps the same native firewall status
-command into
-the fixed `FW` Blinkt slot and the StreamDeck Host-detail view. `DHCP/NTP` and
-`DNS` remain Off/unconfigured until those capability checks are implemented;
+command into the fixed `FW` Blinkt slot and the StreamDeck Host-detail view.
+`DHCP/NTP` and `DNS` remain red error placeholders until those capability
+checks are implemented;
 they use the same in-memory status model and polling loop, with no additional
 status database or scheduler.
 

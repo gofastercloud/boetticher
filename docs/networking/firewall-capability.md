@@ -78,6 +78,6 @@ boundaries only.
 
 The existing Controller status monitor now represents the firewall check on
 the `FW` Blinkt slot and the StreamDeck Host-detail view. DHCP/DDNS/NTP and DNS
-remain explicitly Off/unconfigured until their capabilities are implemented;
+remain explicit red error placeholders until their capabilities are implemented;
 they do not require a new scheduler or status store. DHCP is Phase 4B, DNS is
 Phase 4C, and physical trunking/external switching remain out of scope.
