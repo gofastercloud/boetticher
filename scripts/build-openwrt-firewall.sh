@@ -139,7 +139,7 @@ EOF
 
 packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables qemu-ga'
 log "building generic x86/64 image"
-make -C "$builder" image PROFILE=generic PACKAGES="$packages" FILES="$files" >/dev/null
+make -C "$builder" image PROFILE=generic PACKAGES="$packages" FILES="$files"
 log "locating generic ext4 combined image"
 source_image=$(find "$builder/bin/targets/x86/64" -type f -name '*generic-ext4-combined.img.gz' -print -quit)
 test -n "$source_image"
