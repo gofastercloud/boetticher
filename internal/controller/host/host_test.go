@@ -194,7 +194,7 @@ func TestValidateNetworkConfigRequiresFixedVLANTopology(t *testing.T) {
 
 func TestBridgeStateRecognizesExactVirtualOnlyBridge(t *testing.T) {
 	state := bridgeState(
-		[]ipLink{{IfName: "vmbr1", LinkType: "bridge"}},
+		[]ipLink{{IfName: "vmbr1", LinkType: "bridge", OperState: "UP"}},
 		[]ipAddress{{IfName: "vmbr1"}},
 		[]ipRoute{},
 		"",

@@ -35,6 +35,7 @@ type ManagementPath struct {
 
 type BridgeState struct {
 	Exists          bool
+	Up              bool
 	VLANAware       bool
 	HostAddresses   []string
 	Gateway         string
@@ -77,9 +78,11 @@ func ValidateNetworkConfig(config NetworkConfig) error {
 }
 
 type ipLink struct {
-	IfName   string `json:"ifname"`
-	LinkType string `json:"link_type"`
-	Master   string `json:"master"`
+	IfName    string   `json:"ifname"`
+	LinkType  string   `json:"link_type"`
+	Master    string   `json:"master"`
+	OperState string   `json:"operstate"`
+	Flags     []string `json:"flags"`
 }
 
 type ipAddress struct {
@@ -177,9 +180,9 @@ func DiscoverNetwork(ctx context.Context, transport Transport, config LabConfig)
 	if !bridge.Exists && strings.TrimSpace(string(configResult.Stdout)) == "" {
 		plan.State = "absent"
 		plan.Detail = "vmbr1 is absent and can be created additively"
-	} else if bridge.VLANAware && len(bridge.HostAddresses) == 0 && bridge.Gateway == "" && len(bridge.PhysicalMembers) == 0 && bridge.Configured && bridge.Owned && bridge.IPv6Disabled {
+	} else if bridge.Up && bridge.VLANAware && len(bridge.HostAddresses) == 0 && bridge.Gateway == "" && bridge.Configured && bridge.Owned && bridge.IPv6Disabled {
 		plan.State = "exact"
-		plan.Detail = "vmbr1 already has the expected virtual-only VLAN-aware shape"
+		plan.Detail = "vmbr1 is up with the expected VLAN-aware Host shape"
 	} else if bridge.Adoptable {
 		plan.State = "adoptable"
 		plan.Detail = bridge.Detail
@@ -227,6 +230,7 @@ func bridgeState(links []ipLink, addresses []ipAddress, routes []ipRoute, member
 	for _, link := range links {
 		if link.IfName == InternalBridge {
 			state.Exists = true
+			state.Up = link.OperState == "UP" || containsString(link.Flags, "UP")
 		}
 		if link.Master == InternalBridge && link.IfName != InternalBridge {
 			state.PhysicalMembers = append(state.PhysicalMembers, link.IfName)
@@ -253,12 +257,12 @@ func bridgeState(links []ipLink, addresses []ipAddress, routes []ipRoute, member
 	}
 	state.VLANAware = strings.Contains(detail, "vlan_filtering 1") || strings.Contains(detail, "vlan_filtering on")
 	state.Configured = compatibleBridgeConfig(config)
-	state.Adoptable = state.Exists && state.VLANAware && state.Configured && len(state.PhysicalMembers) == 0 && state.Gateway == "" && linkLocalOnly
+	state.Adoptable = state.Exists && state.Up && state.VLANAware && state.Configured && len(state.PhysicalMembers) == 0 && state.Gateway == "" && linkLocalOnly
 
 	if !state.Exists {
 		state.Detail = "vmbr1 is absent"
-	} else if len(state.PhysicalMembers) > 0 {
-		state.Detail = "vmbr1 has an unexpected physical member"
+	} else if !state.Up {
+		state.Detail = "vmbr1 is not up"
 	} else if len(state.HostAddresses) > 0 {
 		state.Detail = "vmbr1 has an unexpected host address"
 	} else if state.Gateway != "" {

@@ -13,7 +13,7 @@ import (
 const compatibleBridge = "auto vmbr1\niface vmbr1 inet manual\n bridge-ports none\n bridge-stp off\n bridge-fd 0\n bridge-vlan-aware yes\n bridge-vids 2-4094\niface vmbr1 inet6 manual\n"
 
 func TestBridgeRejectsConfiguredAddressEvenWithoutRuntimeAddress(t *testing.T) {
-	state := bridgeState([]ipLink{{IfName: "vmbr1"}}, nil, nil, "", "vlan_filtering 1", compatibleBridge+" address fe80::123/64\n")
+	state := bridgeState([]ipLink{{IfName: "vmbr1", OperState: "UP"}}, nil, nil, "", "vlan_filtering 1", compatibleBridge+" address fe80::123/64\n")
 	if state.Configured {
 		t.Fatal("configured IPv6 address accepted as compatible")
 	}
@@ -24,9 +24,16 @@ func TestBridgeLinkLocalAdoption(t *testing.T) {
 	if err := json.Unmarshal([]byte(`[{"ifname":"vmbr1","addr_info":[{"family":"inet6","local":"fe80::123","scope":"link"}]}]`), &addresses); err != nil {
 		t.Fatal(err)
 	}
-	state := bridgeState([]ipLink{{IfName: "vmbr1"}}, addresses, nil, "", "vlan_filtering 1", compatibleBridge)
+	state := bridgeState([]ipLink{{IfName: "vmbr1", OperState: "UP"}}, addresses, nil, "", "vlan_filtering 1", compatibleBridge)
 	if state.Detail != "vmbr1 is compatible with explicit adoption and host-IPv6 suppression" {
 		t.Fatalf("link-local classified as %q", state.Detail)
+	}
+}
+
+func TestBridgeHealthRequiresLinkUp(t *testing.T) {
+	state := bridgeState([]ipLink{{IfName: "vmbr1", OperState: "DOWN"}}, nil, nil, "", "vlan_filtering 1", compatibleBridge)
+	if state.Up || state.Detail != "vmbr1 is not up" {
+		t.Fatalf("down bridge state = %#v", state)
 	}
 }
 
@@ -48,9 +55,9 @@ func TestBridgeAdoptionRejectsConflicts(t *testing.T) {
 		{name: "duplicate stanza", config: "iface vmbr1 inet dhcp\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			links := []ipLink{{IfName: "vmbr1"}}
+			links := []ipLink{{IfName: "vmbr1", OperState: "UP"}}
 			if tc.member {
-				links = append(links, ipLink{IfName: "nic1", Master: "vmbr1"})
+				links = append(links, ipLink{IfName: "nic1", Master: "vmbr1", LinkType: "ether"})
 			}
 			var addresses []ipAddress
 			if tc.address != "" {
@@ -78,18 +85,26 @@ func TestNetworkCommandRequiresExplicitAdoption(t *testing.T) {
 }
 
 func TestNetworkDiscoveryRequiresPersistentAndLiveSuppression(t *testing.T) {
-	for _, tc := range []struct{ name, addr, owned, disabled, want string }{
-		{"unowned link local", `{"family":"inet6","local":"fe80::123","scope":"link"}`, "", "0", "adoptable"},
-		{"unowned empty", "", "", "1", "adoptable"},
-		{"owned enabled", "", "owned", "0", "adoptable"},
-		{"exact", "", "owned", "1", "exact"},
-		{"address remains", `{"family":"inet6","local":"fe80::123","scope":"link"}`, "owned", "1", "adoptable"},
+	for _, tc := range []struct {
+		name, addr, owned, disabled, want string
+		member                            bool
+	}{
+		{name: "unowned link local", addr: `{"family":"inet6","local":"fe80::123","scope":"link"}`, owned: "", disabled: "0", want: "adoptable"},
+		{name: "unowned empty", addr: "", owned: "", disabled: "1", want: "adoptable"},
+		{name: "owned enabled", addr: "", owned: "owned", disabled: "0", want: "adoptable"},
+		{name: "exact", addr: "", owned: "owned", disabled: "1", want: "exact"},
+		{name: "address remains", addr: `{"family":"inet6","local":"fe80::123","scope":"link"}`, owned: "owned", disabled: "1", want: "adoptable"},
+		{name: "owned with attached port", addr: "", owned: "owned", disabled: "1", want: "exact", member: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			script := "#!/bin/sh\nfor arg; do command=$arg; done\ncase \"$command\" in\n"
+			linkResponse := `[{"ifname":"vmbr0"},{"ifname":"nic0","master":"vmbr0"},{"ifname":"vmbr1","operstate":"UP"}]`
+			if tc.member {
+				linkResponse = `[{"ifname":"vmbr0"},{"ifname":"nic0","master":"vmbr0"},{"ifname":"nic1","master":"vmbr1"},{"ifname":"vmbr1","operstate":"UP"}]`
+			}
 			responses := map[string]string{
-				"ip -json link":            `[{"ifname":"vmbr0"},{"ifname":"nic0","master":"vmbr0"},{"ifname":"vmbr1"}]`,
+				"ip -json link":            linkResponse,
 				"ip -json address":         `[{"ifname":"vmbr0","addr_info":[{"family":"inet","local":"192.168.4.5"}]},{"ifname":"vmbr1","addr_info":[` + tc.addr + `]}]`,
 				"ip -json route":           `[{"dst":"default","gateway":"192.168.4.1","dev":"vmbr0"}]`,
 				"ip route get 192.168.4.6": "192.168.4.6 dev vmbr0 src 192.168.4.5",

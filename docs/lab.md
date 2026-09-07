@@ -94,6 +94,12 @@ IPv6 forwarding and security policy are reserved for explicit future
 firewall/network Module work rather than inferred from the internal vmbr1
 regression.
 
+For the read-only `host status` health check, `vmbr1` is healthy when the link is
+up, VLAN-aware, correctly configured, and has no Host L3 address or gateway.
+Attached ports, including Module virtual ports or an explicitly configured
+physical trunk, do not make an otherwise healthy bridge fail. Host apply remains
+conservative: it does not create, repair, or re-own physical LAB networking.
+
 ## Dedicated storage
 
 The dedicated-data-disk profile uses one exact `/dev/disk/by-id/` identity and

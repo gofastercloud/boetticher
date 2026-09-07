@@ -136,6 +136,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		go runStreamDeck(ctx, d.StreamDeckFactory, d.streamdeckFrames, d.streamdeckEvents, d.Logger)
 	}
+	var telemetryTicker *time.Ticker
+	if d.Settings.StreamDeckEnabled {
+		telemetryTicker = time.NewTicker(d.Settings.TelemetryInterval)
+		defer telemetryTicker.Stop()
+	}
 	_, cleanup, events, err := listen(ctx, d.Settings.SocketPath)
 	if err != nil {
 		return err
@@ -149,6 +154,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer ticker.Stop()
 	frameTicker := time.NewTicker(100 * time.Millisecond)
 	defer frameTicker.Stop()
+	var telemetryTicks <-chan time.Time
+	if telemetryTicker != nil {
+		telemetryTicks = telemetryTicker.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -162,6 +171,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.render(ctx)
 		case result := <-d.telemetryResults:
 			d.applyTelemetry(result)
+			d.render(ctx)
+		case now := <-telemetryTicks:
+			d.scheduleTelemetry(ctx, now)
 			d.render(ctx)
 		case now := <-ticker.C:
 			d.refreshAt(ctx, now)
