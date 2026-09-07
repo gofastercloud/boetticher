@@ -25,7 +25,11 @@ type result struct {
 
 func main() {
 	source := flag.String("source", "vmbr0", "source interface for the Host test")
+	jsonOutput := flag.Bool("json", false, "emit the machine-readable result")
 	flag.Parse()
+	if !*jsonOutput {
+		fail("--json is required")
+	}
 	if flag.NArg() != 0 {
 		fail("unexpected positional argument")
 	}
