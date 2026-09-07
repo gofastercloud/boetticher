@@ -47,8 +47,18 @@ func CaptureProviderTrustViaHost(ctx context.Context, host HostClient) ([]byte, 
 	var output struct {
 		ExitCode int    `json:"exitcode"`
 		Data     string `json:"out-data"`
+		Error    string `json:"err-data"`
 	}
-	if err := json.Unmarshal(result.Stdout, &output); err != nil || output.ExitCode != 0 || !strings.Contains(output.Data, "BEGIN CERTIFICATE") {
+	if err := json.Unmarshal(result.Stdout, &output); err != nil {
+		return nil, errors.New("provider guest agent returned malformed certificate state")
+	}
+	if output.ExitCode != 0 {
+		if detail := strings.TrimSpace(output.Error); detail != "" {
+			return nil, fmt.Errorf("provider guest agent certificate command failed (%d): %s", output.ExitCode, detail)
+		}
+		return nil, fmt.Errorf("provider guest agent certificate command failed (%d)", output.ExitCode)
+	}
+	if !strings.Contains(output.Data, "BEGIN CERTIFICATE") {
 		return nil, errors.New("provider guest agent returned no usable TLS certificate")
 	}
 	return []byte(output.Data), nil
