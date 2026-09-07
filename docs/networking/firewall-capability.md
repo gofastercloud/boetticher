@@ -13,6 +13,7 @@ Phase 4A delivers the first production Module capability:
 boetticher module firewall plan
 boetticher module firewall apply
 boetticher module firewall status
+boetticher module firewall reboot --yes
 boetticher module firewall teardown
 ```
 
@@ -77,6 +78,6 @@ boundaries only.
 
 The existing Controller status monitor now represents the firewall check on
 the `FW` Blinkt slot and the StreamDeck Host-detail view. DHCP/DDNS/NTP and DNS
-remain explicit RED placeholders until their capabilities are implemented;
+remain explicitly Off/unconfigured until their capabilities are implemented;
 they do not require a new scheduler or status store. DHCP is Phase 4B, DNS is
 Phase 4C, and physical trunking/external switching remain out of scope.

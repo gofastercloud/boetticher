@@ -22,7 +22,7 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 	remaining := args[2:]
 	if capability == "firewall" {
 		switch action {
-		case "plan", "apply", "status", "teardown":
+		case "plan", "apply", "status", "teardown", "reboot":
 			return runFirewallCapability(action, remaining, input, out, errOut)
 		default:
 			return fmt.Errorf("module capability %q does not implement action %q", capability, action)

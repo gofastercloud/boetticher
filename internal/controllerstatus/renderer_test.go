@@ -111,8 +111,8 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 	snapshot.Internet = InternetStatus{Component: Component{State: Healthy}, ThroughputMbps: 812, ThroughputAt: time.Now()}
 	snapshot.HostUpdates = Component{State: Attention, Detail: "Proxmox Host updates available"}
 	snapshot.Firewall = Component{State: Healthy, Detail: "firewall provider is running"}
-	snapshot.DHCPNTP = Component{State: Failed, Detail: "DHCP/DDNS/NTP capability is not implemented"}
-	snapshot.DNS = Component{State: Failed, Detail: "DNS capability is not implemented"}
+	snapshot.DHCPNTP = Component{State: Off, Detail: "DHCP/DDNS/NTP capability is not configured"}
+	snapshot.DNS = Component{State: Off, Detail: "DNS capability is not configured"}
 	telemetry := ProxmoxSnapshot{
 		Host:      ProxmoxHostStats{Node: "lab-proxmox-01", Version: "pve-manager/9.2.2", CPUPercent: 18, MemoryUsed: 4 << 30, MemoryTotal: 8 << 30, Uptime: 25 * time.Hour},
 		Storage:   []StorageStats{{Name: "boetticher-data", Used: 45 << 30, Total: 100 << 30, Percent: 45}},
@@ -129,7 +129,7 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 		t.Fatalf("home status keys = %#v %#v %#v", home[0], home[4], home[5])
 	}
 	host := renderer.Render(snapshot, telemetry, nil, StreamDeckHostDetail, 0, -1)
-	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].State != Failed || host[13].Title != "BACK" {
+	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Off || host[10].State != Off || host[13].Title != "BACK" {
 		t.Fatalf("host detail keys = %#v", host)
 	}
 	guest := renderer.Render(snapshot, telemetry, nil, StreamDeckGuestDetail, 0, 0)

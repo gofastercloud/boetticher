@@ -136,7 +136,7 @@ func DesiredFromSite(site model.Site) (DesiredState, error) {
 	}
 	state := DesiredState{ManagementAddress: management, ManagementNetwork: managementNetwork, ManagementNetmask: managementNetmask, ManagementGateway: managementGateway, ControllerAddress: controllerAddress, Zones: zones}
 	state.Network = networkSections(zones, management, managementNetmask, managementGateway)
-	state.Firewall = firewallSections(zones, controllerAddress)
+	state.Firewall = firewallSections(zones, managementNetwork, controllerAddress)
 	return state, nil
 }
 
@@ -164,7 +164,7 @@ func networkSections(zones []Zone, managementAddress, managementNetmask, managem
 	return sections
 }
 
-func firewallSections(zones []Zone, controllerAddress string) []Section {
+func firewallSections(zones []Zone, managementNetwork, controllerAddress string) []Section {
 	sections := make([]Section, 0, len(zones)*2+17)
 	sections = append(sections, Section{Name: "boetticher_home_wan", Type: "zone", Options: map[string]string{"name": "home_wan", "input": "DROP", "output": "ACCEPT", "forward": "DROP", "family": "ipv4", "masq": "1", "mtu_fix": "1"}, Lists: map[string][]string{"network": {"boetticher_home"}}})
 	for _, zone := range zones {
@@ -176,6 +176,7 @@ func firewallSections(zones []Zone, controllerAddress string) []Section {
 	for _, zone := range zones {
 		name := strings.ToLower(zone.Name)
 		if zone.Type != model.ZoneTypeTransit {
+			sections = append(sections, Section{Name: "boetticher_deny_" + name + "_home_management", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny HOME management", "src": name, "dest_ip": managementNetwork, "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
 			sections = append(sections, Section{Name: "boetticher_forward_" + name + "_home_wan", Type: "forwarding", Options: map[string]string{"src": name, "dest": "home_wan", "family": "ipv4"}, Lists: map[string][]string{}})
 		}
 		if zone.Type == model.ZoneTypeTrusted {

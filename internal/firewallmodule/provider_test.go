@@ -35,6 +35,23 @@ func TestValidateProviderVMRejectsConflictsAndForeignNICs(t *testing.T) {
 	}
 }
 
+func TestValidateProviderVMMatchesNICIdentityFieldsIndependently(t *testing.T) {
+	base := map[string]any{
+		"name":  ProviderName,
+		"tags":  "boetticher;managed;module;" + providerOwnerTag,
+		"net0":  "virtio=02:00:00:04:00:01,firewall=1,macaddr=02:00:00:04:00:01,bridge=vmbr0",
+		"net1":  "virtio=02:00:00:04:00:02,macaddr=02:00:00:04:00:02,bridge=vmbr1,firewall=1",
+		"scsi0": "boetticher-data:vm-280-disk-0",
+	}
+	if err := validateProviderVM(base, "boetticher-data"); err != nil {
+		t.Fatal(err)
+	}
+	base["net1"] = "virtio=02:00:00:04:00:03,bridge=vmbr1,firewall=1"
+	if err := validateProviderVM(base, "boetticher-data"); err == nil {
+		t.Fatal("provider with wrong NIC MAC was accepted")
+	}
+}
+
 func TestValidateVLANBridgeRequiresHostOwnedShape(t *testing.T) {
 	interfaces := []proxmox.NetworkInterface{{Iface: "vmbr0", Type: "bridge"}, {Iface: "vmbr1", Type: "bridge", BridgeVLANAware: true, BridgePorts: "none"}}
 	if err := ValidateVLANBridge(interfaces); err != nil {

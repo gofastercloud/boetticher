@@ -61,7 +61,10 @@ uci -q set dhcp.boetticher_home.ndp='disabled'
 uci -q set rpcd.boetticher='login'
 uci -q set rpcd.boetticher.username='boetticher'
 uci -q set rpcd.boetticher.password='$password_hash'
-uci -q set rpcd.boetticher.acl='boetticher'
+uci -q delete rpcd.boetticher.read || true
+uci -q delete rpcd.boetticher.write || true
+uci -q add_list rpcd.boetticher.read='boetticher'
+uci -q add_list rpcd.boetticher.write='boetticher'
 uci -q commit network
 uci -q commit dhcp
 uci -q commit rpcd
@@ -105,11 +108,19 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
         "uci": ["get"],
         "network.interface": ["dump"],
         "service": ["list"]
+      },
+      "uci": {
+        "network": ["read"],
+        "firewall": ["read"]
       }
     },
     "write": {
       "ubus": {
-        "uci": ["add", "set", "add_list", "delete", "commit", "apply"]
+        "uci": ["set", "delete", "commit", "apply"]
+      },
+      "uci": {
+        "network": ["read", "write"],
+        "firewall": ["read", "write"]
       }
     }
   }
@@ -118,7 +129,7 @@ EOF
 
 packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables qemu-ga'
 make -C "$builder" image PROFILE=generic PACKAGES="$packages" FILES="$files" >/dev/null
-source_image=$(find "$builder/bin/targets/x86/64" -type f -name '*combined-ext4.img.gz' -print -quit)
+source_image=$(find "$builder/bin/targets/x86/64" -type f -name '*generic-ext4-combined.img.gz' -print -quit)
 test -n "$source_image"
 mkdir -p "$(dirname "$output")"
 temporary="$output.tmp"

@@ -80,9 +80,9 @@ func sameSection(observed openwrt.UCISection, desired Section) bool {
 }
 
 type uciWriter interface {
-	UCIAddNamed(context.Context, string, string, string) (string, error)
+	UCISetSection(context.Context, string, string, string) error
 	UCISet(context.Context, string, string, string, string) error
-	UCIAddList(context.Context, string, string, string, string) error
+	UCISetList(context.Context, string, string, string, []string) error
 	UCIDelete(context.Context, string, string, string) error
 	UCICommit(context.Context, string) error
 	UCIApply(context.Context, int) error
@@ -99,12 +99,8 @@ func ReconcileOwned(ctx context.Context, client uciWriter, packageName string, c
 		section := mutation.Section
 		switch mutation.Kind {
 		case MutationCreate:
-			createdName, err := client.UCIAddNamed(ctx, packageName, section.Type, section.Name)
-			if err != nil {
+			if err := client.UCISetSection(ctx, packageName, section.Name, section.Type); err != nil {
 				return 0, fmt.Errorf("create provider section %s: %w", section.Name, err)
-			}
-			if createdName != section.Name {
-				return 0, fmt.Errorf("provider returned unexpected section name %q for %s", createdName, section.Name)
 			}
 			if err := writeSection(ctx, client, packageName, section, nil); err != nil {
 				return 0, err
@@ -182,10 +178,8 @@ func writeSection(ctx context.Context, client uciWriter, packageName string, des
 				return fmt.Errorf("reset provider list %s.%s: %w", desired.Name, list, err)
 			}
 		}
-		for _, value := range values {
-			if err := client.UCIAddList(ctx, packageName, desired.Name, list, value); err != nil {
-				return fmt.Errorf("set provider list %s.%s: %w", desired.Name, list, err)
-			}
+		if err := client.UCISetList(ctx, packageName, desired.Name, list, values); err != nil {
+			return fmt.Errorf("set provider list %s.%s: %w", desired.Name, list, err)
 		}
 	}
 	return nil

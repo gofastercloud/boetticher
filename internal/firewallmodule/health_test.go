@@ -12,7 +12,7 @@ func TestGatewayCountAndFirewallHealthAreCoarseAndTruthful(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := json.RawMessage(`{"interface":[{"interface":"boetticher_iface_transit"},{"interface":"boetticher_iface_infra"},{"interface":"boetticher_iface_servers"},{"interface":"boetticher_iface_trusted"},{"interface":"boetticher_iface_sandbox"},{"interface":"boetticher_iface_mgmt"}]}`)
+	runtime := json.RawMessage(`{"interface":[{"interface":"boetticher_iface_transit","up":true,"ipv4-address":[{"address":"10.10.5.1","mask":24}]},{"interface":"boetticher_iface_infra","up":true,"ipv4-address":[{"address":"10.10.10.1","mask":24}]},{"interface":"boetticher_iface_servers","up":true,"ipv4-address":[{"address":"10.10.20.1","mask":24}]},{"interface":"boetticher_iface_trusted","up":true,"ipv4-address":[{"address":"10.10.30.1","mask":24}]},{"interface":"boetticher_iface_sandbox","up":true,"ipv4-address":[{"address":"10.10.40.1","mask":24}]},{"interface":"boetticher_iface_mgmt","up":true,"ipv4-address":[{"address":"10.10.99.1","mask":24}]}]}`)
 	if got := GatewayCount(runtime, desired); got != 6 {
 		t.Fatalf("gateway count = %d, want 6", got)
 	}

@@ -9,13 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
-	"github.com/gofastercloud/boetticher/internal/proxmox"
-	"github.com/gofastercloud/boetticher/internal/site"
 )
 
 func runFirewallCapability(action string, args []string, input io.Reader, out, errOut io.Writer) error {
@@ -28,78 +28,89 @@ func runFirewallCapability(action string, args []string, input io.Reader, out, e
 		return runFirewallStatus(args, out)
 	case "teardown":
 		return runFirewallTeardown(args, input, out, errOut)
+	case "reboot":
+		return runFirewallReboot(args, input, out)
 	default:
 		return fmt.Errorf("module capability %q does not implement action %q", "firewall", action)
 	}
 }
 
-type firewallCommandOptions struct {
-	siteDir     string
-	ageIdentity string
-	yes         bool
-}
+type firewallCommandOptions struct{ yes bool }
 
 func parseFirewallOptions(command string, args []string, destructive bool) (firewallCommandOptions, error) {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	options := firewallCommandOptions{siteDir: ".", ageIdentity: model.DefaultAgeIdentity}
-	fs.StringVar(&options.siteDir, "site", ".", "private site repository directory")
-	fs.StringVar(&options.ageIdentity, "age-identity", model.DefaultAgeIdentity, "external Age identity path")
-	if destructive {
-		fs.BoolVar(&options.yes, "yes", false, "approve destructive firewall provider removal")
-	} else {
-		fs.BoolVar(&options.yes, "yes", false, "approve the firewall capability change")
-	}
+	options := firewallCommandOptions{}
+	fs.BoolVar(&options.yes, "yes", false, "approve the firewall capability change")
 	if err := fs.Parse(args); err != nil {
 		return firewallCommandOptions{}, err
 	}
 	if fs.NArg() != 0 {
-		return firewallCommandOptions{}, fmt.Errorf("usage: boetticher module firewall %s [--site DIR] [--age-identity PATH] [--yes]", command)
+		suffix := "[--yes]"
+		if destructive {
+			suffix = "[--yes]"
+		}
+		return firewallCommandOptions{}, fmt.Errorf("usage: boetticher module firewall %s %s", command, suffix)
 	}
 	return options, nil
 }
 
-func loadFirewallContext(siteDir, ageIdentity string) (model.Site, firewallmodule.DesiredState, *proxmox.Client, string, error) {
-	current, err := site.Load(siteDir)
+func loadFirewallContext() (model.Site, firewallmodule.DesiredState, firewallmodule.HostClient, error) {
+	hostConfig, err := controllerhost.LoadConfig()
 	if err != nil {
-		return model.Site{}, firewallmodule.DesiredState{}, nil, "", err
+		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, err
 	}
+	configuredNetwork := controllerhost.DefaultNetworkConfig()
+	if hostConfig.Network != nil {
+		configuredNetwork = *hostConfig.Network
+	}
+	if err := controllerhost.ValidateNetworkConfig(configuredNetwork); err != nil {
+		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, fmt.Errorf("validate Host network intent: %w", err)
+	}
+	reference := controllerhost.DefaultNetworkConfig()
+	if configuredNetwork.VLANs != reference.VLANs {
+		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, errors.New("Host VLAN intent does not match the six-zone firewall contract; run or fix host apply")
+	}
+	current := model.NewSite(hostConfig.Name, "controller-local", model.GatewayModeManaged)
 	desired, err := firewallmodule.DesiredFromSite(current)
 	if err != nil {
-		return model.Site{}, firewallmodule.DesiredState{}, nil, "", fmt.Errorf("validate firewall network intent: %w", err)
+		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, fmt.Errorf("validate firewall network intent: %w", err)
 	}
-	client, _, err := loadProxmoxClient(siteDir, current, ageIdentity, "", false)
+	transport, err := controllerhost.TransportFor(hostConfig)
 	if err != nil {
-		return model.Site{}, firewallmodule.DesiredState{}, nil, "", err
+		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, err
 	}
-	node, err := client.SingleNode(context.Background())
-	if err != nil {
-		return model.Site{}, firewallmodule.DesiredState{}, nil, "", err
-	}
-	return current, desired, client, node, nil
+	return current, desired, firewallmodule.HostClient{Transport: transport}, nil
 }
 
 func runFirewallPlan(args []string, out io.Writer) error {
-	options, err := parseFirewallOptions("module firewall plan", args, false)
+	if _, err := parseFirewallOptions("module firewall plan", args, false); err != nil {
+		return err
+	}
+	_, desired, host, err := loadFirewallContext()
 	if err != nil {
 		return err
 	}
-	current, desired, client, node, err := loadFirewallContext(options.siteDir, options.ageIdentity)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {
+		return err
+	}
+	provider, err := firewallmodule.InspectHostProvider(ctx, host)
 	if err != nil {
 		return err
 	}
-	status, statusErr := firewallmodule.ReadStatus(context.Background(), client, node, desired)
 	fmt.Fprintln(out, "Firewall plan")
-	if statusErr != nil || !status.Exists {
+	if !provider.Exists {
 		fmt.Fprintf(out, "\nCreate:\n  provider %s\n  six LAB IPv4 gateways\n  reference zone firewall policy\n  ordinary Internet NAT\n", firewallmodule.ProviderName)
 	} else {
-		fmt.Fprintf(out, "\nPreserve:\n  provider %s (%s)\n", firewallmodule.ProviderName, firewallmodule.ProviderSummary(status))
+		fmt.Fprintf(out, "\nPreserve:\n  provider %s\n", firewallmodule.ProviderName)
 		fmt.Fprintln(out, "  existing provider-native state outside Boetticher-owned sections")
 		fmt.Fprintln(out, "Update if required:\n  six LAB IPv4 gateways\n  reference zone firewall policy\n  ordinary Internet NAT")
 	}
 	fmt.Fprintln(out, "\nPreserve:\n  Controller\n  Host enrollment and SSH trust\n  vmbr0\n  vmbr1\n  boetticher-data\n  physical networking")
 	fmt.Fprintln(out, "\nDHCP: not configured\nDNS: not configured")
-	_ = current
+	_ = desired
 	return nil
 }
 
@@ -108,35 +119,34 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	if err != nil {
 		return err
 	}
-	current, desired, client, node, err := loadFirewallContext(options.siteDir, options.ageIdentity)
+	current, desired, host, err := loadFirewallContext()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	if err := firewallmodule.ValidateHostSubstrate(ctx, client, node); err != nil {
+	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {
 		return err
 	}
-	providerStatus, err := firewallmodule.ReadStatus(ctx, client, node, desired)
+	providerStatus, err := firewallmodule.InspectHostProvider(ctx, host)
 	if err != nil {
 		return err
 	}
+	bootstrapNeeded := !providerStatus.Exists || !strings.Contains(providerStatus.Config, "scsi0:")
 	if !providerStatus.Exists && !options.yes {
 		if input == nil {
 			return errors.New("firewall apply requires --yes or an interactive confirmation")
 		}
 		answer, promptErr := promptYesNo(bufio.NewReader(input), out, "Create the firewall provider and change LAB routing? [y/N]: ", false)
-		if promptErr != nil || !answer {
-			if promptErr != nil {
-				return promptErr
-			}
+		if promptErr != nil {
+			return promptErr
+		}
+		if !answer {
 			return errors.New("firewall apply cancelled")
 		}
 	}
 	stateDir := firewallmodule.StateDir(current)
 	credential := ""
-	var image firewallmodule.Image
-	bootstrapNeeded := !providerStatus.Exists || !providerStatus.StorageIdentity
 	if providerStatus.Exists {
 		credential, err = firewallmodule.LoadCredential(stateDir)
 		if err != nil {
@@ -147,31 +157,18 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 		if err != nil {
 			return err
 		}
-		hash, hashErr := firewallmodule.PasswordHash(ctx, credential)
-		if hashErr != nil {
-			return hashErr
-		}
-		if bootstrapNeeded {
-			builder := os.Getenv("BOETTICHER_OPENWRT_BUILDER")
-			if builder == "" {
-				builder = filepath.Join("scripts", "build-openwrt-firewall.sh")
-			}
-			image, err = firewallmodule.EnsureImage(ctx, firewallmodule.ImageSpec{CacheDir: filepath.Join(stateDir, "image-cache"), ManagementAddress: desired.ManagementAddress, ManagementNetmask: desired.ManagementNetmask, ManagementGateway: desired.ManagementGateway, ControllerAddress: desired.ControllerAddress, PasswordHash: hash, BuilderScript: builder})
-			if err != nil {
-				return err
-			}
-		}
 	}
-	if bootstrapNeeded && image.Path == "" {
+	var image firewallmodule.Image
+	if bootstrapNeeded {
 		hash, hashErr := firewallmodule.PasswordHash(ctx, credential)
 		if hashErr != nil {
 			return hashErr
 		}
 		builder := os.Getenv("BOETTICHER_OPENWRT_BUILDER")
 		if builder == "" {
-			builder = filepath.Join("scripts", "build-openwrt-firewall.sh")
+			builder = "/opt/boetticher/current/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
 		}
-		image, err = firewallmodule.EnsureImage(ctx, firewallmodule.ImageSpec{CacheDir: filepath.Join(stateDir, "image-cache"), ManagementAddress: desired.ManagementAddress, ManagementNetmask: desired.ManagementNetmask, ManagementGateway: desired.ManagementGateway, ControllerAddress: desired.ControllerAddress, PasswordHash: hash, BuilderScript: builder})
+		image, err = firewallmodule.EnsureImageViaHost(ctx, host, firewallmodule.ImageSpec{CacheDir: filepath.Join(stateDir, "image-cache"), ManagementAddress: desired.ManagementAddress, ManagementNetmask: desired.ManagementNetmask, ManagementGateway: desired.ManagementGateway, ControllerAddress: desired.ControllerAddress, PasswordHash: hash, BuilderScript: builder})
 		if err != nil {
 			return err
 		}
@@ -179,13 +176,13 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	if !providerStatus.Exists {
 		fmt.Fprintf(out, "Firewall:\n  Provider: creating %s\n", firewallmodule.ProviderName)
 	}
-	result, err := firewallmodule.EnsureProvider(ctx, client, node, "boetticher-data", image)
+	result, err := firewallmodule.EnsureHostProvider(ctx, host, "boetticher-data", image)
 	if err != nil {
 		return err
 	}
 	trust, trustErr := firewallmodule.LoadTrust(stateDir)
 	if errors.Is(trustErr, os.ErrNotExist) && bootstrapNeeded {
-		trust, err = captureProviderTrust(ctx, desired.ManagementAddress)
+		trust, err = captureProviderTrust(ctx, host)
 		if err != nil {
 			return err
 		}
@@ -215,7 +212,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	if err != nil {
 		return err
 	}
-	health, err := firewallmodule.CheckHealth(ctx, client, node, desired, provider)
+	health, err := firewallmodule.CheckHealthViaSSH(ctx, host, desired, provider)
 	if err != nil {
 		return fmt.Errorf("verify firewall provider runtime: %w", err)
 	}
@@ -232,15 +229,16 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 }
 
 func runFirewallStatus(args []string, out io.Writer) error {
-	options, err := parseFirewallOptions("module firewall status", args, false)
+	if _, err := parseFirewallOptions("module firewall status", args, false); err != nil {
+		return err
+	}
+	current, desired, host, err := loadFirewallContext()
 	if err != nil {
 		return err
 	}
-	current, desired, client, node, err := loadFirewallContext(options.siteDir, options.ageIdentity)
-	if err != nil {
-		return err
-	}
-	status, err := firewallmodule.ReadStatus(context.Background(), client, node, desired)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	status, err := firewallmodule.InspectHostProvider(ctx, host)
 	if err != nil {
 		return err
 	}
@@ -260,15 +258,15 @@ func runFirewallStatus(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	health, err := firewallmodule.CheckHealth(context.Background(), client, node, desired, provider)
+	health, err := firewallmodule.CheckHealthViaSSH(ctx, host, desired, provider)
 	if err != nil {
 		return err
 	}
 	if !health.Healthy() {
-		fmt.Fprintf(out, "Firewall: FAIL\nProvider: %s\n%s\n", firewallmodule.ProviderSummary(status), health.Detail())
+		fmt.Fprintf(out, "Firewall: FAIL\nProvider: %s\n%s\n", firewallmodule.ProviderSummary(health.Provider), health.Detail())
 		return errors.New("firewall provider health check failed")
 	}
-	fmt.Fprintf(out, "Firewall: PASS\nProvider: %s\nManagement: reachable\nGateways: %d/%d present\nFirewall: active\nInternet route: active\n", firewallmodule.ProviderSummary(status), health.GatewaysPresent, health.GatewaysExpected)
+	fmt.Fprintf(out, "Firewall: PASS\nProvider: %s\nManagement: reachable\nGateways: %d/%d present\nFirewall: active\nInternet route: active\n", firewallmodule.ProviderSummary(health.Provider), health.GatewaysPresent, health.GatewaysExpected)
 	return nil
 }
 
@@ -277,13 +275,16 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 	if err != nil {
 		return err
 	}
-	current, desired, client, node, err := loadFirewallContext(options.siteDir, options.ageIdentity)
+	current, _, host, err := loadFirewallContext()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	status, err := firewallmodule.ReadStatus(ctx, client, node, desired)
+	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {
+		return err
+	}
+	status, err := firewallmodule.InspectHostProvider(ctx, host)
 	if err != nil {
 		return err
 	}
@@ -293,15 +294,15 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 			return errors.New("firewall teardown requires --yes or an interactive confirmation")
 		}
 		answer, promptErr := promptYesNo(bufio.NewReader(input), out, "Remove the firewall provider? [y/N]: ", false)
-		if promptErr != nil || !answer {
-			if promptErr != nil {
-				return promptErr
-			}
+		if promptErr != nil {
+			return promptErr
+		}
+		if !answer {
 			return errors.New("firewall teardown cancelled")
 		}
 	}
 	if status.Exists {
-		if err := firewallmodule.DestroyProvider(ctx, client, node, "boetticher-data"); err != nil {
+		if err := firewallmodule.DestroyHostProvider(ctx, host, "boetticher-data"); err != nil {
 			return err
 		}
 	}
@@ -313,11 +314,44 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 	return nil
 }
 
-func captureProviderTrust(ctx context.Context, address string) ([]byte, error) {
+func runFirewallReboot(args []string, input io.Reader, out io.Writer) error {
+	options, err := parseFirewallOptions("module firewall reboot", args, true)
+	if err != nil {
+		return err
+	}
+	_, _, host, err := loadFirewallContext()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {
+		return err
+	}
+	if !options.yes {
+		if input == nil {
+			return errors.New("firewall reboot requires --yes or an interactive confirmation")
+		}
+		answer, promptErr := promptYesNo(bufio.NewReader(input), out, "Reboot the firewall provider? [y/N]: ", false)
+		if promptErr != nil {
+			return promptErr
+		}
+		if !answer {
+			return errors.New("firewall reboot cancelled")
+		}
+	}
+	if err := firewallmodule.RebootHostProvider(ctx, host, "boetticher-data"); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "Firewall provider reboot: PASS")
+	return nil
+}
+
+func captureProviderTrust(ctx context.Context, host firewallmodule.HostClient) ([]byte, error) {
 	deadline := time.Now().Add(90 * time.Second)
 	var last error
 	for time.Now().Before(deadline) {
-		trust, err := openwrt.CaptureLeafCertificate(ctx, address)
+		trust, err := firewallmodule.CaptureProviderTrustViaHost(ctx, host)
 		if err == nil {
 			return trust, nil
 		}

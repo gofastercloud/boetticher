@@ -2,12 +2,7 @@ package controllerstatus
 
 import (
 	"context"
-	"errors"
-	"os"
-	"time"
-
-	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
-	"github.com/gofastercloud/boetticher/internal/firewallmodule"
+	"strings"
 )
 
 // ModuleStatus is the small coarse display projection for network services.
@@ -18,61 +13,41 @@ type ModuleStatus struct {
 	DNS      CheckResult
 }
 
-// ModuleChecker checks the firewall provider through the existing strict Host
-// transport. DHCP/DDNS/NTP and DNS remain explicit red placeholders until
-// their capabilities are implemented.
+// ModuleChecker reuses the native firewall capability status command. This
+// keeps the display from growing a second provider-health implementation.
 type ModuleChecker struct {
-	LoadConfig func() (controllerhost.LabConfig, error)
-	Transport  func(controllerhost.LabConfig) (controllerhost.Transport, error)
-	Run        func(context.Context, controllerhost.Transport, string) (controllerhost.Result, error)
+	FirewallCommand func(context.Context) CheckResult
+	CommandPath     string
+	RunCommand      CommandRunner
 }
 
 func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 	status := ModuleStatus{
-		DHCPNTP: CheckResult{Configured: true, Detail: "DHCP/DDNS/NTP capability is not implemented"},
-		DNS:     CheckResult{Configured: true, Detail: "DNS capability is not implemented"},
+		DHCPNTP: CheckResult{Detail: "DHCP/DDNS/NTP capability is not configured"},
+		DNS:     CheckResult{Detail: "DNS capability is not configured"},
 	}
-	load := c.LoadConfig
-	if load == nil {
-		load = controllerhost.LoadConfig
-	}
-	config, err := load()
-	if errors.Is(err, os.ErrNotExist) {
-		status.Firewall.Detail = "Host not enrolled"
+	if c.FirewallCommand != nil {
+		status.Firewall = c.FirewallCommand(ctx)
 		return status
 	}
-	if err != nil {
-		status.Firewall.Configured = true
-		status.Firewall.Detail = "Host configuration cannot be read"
-		return status
-	}
-	if config.Proxmox.Node == "" {
-		status.Firewall.Detail = "Host not enrolled"
-		return status
-	}
-	transportFor := c.Transport
-	if transportFor == nil {
-		transportFor = controllerhost.TransportFor
-	}
-	transport, err := transportFor(config)
-	if err != nil {
-		status.Firewall.Configured = true
-		status.Firewall.Detail = "Host transport configuration is invalid"
-		return status
-	}
-	transport.Timeout = 5 * time.Second
-	run := c.Run
+	run := c.RunCommand
 	if run == nil {
-		run = func(ctx context.Context, transport controllerhost.Transport, command string) (controllerhost.Result, error) {
-			return transport.Run(ctx, command)
-		}
+		run = defaultCommand
 	}
-	if _, err := run(ctx, transport, firewallmodule.ProviderHealthCommand()); err != nil {
-		status.Firewall.Configured = true
-		status.Firewall.Detail = "firewall provider health check failed"
+	path := c.CommandPath
+	if path == "" {
+		path = "/usr/local/bin/boetticher"
+	}
+	output, err := run(ctx, path, "module", "firewall", "status")
+	if err != nil {
+		status.Firewall = CheckResult{Configured: true, Detail: "firewall capability status check failed"}
 		return status
 	}
-	status.Firewall = CheckResult{Configured: true, Healthy: true, Detail: "firewall provider is running with the expected identity"}
+	if strings.Contains(string(output), "Firewall: PASS") {
+		status.Firewall = CheckResult{Configured: true, Healthy: true, Detail: "firewall capability status is healthy"}
+	} else {
+		status.Firewall = CheckResult{Configured: true, Detail: "firewall capability status is not healthy"}
+	}
 	return status
 }
 

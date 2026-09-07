@@ -151,10 +151,11 @@ The public grammar is capability-first:
 boetticher module <capability> <action> [flags]
 ```
 
-Phase 4A operator actions are `module firewall plan`, `apply`, `status`, and
-`teardown`. OpenWrt implements this capability but remains an internal
-provider detail. The existing status monitor reports the firewall provider on
-the fixed `FW` slot and keeps DHCP/DDNS/NTP and DNS explicitly red until their
+Phase 4A operator actions are `module firewall plan`, `apply`, `status`,
+`reboot`, and `teardown`. OpenWrt implements this capability but remains an internal
+provider detail. The existing status monitor consumes the same native firewall
+status command for the fixed `FW` slot and keeps DHCP/DDNS/NTP and DNS explicitly
+off until their
 capabilities are implemented. VPN, physical trunking, and external-switch
 management are later phases.
 
