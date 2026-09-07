@@ -74,7 +74,7 @@ func (r Renderer) operationFrame(event OperationEvent, now time.Time) []Pixel {
 	if current > total {
 		current = total
 	}
-	if current < total {
+	if event.Event != "operation-success" {
 		return r.blueChase(now)
 	}
 	completed := current * PixelCount / total

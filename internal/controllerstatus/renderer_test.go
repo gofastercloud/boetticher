@@ -260,6 +260,18 @@ func TestControllerConfigStagedUsesBlueUpdateState(t *testing.T) {
 	}
 }
 
+func TestSuccessfulOperationReturnsDirectlyToStatusStack(t *testing.T) {
+	d := NewDaemon(DefaultSettings(), nil)
+	d.handleEvent(OperationEvent{Event: "operation-start", Name: "firewall apply", Steps: 7})
+	if d.operation == nil {
+		t.Fatal("operation did not start")
+	}
+	d.handleEvent(OperationEvent{Event: "operation-success", Name: "firewall apply"})
+	if d.operation != nil {
+		t.Fatalf("successful operation retained an overlay: %#v", d.operation)
+	}
+}
+
 func TestDaemonSeparatesMinutePingsFromHourlySpeedtests(t *testing.T) {
 	settings := DefaultSettings()
 	settings.PingInterval = time.Minute

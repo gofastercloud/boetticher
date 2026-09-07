@@ -13,6 +13,7 @@ import (
 	"time"
 
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"github.com/gofastercloud/boetticher/internal/controllerstatus"
 	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
@@ -117,7 +118,7 @@ func runFirewallPlan(args []string, out io.Writer) error {
 	return nil
 }
 
-func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) error {
+func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (err error) {
 	options, err := parseFirewallOptions("module firewall apply", args, false)
 	if err != nil {
 		return err
@@ -126,11 +127,20 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	if err != nil {
 		return err
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "firewall apply", Steps: 7})
+	defer func() {
+		if err != nil {
+			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "firewall apply", Detail: err.Error()})
+			return
+		}
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "firewall apply"})
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {
 		return err
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 1, TotalSteps: 7, Detail: "Host substrate verified"})
 	providerStatus, err := firewallmodule.InspectHostProvider(ctx, host)
 	if err != nil {
 		return err
@@ -160,6 +170,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 		if err != nil {
 			return err
 		}
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 2, TotalSteps: 7, Detail: "Provider image ready"})
 	}
 	var image firewallmodule.Image
 	if bootstrapNeeded {
@@ -183,6 +194,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	if err != nil {
 		return err
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 3, TotalSteps: 7, Detail: "Provider running"})
 	trust, trustErr := firewallmodule.LoadTrust(stateDir)
 	if errors.Is(trustErr, os.ErrNotExist) && bootstrapNeeded {
 		trust, err = captureProviderTrust(ctx, host)
@@ -195,14 +207,17 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	} else if trustErr != nil {
 		return fmt.Errorf("load firewall provider TLS trust: %w", trustErr)
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 4, TotalSteps: 7, Detail: "Provider trust established"})
 	provider, err := openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, Username: "boetticher", Password: credential, TrustPEM: trust})
 	if err != nil {
 		return err
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 5, TotalSteps: 7, Detail: "Network reconciled"})
 	networkCurrent, err := provider.UCIGet(ctx, "network")
 	if err != nil {
 		return err
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 6, TotalSteps: 7, Detail: "Firewall policy reconciled"})
 	networkChanges, err := firewallmodule.ReconcileOwned(ctx, provider, "network", networkCurrent, desired.Network)
 	if err != nil {
 		return err
@@ -222,6 +237,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) err
 	if !health.Healthy() {
 		return fmt.Errorf("verify firewall provider runtime: %s", health.Detail())
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 7, TotalSteps: 7, Detail: "Firewall runtime verified"})
 	if !result.Changed && networkChanges == 0 && firewallChanges == 0 {
 		fmt.Fprintln(out, "Firewall: No changes required.")
 		return nil

@@ -316,15 +316,7 @@ func (d *Daemon) handleEvent(event OperationEvent) {
 			d.operation.event.Detail = event.Detail
 		}
 	case "operation-success":
-		if d.operation == nil || d.operation.event.Name != event.Name {
-			if event.TotalSteps <= 0 && event.Steps <= 0 {
-				event.TotalSteps = PixelCount
-			}
-			d.operation = &operationDisplay{event: event}
-		}
-		d.operation.event.CurrentStep = d.operation.event.totalSteps()
-		d.operation.result = Healthy
-		d.operation.until = now.Add(time.Second)
+		d.operation = nil
 		d.Logger.Printf("operation succeeded: %s", event.Name)
 	case "operation-failure":
 		if d.operation == nil || d.operation.event.Name != event.Name {
