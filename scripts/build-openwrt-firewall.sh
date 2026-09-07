@@ -28,6 +28,9 @@ builder_revision=r33051-f5dae5ece4
 builder_url="https://downloads.openwrt.org/releases/${version}/targets/x86/64/openwrt-imagebuilder-${version}-x86-64.Linux-x86_64.tar.zst"
 work=$(mktemp -d /tmp/boetticher-openwrt-image.XXXXXX)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+mkdir -p "$work/tmp"
+TMPDIR="$work/tmp"
+export TMPDIR
 
 log "downloading pinned ImageBuilder"
 curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --output "$work/imagebuilder.tar.zst" "$builder_url"
