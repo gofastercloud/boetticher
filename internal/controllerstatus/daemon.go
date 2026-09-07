@@ -146,7 +146,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer cleanup()
-	d.Logger.Printf("status daemon started; polling every %s", d.Settings.Interval)
+	streamDeckState := "disabled"
+	if d.Settings.StreamDeckEnabled {
+		streamDeckState = "enabled"
+	}
+	d.Logger.Printf("status daemon started; polling every %s; StreamDeck %s; telemetry every %s", d.Settings.Interval, streamDeckState, d.Settings.TelemetryInterval)
 	d.startup(ctx)
 	d.refresh(ctx)
 	d.render(ctx)
