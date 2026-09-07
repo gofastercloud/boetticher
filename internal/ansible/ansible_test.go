@@ -255,7 +255,6 @@ func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
 		"- role: tailnet-router\n      when:\n        - inventory_hostname in groups.get('tailnet-router', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
 		"- role: chrony\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
 		"- role: usb-export-host\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
-		"- role: network-probe-host\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("site playbook is missing service-phase guard block %q", expected)

@@ -106,10 +106,19 @@ CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES
 | Display | Meaning |
 | --- | --- |
 | Breathing green | The lightweight check is healthy |
-| Steady blue | Startup, checking, or an active operation |
+| Steady blue | Startup or checking |
 | Pulsing amber | Attention or degraded operation |
-| Flashing red | A meaningful health or operation failure |
+| Solid red | A meaningful health or operation failure |
 | Off | Not configured or not applicable |
+
+Apply and test commands temporarily use dedicated operation modes. Apply shows
+the blue Knight Rider chase while it is running, then holds an all-green or
+all-red result briefly. Test shows one pixel per named test group: active tests
+pulse blue, passed tests are solid green, and failed tests are solid red. The
+current firewall test uses five groups (gateway, Internet egress, inter-zone
+policy, HOME protection, and administration). The final result is held briefly
+before Standard status resumes. Display notifications remain best-effort and
+never affect the command result.
 
 `CTL` is local Controller health and `HOST` is the enrolled Proxmox Host.
 `FW` is the firewall capability's native status result; `DHCP/NTP` and `DNS`

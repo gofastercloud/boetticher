@@ -48,7 +48,11 @@ boetticher module firewall plan
 boetticher module firewall apply
 boetticher module firewall status
 boetticher module firewall reboot --yes
-boetticher module firewall teardown
+boetticher module firewall test --plan
+boetticher module firewall test --yes
+boetticher module firewall test --cleanup-only --yes
+boetticher module firewall teardown --plan
+boetticher module firewall teardown --yes
 ```
 
 The capability owns one provider appliance named `lab-firewall-01`, its exact
@@ -64,6 +68,25 @@ preserved. Repeating `apply` when the provider and owned state are correct is a
 semantic no-op. `teardown --yes` removes only the exact firewall provider and
 Controller-local provider credential/trust, preserving Host trust, storage,
 `vmbr0`, `vmbr1`, and physical networking.
+
+`module firewall test` tests the firewall already present; it never applies,
+repairs, reboots, or tears it down. The fixed suite creates one temporary
+network namespace and veth/access port per TRANSIT, INFRA, SERVERS, TRUSTED,
+SANDBOX, and MGMT zone, with a static `.250-.254` address candidate and the
+zone gateway as its default route. It covers gateway access, ordinary HTTPS
+egress, the fixed directional TCP/UDP policy, HOME protection, and appliance
+administration. It does not claim same-VLAN, physical-switch, Wi-Fi, guest
+firewall, or IPv6 isolation. Expected outcomes are independent of the
+renderer; transport, setup, listener, and target failures are not successful
+deny results. The test cleans up on completion, failure, timeout, and
+interruption; use `module firewall test --cleanup-only --yes` for recognised
+leftovers. `--plan` is read-only and `--plan --yes` is rejected.
+
+`module firewall teardown --plan` describes the exact provider, disk, and
+Controller-local credential/trust state that would be removed without a
+prompt. The acceptance rehearsal ends with `module firewall teardown --yes`
+and no firewall deployed; a later `status` reports absence with a nonzero exit
+and does not claim PASS.
 
 The existing Controller status monitor maps the same native firewall status
 command into the fixed `FW` Blinkt slot and the StreamDeck Host-detail view.

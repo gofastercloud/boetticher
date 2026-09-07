@@ -894,9 +894,6 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if strings.Contains(buildText, "build_dns_blocky() {\n  printf '%s\\n' 'boetticher build stage: dns blocky'\n  rootfs=$(prepare_rootfs boetticher-dns-blocky)\n  install_powerdns \"$rootfs\"\n  install_packages \"$rootfs\" chrony") {
 		t.Fatal("DNS construction still performs a redundant package-index transaction")
 	}
-	if !strings.Contains(buildText, `install_packages "$rootfs" arping dnsutils isc-dhcp-client iperf3 netcat-openbsd nmap tcpdump`) {
-		t.Fatal("network probe image does not include the DHCP client required by dynamic zones")
-	}
 }
 
 func TestLoggingBuildInstallsDeclaredServices(t *testing.T) {

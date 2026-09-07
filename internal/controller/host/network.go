@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-const InternalBridge = "vmbr1"
+const (
+	InternalBridge        = "vmbr1"
+	HomeManagementAddress = "192.168.4.5"
+)
 
 type VLANConfig struct {
 	Transit int `yaml:"transit"`
@@ -172,7 +175,7 @@ func DiscoverNetwork(ctx context.Context, transport Transport, config LabConfig)
 	bridge.IPv6Disabled = strings.TrimSpace(string(ipv6Result.Stdout)) == "1"
 	bridge.Owned = strings.TrimSpace(string(ownedResult.Stdout)) == "owned"
 	plan := NetworkPlan{Management: management, Bridge: bridge, Config: want, Links: linksResult.Stdout, Addresses: addressesResult.Stdout, Routes: routesResult.Stdout}
-	if management.Address != "192.168.4.5" || management.Bridge == "" || management.EgressDevice == "" || management.Gateway == "" || management.Bridge != management.EgressDevice || len(management.Members) == 0 {
+	if management.Address != HomeManagementAddress || management.Bridge == "" || management.EgressDevice == "" || management.Gateway == "" || management.Bridge != management.EgressDevice || len(management.Members) == 0 {
 		plan.State = "conflict"
 		plan.Detail = "HOME management path is absent or ambiguous"
 		return plan, nil
@@ -194,7 +197,7 @@ func DiscoverNetwork(ctx context.Context, transport Transport, config LabConfig)
 }
 
 func managementPath(links []ipLink, addresses []ipAddress, routes []ipRoute, routeOutput string) ManagementPath {
-	path := ManagementPath{Address: "192.168.4.5"}
+	path := ManagementPath{Address: HomeManagementAddress}
 	for _, address := range addresses {
 		for _, info := range address.AddrInfo {
 			if info.Family == "inet" && info.Local == path.Address {

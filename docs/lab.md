@@ -158,11 +158,17 @@ boetticher module <capability> <action> [flags]
 ```
 
 Phase 4A operator actions are `module firewall plan`, `apply`, `status`,
-`reboot`, and `teardown`. OpenWrt implements this capability but remains an internal
-provider detail. The existing status monitor consumes the same native firewall
-status command for the fixed `FW` slot and keeps DHCP/DDNS/NTP and DNS explicitly
-red until their capabilities are implemented. VPN, physical trunking, and external-switch
-management are later phases.
+`reboot`, `test`, and `teardown`. OpenWrt implements this capability but remains
+an internal provider detail. `test --plan` is read-only; `test --yes` runs the
+fixed routed IPv4 suite against the existing provider; and
+`test --cleanup-only --yes` removes only recognised temporary namespace/veth
+leftovers without provider credentials. The suite is operational acceptance,
+not `status`: it uses six temporary LAB namespaces and fixed gateway, egress,
+inter-zone, HOME, and administration journeys, then requires exact cleanup.
+The existing status monitor consumes the same native firewall status command
+for the fixed `FW` slot and keeps DHCP/DDNS/NTP and DNS explicitly red until
+their capabilities are implemented. VPN, physical trunking, and
+external-switch management are later phases.
 
 Proxmox owns operator workloads. Boetticher never adopts, imports, or deletes
 unknown guests, volumes, or network devices merely because a name or address

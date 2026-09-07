@@ -42,13 +42,9 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 	if err != nil {
 		return err
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "host apply", Steps: 5})
+	display := controllerstatus.StartApply("host apply", 5)
 	defer func() {
-		if err != nil {
-			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "host apply", Detail: err.Error()})
-			return
-		}
-		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "host apply"})
+		display.End(err)
 	}()
 	ctx := context.Background()
 	var promptReader *bufio.Reader
@@ -85,7 +81,7 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 		if err := prompt("\nContinue? [y/N]: "); err != nil {
 			return err
 		}
-		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 1, TotalSteps: 5, Detail: "Verifying Host access"})
+		display.Progress(1, "Verifying Host access")
 		applyCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 		err := controllerhost.RunPrepare(applyCtx, config, transport, io.Discard)
 		if err == nil {
@@ -100,10 +96,10 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 			return err
 		}
 		fmt.Fprintln(out, "Host configuration: PASS")
-		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 2, TotalSteps: 5, Detail: "Host OS configuration verified"})
+		display.Progress(2, "Host OS configuration verified")
 		changed = true
 	} else {
-		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 2, TotalSteps: 5, Detail: "Host OS configuration already current"})
+		display.Progress(2, "Host OS configuration already current")
 	}
 
 	storagePlan, err := controllerhost.DiscoverStorage(ctx, transport, config)
@@ -157,7 +153,7 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 		fmt.Fprintln(out, "Storage: PASS configured")
 		changed = true
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 3, TotalSteps: 5, Detail: "Storage configuration verified"})
+	display.Progress(3, "Storage configuration verified")
 
 	networkPlan, err := controllerhost.DiscoverNetwork(ctx, transport, config)
 	if err != nil {
@@ -206,7 +202,7 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 		fmt.Fprintln(out, "Internal network: PASS configured")
 		changed = true
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 4, TotalSteps: 5, Detail: "Network configuration verified"})
+	display.Progress(4, "Network configuration verified")
 	if !changed {
 		fmt.Fprintln(out, "No changes required.")
 	}

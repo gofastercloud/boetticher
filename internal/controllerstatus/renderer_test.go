@@ -260,15 +260,43 @@ func TestControllerConfigStagedUsesBlueUpdateState(t *testing.T) {
 	}
 }
 
-func TestSuccessfulOperationReturnsDirectlyToStatusStack(t *testing.T) {
+func TestSuccessfulOperationShowsTerminalFrameBeforeReturningToStatusStack(t *testing.T) {
 	d := NewDaemon(DefaultSettings(), nil)
+	now := time.Unix(100, 0)
+	d.Now = func() time.Time { return now }
 	d.handleEvent(OperationEvent{Event: "operation-start", Name: "firewall apply", Steps: 7})
 	if d.operation == nil {
 		t.Fatal("operation did not start")
 	}
 	d.handleEvent(OperationEvent{Event: "operation-success", Name: "firewall apply"})
+	if d.operation == nil {
+		t.Fatal("successful operation did not retain its terminal frame")
+	}
+	now = now.Add(4 * time.Second)
+	d.render(context.Background())
 	if d.operation != nil {
-		t.Fatalf("successful operation retained an overlay: %#v", d.operation)
+		t.Fatalf("expired operation retained an overlay: %#v", d.operation)
+	}
+}
+
+func TestRendererUsesTestingPixelsForNamedResults(t *testing.T) {
+	renderer := NewRenderer(0.3)
+	event := OperationEvent{Event: "operation-progress", Mode: Testing, Tests: []TestResult{
+		{Name: "one", State: Checking}, {Name: "two", State: Healthy}, {Name: "three", State: Failed},
+	}}
+	frame := renderer.OperationFrame(event, time.UnixMilli(0))
+	if frame[0].B == 0 || frame[0].R != 0 || frame[0].G == 0 {
+		t.Fatalf("active test was not blue: %#v", frame[0])
+	}
+	if frame[1].G == 0 || frame[1].R != 0 {
+		t.Fatalf("passed test was not solid green: %#v", frame[1])
+	}
+	if frame[2].R == 0 || frame[2].G != 0 {
+		t.Fatalf("failed test was not solid red: %#v", frame[2])
+	}
+	later := renderer.OperationFrame(event, time.UnixMilli(175))
+	if frame[0].Brightness == later[0].Brightness {
+		t.Fatalf("active test did not pulse: start=%d later=%d", frame[0].Brightness, later[0].Brightness)
 	}
 }
 

@@ -31,6 +31,8 @@ func runFirewallCapability(action string, args []string, input io.Reader, out, e
 		return runFirewallTeardown(args, input, out, errOut)
 	case "reboot":
 		return runFirewallReboot(args, input, out)
+	case "test":
+		return runFirewallTest(args, input, out, errOut)
 	default:
 		return fmt.Errorf("module capability %q does not implement action %q", "firewall", action)
 	}
@@ -38,18 +40,20 @@ func runFirewallCapability(action string, args []string, input io.Reader, out, e
 
 type firewallCommandOptions struct{ yes bool }
 
-func parseFirewallOptions(command string, args []string, destructive bool) (firewallCommandOptions, error) {
+func parseFirewallOptions(command string, args []string, allowYes bool) (firewallCommandOptions, error) {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	options := firewallCommandOptions{}
-	fs.BoolVar(&options.yes, "yes", false, "approve the firewall capability change")
+	if allowYes {
+		fs.BoolVar(&options.yes, "yes", false, "approve the firewall capability change")
+	}
 	if err := fs.Parse(args); err != nil {
 		return firewallCommandOptions{}, err
 	}
 	if fs.NArg() != 0 {
-		suffix := "[--yes]"
-		if destructive {
-			suffix = "[--yes]"
+		suffix := ""
+		if allowYes {
+			suffix = " [--yes]"
 		}
 		return firewallCommandOptions{}, fmt.Errorf("usage: boetticher module firewall %s %s", command, suffix)
 	}
@@ -91,7 +95,7 @@ func runFirewallPlan(args []string, out io.Writer) error {
 	if _, err := parseFirewallOptions("module firewall plan", args, false); err != nil {
 		return err
 	}
-	_, desired, host, err := loadFirewallContext()
+	current, desired, host, err := loadFirewallContext()
 	if err != nil {
 		return err
 	}
@@ -110,12 +114,46 @@ func runFirewallPlan(args []string, out io.Writer) error {
 	} else {
 		fmt.Fprintf(out, "\nPreserve:\n  provider %s\n", firewallmodule.ProviderName)
 		fmt.Fprintln(out, "  existing provider-native state outside Boetticher-owned sections")
-		fmt.Fprintln(out, "Update if required:\n  six LAB IPv4 gateways\n  reference zone firewall policy\n  ordinary Internet NAT")
+		changes, err := firewallPlanChanges(ctx, current, desired)
+		if err != nil {
+			return err
+		}
+		if len(changes) == 0 && provider.Running && strings.Contains(provider.Config, "scsi0:") {
+			fmt.Fprintln(out, "\nNo changes required.")
+		} else {
+			fmt.Fprintln(out, "\nChanges:")
+			if !provider.Running {
+				fmt.Fprintln(out, "  start provider runtime")
+			}
+			if !strings.Contains(provider.Config, "scsi0:") {
+				fmt.Fprintln(out, "  attach owned provider disk")
+			}
+			for _, change := range changes {
+				fmt.Fprintf(out, "  %s %s\n", change.Kind, change.Section.Name)
+			}
+		}
 	}
 	fmt.Fprintln(out, "\nPreserve:\n  Controller\n  Host enrollment and SSH trust\n  vmbr0\n  vmbr1\n  boetticher-data\n  physical networking")
 	fmt.Fprintln(out, "\nDHCP: not configured\nDNS: not configured")
-	_ = desired
 	return nil
+}
+
+func firewallPlanChanges(ctx context.Context, current model.Site, desired firewallmodule.DesiredState) ([]firewallmodule.Mutation, error) {
+	client, err := firewallProviderClient(current, desired)
+	if err != nil {
+		return nil, err
+	}
+	networkCurrent, err := client.UCIGet(ctx, "network")
+	if err != nil {
+		return nil, err
+	}
+	firewallCurrent, err := client.UCIGet(ctx, "firewall")
+	if err != nil {
+		return nil, err
+	}
+	changes := firewallmodule.DiffOwned(networkCurrent, desired.Network)
+	changes = append(changes, firewallmodule.DiffOwned(firewallCurrent, desired.Firewall)...)
+	return changes, nil
 }
 
 func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (err error) {
@@ -127,20 +165,16 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if err != nil {
 		return err
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "firewall apply", Steps: 7})
+	display := controllerstatus.StartApply("firewall apply", 7)
 	defer func() {
-		if err != nil {
-			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "firewall apply", Detail: err.Error()})
-			return
-		}
-		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "firewall apply"})
+		display.End(err)
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {
 		return err
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 1, TotalSteps: 7, Detail: "Host substrate verified"})
+	display.Progress(1, "Host substrate verified")
 	providerStatus, err := firewallmodule.InspectHostProvider(ctx, host)
 	if err != nil {
 		return err
@@ -170,7 +204,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 		if err != nil {
 			return err
 		}
-		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 2, TotalSteps: 7, Detail: "Provider image ready"})
+		display.Progress(2, "Provider image ready")
 	}
 	var image firewallmodule.Image
 	if bootstrapNeeded {
@@ -194,7 +228,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if err != nil {
 		return err
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 3, TotalSteps: 7, Detail: "Provider running"})
+	display.Progress(3, "Provider running")
 	trust, trustErr := firewallmodule.LoadTrust(stateDir)
 	if errors.Is(trustErr, os.ErrNotExist) {
 		trust, err = captureProviderTrust(ctx, host)
@@ -207,17 +241,17 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	} else if trustErr != nil {
 		return fmt.Errorf("load firewall provider TLS trust: %w", trustErr)
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 4, TotalSteps: 7, Detail: "Provider trust established"})
+	display.Progress(4, "Provider trust established")
 	provider, err := openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, ServerName: firewallmodule.ProviderTLSName, Username: "boetticher", Password: credential, TrustPEM: trust})
 	if err != nil {
 		return err
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 5, TotalSteps: 7, Detail: "Network reconciled"})
+	display.Progress(5, "Network reconciled")
 	networkCurrent, err := provider.UCIGet(ctx, "network")
 	if err != nil {
 		return err
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 6, TotalSteps: 7, Detail: "Firewall policy reconciled"})
+	display.Progress(6, "Firewall policy reconciled")
 	networkChanges, err := firewallmodule.ReconcileOwned(ctx, provider, "network", networkCurrent, desired.Network)
 	if err != nil {
 		return err
@@ -237,7 +271,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if !health.Healthy() {
 		return fmt.Errorf("verify firewall provider runtime: %s", health.Detail())
 	}
-	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 7, TotalSteps: 7, Detail: "Firewall runtime verified"})
+	display.Progress(7, "Firewall runtime verified")
 	if !result.Changed && networkChanges == 0 && firewallChanges == 0 {
 		fmt.Fprintln(out, "Firewall: No changes required.")
 		return nil
@@ -262,7 +296,7 @@ func runFirewallStatus(args []string, out io.Writer) error {
 		return err
 	}
 	if !status.Exists {
-		fmt.Fprintln(out, "Firewall: FAIL\nProvider: absent")
+		fmt.Fprintln(out, "Firewall: absent\nProvider: absent")
 		return errors.New("firewall provider is absent")
 	}
 	credential, err := firewallmodule.LoadCredential(firewallmodule.StateDir(current))
@@ -290,7 +324,7 @@ func runFirewallStatus(args []string, out io.Writer) error {
 }
 
 func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) error {
-	options, err := parseFirewallOptions("module firewall teardown", args, true)
+	options, err := parseFirewallTeardownOptions(args)
 	if err != nil {
 		return err
 	}
@@ -300,14 +334,20 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {
-		return err
-	}
 	status, err := firewallmodule.InspectHostProvider(ctx, host)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Firewall teardown will remove:\n  %s\n  its provider disk\n  Controller-owned provider credential and TLS trust\n\nIt will preserve:\n  Controller\n  Host\n  vmbr0\n  vmbr1\n  boetticher-data\n  physical networking\n", firewallmodule.ProviderName)
+	if options.plan {
+		if status.Exists {
+			fmt.Fprintf(out, "\nOwned provider readback:\n  kind %s\n  state %s\n  disk %s\n", status.Kind, providerStateLabel(status.Running), providerDiskFromConfig(status.Config))
+		} else {
+			fmt.Fprintln(out, "\nOwned provider readback:\n  absent (already clean)")
+		}
+		fmt.Fprintln(out, "  no mutation or confirmation prompt")
+		return nil
+	}
 	if !options.yes {
 		if input == nil {
 			return errors.New("firewall teardown requires --yes or an interactive confirmation")
@@ -331,6 +371,45 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 	fmt.Fprintln(out, "Firewall teardown: PASS")
 	_ = errOut
 	return nil
+}
+
+type firewallTeardownOptions struct {
+	yes  bool
+	plan bool
+}
+
+func parseFirewallTeardownOptions(args []string) (firewallTeardownOptions, error) {
+	fs := flag.NewFlagSet("module firewall teardown", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	options := firewallTeardownOptions{}
+	fs.BoolVar(&options.yes, "yes", false, "approve firewall provider removal")
+	fs.BoolVar(&options.plan, "plan", false, "preview exact owned provider removal")
+	if err := fs.Parse(args); err != nil {
+		return firewallTeardownOptions{}, err
+	}
+	if fs.NArg() != 0 {
+		return firewallTeardownOptions{}, errors.New("usage: boetticher module firewall teardown [--plan|--yes]")
+	}
+	if options.plan && options.yes {
+		return firewallTeardownOptions{}, errors.New("--plan cannot be combined with --yes")
+	}
+	return options, nil
+}
+
+func providerStateLabel(running bool) string {
+	if running {
+		return "running"
+	}
+	return "stopped"
+}
+
+func providerDiskFromConfig(config string) string {
+	for _, line := range strings.Split(config, "\n") {
+		if strings.HasPrefix(line, firewallmodule.ProviderDisk+": ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, firewallmodule.ProviderDisk+": "))
+		}
+	}
+	return "not attached"
 }
 
 func runFirewallReboot(args []string, input io.Reader, out io.Writer) error {

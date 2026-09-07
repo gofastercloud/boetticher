@@ -22,6 +22,30 @@ func ValidateEvent(event OperationEvent) error {
 	if len(event.Detail) > 512 {
 		return errors.New("status operation event detail is too long")
 	}
+	switch event.Mode {
+	case "", Standard, Applying:
+	case Testing:
+		if len(event.Tests) == 0 || len(event.Tests) > PixelCount {
+			return errors.New("Testing operation event must contain one to eight tests")
+		}
+	default:
+		return fmt.Errorf("unknown status display mode %q", event.Mode)
+	}
+	seen := make(map[string]struct{}, len(event.Tests))
+	for _, test := range event.Tests {
+		if strings.TrimSpace(test.Name) == "" || len(test.Name) > 128 {
+			return errors.New("status test name is required and must be short")
+		}
+		if _, ok := seen[test.Name]; ok {
+			return fmt.Errorf("duplicate status test %q", test.Name)
+		}
+		seen[test.Name] = struct{}{}
+		switch test.State {
+		case Checking, Healthy, Failed:
+		default:
+			return fmt.Errorf("unknown status test state %q", test.State)
+		}
+	}
 	if event.CurrentStep < 0 || event.CurrentStep > PixelCount*16 || event.totalSteps() > PixelCount*16 {
 		return errors.New("status operation event has an invalid step range")
 	}

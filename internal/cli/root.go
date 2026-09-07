@@ -90,6 +90,9 @@ func retiredCommandError(args []string) error {
 	case "storage":
 		return errors.New("boetticher storage is retired; storage is Host configuration; use boetticher host apply, status, or plan-storage")
 	case "network":
+		if len(args) > 1 && args[1] == "test" {
+			return errors.New("boetticher network test is retired; use boetticher module firewall test")
+		}
 		return errors.New("boetticher network is retired; networking is Host configuration; use boetticher host apply or status")
 	case "host":
 		if len(args) < 2 {
@@ -160,6 +163,9 @@ func normalizedHelpPath(pathParts []string) string {
 	}
 	switch pathParts[0] {
 	case "module", "host":
+		if pathParts[0] == "module" && len(pathParts) >= 3 {
+			return strings.Join(pathParts[:3], " ")
+		}
 		return strings.Join(pathParts[:2], " ")
 	}
 	return ""

@@ -16,6 +16,14 @@ const (
 	Failed    State = "failed"
 )
 
+type DisplayMode string
+
+const (
+	Standard DisplayMode = "standard"
+	Applying DisplayMode = "applying"
+	Testing  DisplayMode = "testing"
+)
+
 type Component struct {
 	State  State
 	Detail string
@@ -58,13 +66,20 @@ func NewSnapshot(hostConfigured bool) StatusSnapshot {
 }
 
 type OperationEvent struct {
-	Event       string `json:"event"`
-	Name        string `json:"name"`
-	CurrentStep int    `json:"current_step,omitempty"`
-	TotalSteps  int    `json:"total_steps,omitempty"`
-	Steps       int    `json:"steps,omitempty"`
-	Detail      string `json:"detail,omitempty"`
-	Staged      bool   `json:"staged,omitempty"`
+	Event       string       `json:"event"`
+	Name        string       `json:"name"`
+	Mode        DisplayMode  `json:"mode,omitempty"`
+	CurrentStep int          `json:"current_step,omitempty"`
+	TotalSteps  int          `json:"total_steps,omitempty"`
+	Steps       int          `json:"steps,omitempty"`
+	Detail      string       `json:"detail,omitempty"`
+	Staged      bool         `json:"staged,omitempty"`
+	Tests       []TestResult `json:"tests,omitempty"`
+}
+
+type TestResult struct {
+	Name  string `json:"name"`
+	State State  `json:"state"`
 }
 
 func (e OperationEvent) totalSteps() int {

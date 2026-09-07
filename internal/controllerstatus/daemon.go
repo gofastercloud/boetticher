@@ -327,19 +327,29 @@ func (d *Daemon) handleEvent(event OperationEvent) {
 		d.Logger.Printf("operation started: %s", event.Name)
 	case "operation-progress":
 		if d.operation != nil && d.operation.event.Name == event.Name {
+			if event.Mode != "" {
+				d.operation.event.Mode = event.Mode
+			}
 			d.operation.event.CurrentStep = event.CurrentStep
 			d.operation.event.TotalSteps = event.totalSteps()
 			d.operation.event.Detail = event.Detail
+			if event.Tests != nil {
+				d.operation.event.Tests = append([]TestResult(nil), event.Tests...)
+			}
 		}
 	case "operation-success":
-		d.operation = nil
+		if d.operation != nil && d.operation.event.Name == event.Name {
+			d.operation.event = event
+			d.operation.until = now.Add(terminalDisplayHold)
+		}
 		d.Logger.Printf("operation succeeded: %s", event.Name)
 	case "operation-failure":
 		if d.operation == nil || d.operation.event.Name != event.Name {
 			d.operation = &operationDisplay{event: event}
 		}
+		d.operation.event = event
 		d.operation.result = Failed
-		d.operation.until = now.Add(time.Second)
+		d.operation.until = now.Add(terminalDisplayHold)
 		d.Logger.Printf("operation failed: %s: %s", event.Name, event.Detail)
 	case "configuration-staged":
 		d.configStaged = true
@@ -442,7 +452,9 @@ func (d *Daemon) render(ctx context.Context) {
 	if d.Driver != nil && !d.driverBroken {
 		var frame []Pixel
 		if d.operation != nil {
-			if d.operation.result == Failed {
+			if d.operation.event.Mode == Standard {
+				frame = d.renderer.Frame(d.snapshot, now)
+			} else if d.operation.result == Failed {
 				frame = d.renderer.FailureFrame(d.operation.event, now)
 			} else {
 				frame = d.renderer.OperationFrame(d.operation.event, now)

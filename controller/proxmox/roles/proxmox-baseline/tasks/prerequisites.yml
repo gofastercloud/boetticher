@@ -39,3 +39,11 @@
     owner: root
     group: root
     mode: '0755'
+
+- name: Install the Boetticher Phase 4A firewall test helper
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/libexec/boetticher-firewall-test-host"
+    dest: /usr/local/libexec/boetticher-firewall-test-host
+    owner: root
+    group: root
+    mode: '0755'
