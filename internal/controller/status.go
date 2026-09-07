@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,9 +31,14 @@ type Config struct {
 }
 
 type Check struct {
-	Name   string
-	Passed bool
-	Detail string
+	Name     string
+	Passed   bool
+	Optional bool
+	Detail   string
+}
+
+func (c Check) BlocksReadiness() bool {
+	return !c.Passed && !c.Optional
 }
 
 type StatusOptions struct {
@@ -76,7 +82,7 @@ func EvaluateSnapshot(snapshot StatusSnapshot) []Check {
 		{Name: "RAM logging", Passed: snapshot.Log2RAM, Detail: "log2ram service and /var/log mount"},
 		{Name: "RAM logging timer", Passed: snapshot.Log2RAMTimer, Detail: "Synchronization timer"},
 		{Name: "Reboot", Passed: snapshot.RebootComplete, Detail: "Required activation reboot completed"},
-		{Name: "GPIO", Passed: snapshot.GPIO, Detail: "Configured Blinkt hardware path"},
+		{Name: "GPIO", Passed: snapshot.GPIO, Optional: true, Detail: "Configured Blinkt hardware path"},
 	}
 }
 
@@ -117,7 +123,17 @@ func RunStatus(ctx context.Context, options StatusOptions) ([]Check, error) {
 	checks = append(checks, Check{Name: "RAM logging timer", Passed: commandContains(ctx, options.Command, "systemctl", "list-timers", "--all", "log2ram*", "log2ram"), Detail: "Synchronization timer"})
 	checks = append(checks, Check{Name: "Reboot", Passed: rebootComplete(options.MarkerPath), Detail: "Required activation reboot completed"})
 	gpioReady := configErr == nil && config.Blinkt.Enabled && config.Blinkt.GPIOChip >= 0 && commandSucceeds(ctx, options.Command, "/usr/bin/python3", "-c", "import lgpio")
-	checks = append(checks, Check{Name: "GPIO", Passed: gpioReady, Detail: "Configured Blinkt hardware path"})
+	gpioOptional := configErr == nil || errors.Is(configErr, os.ErrNotExist)
+	gpioDetail := "Configured Blinkt hardware path"
+	if errors.Is(configErr, os.ErrNotExist) || (configErr == nil && !config.Blinkt.Enabled) {
+		gpioDetail = "Optional Blinkt is not configured; continuing without display"
+	} else if configErr != nil {
+		gpioDetail = "Controller configuration cannot be read"
+		gpioOptional = false
+	} else if !gpioReady {
+		gpioDetail = "Optional Blinkt is unavailable; continuing without display"
+	}
+	checks = append(checks, Check{Name: "GPIO", Passed: gpioReady, Optional: gpioOptional, Detail: gpioDetail})
 	return checks, nil
 }
 

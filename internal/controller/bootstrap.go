@@ -113,11 +113,13 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 		config.Blinkt.Enabled = true
 		if chip, discoverErr := discoverGPIOChip(ctx, options.Command); discoverErr == nil {
 			config.Blinkt.GPIOChip = chip
-			if saveErr := saveConfig(options.ConfigPath, config); saveErr != nil {
-				return saveErr
-			}
 		} else {
-			fmt.Fprintf(errOut, "Blinkt: FAIL — %s\n", discoverErr)
+			config.Blinkt.Enabled = false
+			config.Blinkt.GPIOChip = -1
+			fmt.Fprintf(errOut, "Blinkt: NOT PRESENT — %s; continuing without optional display\n", discoverErr)
+		}
+		if saveErr := saveConfig(options.ConfigPath, config); saveErr != nil {
+			return saveErr
 		}
 	} else if config.Blinkt.Enabled && config.Blinkt.GPIOChip < 0 {
 		if chip, discoverErr := discoverGPIOChip(ctx, options.Command); discoverErr == nil {
@@ -179,6 +181,8 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 		state := "FAIL"
 		if check.Passed {
 			state = "PASS"
+		} else if check.Optional {
+			state = "NOT TESTED"
 		} else {
 			failed = true
 			reboot = reboot || check.Name == "Reboot"

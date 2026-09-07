@@ -91,6 +91,12 @@ Host operations send best-effort progress events over its root-only Unix socket
 at `/run/boetticher/status.sock`. If the socket or hardware is unavailable,
 the operation continues normally.
 
+Controller bootstrap always installs the status daemon and its packaged driver.
+Blinkt is optional hardware: if it is absent, the daemon remains installed and
+running without a display, and the GPIO check is reported as `NOT TESTED` rather
+than blocking Controller readiness. Host apply always installs the packaged
+Host speedtest helper; it does not depend on Blinkt or StreamDeck hardware.
+
 The fixed physical layout, viewed from the operator side, is:
 
 ```text
@@ -146,6 +152,9 @@ API. The hourly speedtest uses the external speedtest.net measurement service
 only for that explicit performance sample. The Controller daemon runs with
 root privileges in the reference image because the GPIO device is root-owned;
 its systemd unit otherwise confines network, filesystem, and device access.
+The optional Companion StreamDeck service is similarly installed only when its
+capability is enabled and retries until the configured USB device is present;
+its absence does not block Companion setup.
 
 ## Installed paths and maintenance
 

@@ -46,7 +46,9 @@ SSH relationship. The speedtest helper is a one-shot Host binary installed by
 Host apply; the status daemon never installs packages or changes Host state.
 Controller and Host update indicators inspect existing local/cached APT state
 read-only. Controller reboot-required state remains separate from Host reboot
-state.
+state. The Controller status daemon and Host helper are always installed by
+their standard setup flows; Blinkt and StreamDeck remain optional peripherals
+whose absence does not block setup.
 
 ## Host configuration
 

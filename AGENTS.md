@@ -109,6 +109,10 @@ retain `--confirm`, `--approve`, `--non-interactive`, or
 - Host Internet ping checks may run every 60 seconds, but the full speedtest
   runs from the enrolled Host no more than hourly. Do not refresh APT lists,
   install packages, or reboot from a status check.
+- Controller bootstrap always installs the status daemon and Host apply always
+  installs the release-built Host speedtest helper. Blinkt and StreamDeck are
+  optional peripherals: absent hardware may be reported as `NOT TESTED` or
+  retried by its service, but never blocks Controller or Host setup.
 - Do not add hashes, manifests, evidence, persistent status databases, or
   synthetic monitoring journeys to improve LED correctness. Future Controller
   peripherals should consume the shared status snapshot rather than becoming
