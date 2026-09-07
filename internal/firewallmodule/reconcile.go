@@ -84,7 +84,6 @@ type uciWriter interface {
 	UCISet(context.Context, string, string, string, string) error
 	UCISetList(context.Context, string, string, string, []string) error
 	UCIDelete(context.Context, string, string, string) error
-	UCICommit(context.Context, string) error
 	UCIApply(context.Context, int) error
 }
 
@@ -124,9 +123,6 @@ func ReconcileOwned(ctx context.Context, client uciWriter, packageName string, c
 	}
 	if len(mutations) == 0 {
 		return 0, nil
-	}
-	if err := client.UCICommit(ctx, packageName); err != nil {
-		return 0, err
 	}
 	if err := client.UCIApply(ctx, 30); err != nil {
 		return 0, err

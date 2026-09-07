@@ -244,16 +244,6 @@ func (c *Client) UCIDelete(ctx context.Context, config, section, option string) 
 	return nil
 }
 
-func (c *Client) UCICommit(ctx context.Context, config string) error {
-	if config == "" {
-		return errors.New("UCI config name is required")
-	}
-	if _, err := c.callWithSession(ctx, "uci", "commit", map[string]any{"config": config}); err != nil {
-		return fmt.Errorf("commit provider UCI %s: %w", config, err)
-	}
-	return nil
-}
-
 // UCIApply commits the staged UCI changes and asks OpenWrt to reload the
 // affected services. The caller still decides which packages need applying.
 func (c *Client) UCIApply(ctx context.Context, timeout int) error {

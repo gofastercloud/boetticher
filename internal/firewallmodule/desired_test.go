@@ -108,10 +108,6 @@ func (f *fakeWriter) UCIDelete(_ context.Context, _, section, option string) err
 	f.operations = append(f.operations, "delete:"+section+":"+option)
 	return nil
 }
-func (f *fakeWriter) UCICommit(_ context.Context, config string) error {
-	f.operations = append(f.operations, "commit:"+config)
-	return nil
-}
 func (f *fakeWriter) UCIApply(_ context.Context, timeout int) error {
 	f.operations = append(f.operations, "apply:"+string(rune(timeout)))
 	return nil

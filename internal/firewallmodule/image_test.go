@@ -22,7 +22,7 @@ func TestEnsureImageReusesPinnedCacheWithoutRunningBuilder(t *testing.T) {
 }
 
 func TestImageConstantsPinOfficialBuildInputs(t *testing.T) {
-	if OpenWrtVersion != "25.12.5" || OpenWrtImageBuilder != "r33051-f5dae5ece4" || !strings.Contains(OpenWrtImageBuilderURL, OpenWrtVersion) || OpenWrtImageProfile != "generic" || OpenWrtImageArchitecture != "x86/64" || OpenWrtImageContract != "v5" || ProviderTLSName != "boetticher-firewall" {
+	if OpenWrtVersion != "25.12.5" || OpenWrtImageBuilder != "r33051-f5dae5ece4" || !strings.Contains(OpenWrtImageBuilderURL, OpenWrtVersion) || OpenWrtImageProfile != "generic" || OpenWrtImageArchitecture != "x86/64" || OpenWrtImageContract != "v6" || ProviderTLSName != "boetticher-firewall" {
 		t.Fatalf("OpenWrt build pins are incomplete")
 	}
 	if len(OpenWrtPackages) == 0 {
@@ -35,7 +35,7 @@ func TestOpenWrtImageACLAllowsOwnedSectionCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(builder), `"uci": ["set", "add", "delete", "commit", "apply"]`) {
+	if !strings.Contains(string(builder), `"uci": ["set", "add", "delete", "apply"]`) {
 		t.Fatal("OpenWrt rpcd ACL does not allow owned UCI section creation")
 	}
 }

@@ -89,13 +89,10 @@ func TestClientUCIWritesActualValuesObjects(t *testing.T) {
 	if err := client.UCIDelete(context.Background(), "network", "section-1", "old"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.UCICommit(context.Background(), "network"); err != nil {
-		t.Fatal(err)
-	}
 	if err := client.UCIApply(context.Background(), 30); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(methods, ",") != "login,add,add,set,set,delete,commit,apply" {
+	if strings.Join(methods, ",") != "login,add,add,set,set,delete,apply" {
 		t.Fatalf("UCI methods = %v", methods)
 	}
 	if params[2]["name"] != "named-section" {
