@@ -38,6 +38,7 @@ log "extracting pinned ImageBuilder"
 tar --zstd -xf "$work/imagebuilder.tar.zst" -C "$work"
 builder=$(find "$work" -mindepth 1 -maxdepth 1 -type d -name 'openwrt-imagebuilder-*' -print -quit)
 test -n "$builder"
+mkdir -p "$builder/tmp"
 log "verifying ImageBuilder revision"
 grep -F "REVISION:=${builder_revision}" "$builder/include/version.mk" >/dev/null
 test "$(uname -m)" = x86_64
