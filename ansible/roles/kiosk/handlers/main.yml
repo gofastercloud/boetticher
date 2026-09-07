@@ -44,12 +44,6 @@
     state: restarted
     daemon_reload: true
 
-- name: restart boetticher-blinkt
-  ansible.builtin.systemd_service:
-    name: boetticher-blinkt
-    state: restarted
-    daemon_reload: true
-
 - name: restart pulse-kiosk
   ansible.builtin.systemd_service:
     name: pulse-kiosk

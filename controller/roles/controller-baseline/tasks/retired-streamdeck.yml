@@ -1,0 +1,35 @@
+---
+- name: Inspect the retired standalone Controller StreamDeck service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/boetticher-streamdeck.service
+  register: retired_streamdeck_service
+
+- name: Inspect the retired standalone Controller StreamDeck executable
+  ansible.builtin.stat:
+    path: /usr/local/libexec/boetticher-streamdeck
+  register: retired_streamdeck_binary
+
+- name: Refuse to remove symlinked retired StreamDeck assets
+  ansible.builtin.assert:
+    that:
+      - not retired_streamdeck_service.stat.islnk | default(false)
+      - not retired_streamdeck_binary.stat.islnk | default(false)
+    fail_msg: "A retired Controller StreamDeck path is a symlink; review it before cleanup"
+  when: retired_streamdeck_service.stat.exists or retired_streamdeck_binary.stat.exists
+
+- name: Stop and disable the retired standalone Controller StreamDeck service
+  ansible.builtin.systemd_service:
+    name: boetticher-streamdeck.service
+    state: stopped
+    enabled: false
+  when: retired_streamdeck_service.stat.exists
+
+- name: Remove retired standalone Controller StreamDeck assets
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/boetticher-streamdeck.service
+    - /usr/local/libexec/boetticher-streamdeck
+  when: retired_streamdeck_service.stat.exists or retired_streamdeck_binary.stat.exists
+  notify: reload systemd

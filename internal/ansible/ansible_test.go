@@ -208,7 +208,6 @@ func TestCompanionCapabilityPackagesAndCleanupAreIndependent(t *testing.T) {
 	for _, expected := range []string{
 		"Configure the Pulse host agent",
 		"Configure the StreamDeck",
-		"Configure Blinkt",
 		"Remove superseded browser identity and telemetry assets after acceptance",
 		"/home/kiosk/.pki/nssdb",
 		"/var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred",

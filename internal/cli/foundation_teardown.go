@@ -10,9 +10,10 @@ import (
 	"strings"
 
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"github.com/gofastercloud/boetticher/internal/controllerstatus"
 )
 
-func runHostTeardown(args []string, input io.Reader, out io.Writer) error {
+func runHostTeardown(args []string, input io.Reader, out io.Writer) (err error) {
 	fs := flag.NewFlagSet("host teardown", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	planOnly := fs.Bool("plan", false, "show the teardown plan without changing state")
@@ -90,6 +91,14 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) error {
 			return errors.New("Host teardown cancelled")
 		}
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "host teardown", Steps: 4})
+	defer func() {
+		if err != nil {
+			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "host teardown", Detail: err.Error()})
+			return
+		}
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "host teardown"})
+	}()
 
 	if networkPlan.State == "exact" {
 		fresh, discoverErr := controllerhost.DiscoverNetwork(ctx, transport, config)
@@ -115,6 +124,7 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) error {
 		}
 		fmt.Fprintln(out, "Removed: vmbr1 and vmbr1 host IPv6 suppression")
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host teardown", CurrentStep: 1, TotalSteps: 4, Detail: "Internal network removed"})
 
 	if storageState != "absent" {
 		fresh, discoverErr := controllerhost.DiscoverStorage(ctx, transport, config)
@@ -142,6 +152,7 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) error {
 		}
 		fmt.Fprintln(out, "Removed: boetticher-data, boetticher-vg, thin pool data, and Timetec PV metadata")
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host teardown", CurrentStep: 2, TotalSteps: 4, Detail: "Dedicated storage removed"})
 
 	if baseline {
 		if _, commandErr := transport.Run(ctx, controllerhost.HostBaselineTeardownCommand()); commandErr != nil {
@@ -156,6 +167,7 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) error {
 		}
 		fmt.Fprintln(out, "Removed: safely owned host-baseline configuration")
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host teardown", CurrentStep: 3, TotalSteps: 4, Detail: "Host baseline removed"})
 
 	config.Proxmox.Node = ""
 	config.Storage = nil
@@ -163,6 +175,7 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) error {
 	if err := controllerhost.SaveConfig(config); err != nil {
 		return teardownFailure(out, "Host teardown incomplete.", err, "Remote Host state was removed; trust and local enrollment state need review.", "sudo boetticher host teardown --plan")
 	}
+	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host teardown", CurrentStep: 4, TotalSteps: 4, Detail: "Local Host selections cleared"})
 	fmt.Fprintln(out, "Removed: host enrollment, storage selection, and network selection")
 	fmt.Fprintln(out, "Preserved: Controller↔Proxmox SSH trust and HOME management")
 	fmt.Fprintln(out, "Host teardown: PASS")

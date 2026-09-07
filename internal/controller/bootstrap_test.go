@@ -110,9 +110,6 @@ func TestRunBootstrapReportsSubprocessFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(releases, "controller", "ansible.cfg"), []byte("[defaults]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(releases, "controller", "libexec", "boetticher-bootstrap-led"), []byte("#!/bin/sh\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
 	runtime := filepath.Join(root, "current")
 	if err := os.Symlink(releases, runtime); err != nil {
 		t.Fatal(err)
@@ -134,7 +131,6 @@ func TestRunBootstrapReportsSubprocessFailure(t *testing.T) {
 		LockPath:        lockPath,
 		LogPath:         logPath,
 		Run:             func(context.Context, string, []string, string, []string, io.Writer, io.Writer) error { return wantErr },
-		ShowLED:         func(context.Context, string, int, string) error { return nil },
 		PlatformReady:   func(context.Context, func(context.Context, string, ...string) ([]byte, error)) bool { return true },
 		runtimeRoot:     root,
 		isRoot:          func() bool { return true },

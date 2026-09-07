@@ -1,4 +1,8 @@
 ---
+- name: reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
 - name: restart journald
   ansible.builtin.systemd_service:
     name: systemd-journald.service
@@ -8,3 +12,9 @@
   ansible.builtin.systemd_service:
     name: ssh.service
     state: reloaded
+
+- name: restart boetticher-status
+  ansible.builtin.systemd_service:
+    name: boetticher-status.service
+    state: restarted
+    daemon_reload: true

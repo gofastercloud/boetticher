@@ -13,3 +13,11 @@
     state: present
     update_cache: false
     lock_timeout: 300
+
+- name: Install the Boetticher Host speedtest helper
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/libexec/boetticher-host-speedtest"
+    dest: /usr/local/libexec/boetticher-host-speedtest
+    owner: root
+    group: root
+    mode: '0755'
