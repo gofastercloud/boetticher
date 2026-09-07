@@ -208,7 +208,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 		return fmt.Errorf("load firewall provider TLS trust: %w", trustErr)
 	}
 	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "firewall apply", CurrentStep: 4, TotalSteps: 7, Detail: "Provider trust established"})
-	provider, err := openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, Username: "boetticher", Password: credential, TrustPEM: trust})
+	provider, err := openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, ServerName: firewallmodule.ProviderTLSName, Username: "boetticher", Password: credential, TrustPEM: trust})
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func runFirewallStatus(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	provider, err := openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, Username: "boetticher", Password: credential, TrustPEM: trust})
+	provider, err := openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, ServerName: firewallmodule.ProviderTLSName, Username: "boetticher", Password: credential, TrustPEM: trust})
 	if err != nil {
 		return err
 	}

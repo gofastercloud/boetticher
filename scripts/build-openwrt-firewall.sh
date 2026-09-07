@@ -103,7 +103,7 @@ uci -q set uhttpd.main.redirect_https='1'
 uci -q set uhttpd.main.listen_http='0.0.0.0:80'
 uci -q set uhttpd.main.listen_https='0.0.0.0:443'
 uci -q commit uhttpd
-px5g selfsigned -days 3650 -newkey rsa:2048 -keyout /etc/uhttpd.key.new -out /etc/uhttpd.crt.new -subj /C=AU/ST=NSW/L=Sydney/O=Boetticher/CN='$management_address' -addext subjectAltName=IP:$management_address
+px5g selfsigned -days 3650 -newkey rsa:2048 -keyout /etc/uhttpd.key.new -out /etc/uhttpd.crt.new -subj /C=AU/ST=NSW/L=Sydney/O=Boetticher/CN=boetticher-firewall -addext subjectAltName=DNS:boetticher-firewall
 mv /etc/uhttpd.key.new /etc/uhttpd.key
 mv /etc/uhttpd.crt.new /etc/uhttpd.crt
 chmod 600 /etc/uhttpd.key

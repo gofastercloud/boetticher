@@ -22,7 +22,7 @@ func TestEnsureImageReusesPinnedCacheWithoutRunningBuilder(t *testing.T) {
 }
 
 func TestImageConstantsPinOfficialBuildInputs(t *testing.T) {
-	if OpenWrtVersion != "25.12.5" || OpenWrtImageBuilder != "r33051-f5dae5ece4" || !strings.Contains(OpenWrtImageBuilderURL, OpenWrtVersion) || OpenWrtImageProfile != "generic" || OpenWrtImageArchitecture != "x86/64" || OpenWrtImageContract != "v3" {
+	if OpenWrtVersion != "25.12.5" || OpenWrtImageBuilder != "r33051-f5dae5ece4" || !strings.Contains(OpenWrtImageBuilderURL, OpenWrtVersion) || OpenWrtImageProfile != "generic" || OpenWrtImageArchitecture != "x86/64" || OpenWrtImageContract != "v4" || ProviderTLSName != "boetticher-firewall" {
 		t.Fatalf("OpenWrt build pins are incomplete")
 	}
 	if len(OpenWrtPackages) == 0 {
