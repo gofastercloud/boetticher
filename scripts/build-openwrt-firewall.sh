@@ -138,6 +138,9 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
 EOF
 
 packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables qemu-ga'
+log "checking ImageBuilder host prerequisites"
+make -C "$builder" -f include/prereq-build.mk prereq IB=1 V=s
+touch "$builder/staging_dir/host/.prereq-build"
 log "building generic x86/64 image"
 make -C "$builder" image PROFILE=generic PACKAGES="$packages" FILES="$files"
 log "locating generic ext4 combined image"
