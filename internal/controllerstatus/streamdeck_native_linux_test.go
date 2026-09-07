@@ -2,7 +2,10 @@
 
 package controllerstatus
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 func TestParseStreamDeckUSBDescriptorFindsHIDEndpoints(t *testing.T) {
 	descriptor := []byte{
@@ -25,5 +28,11 @@ func TestParseStreamDeckUSBDescriptorFindsHIDEndpoints(t *testing.T) {
 func TestParseStreamDeckUSBDescriptorRejectsInvalidDevice(t *testing.T) {
 	if _, err := parseStreamDeckUSBDescriptor([]byte{18, 1}); err == nil {
 		t.Fatal("truncated USB descriptor was accepted")
+	}
+}
+
+func TestStreamDeckUSBFSBulkMatchesKernelLayout(t *testing.T) {
+	if unsafe.Offsetof(streamDeckUSBFSBulk{}.Endpoint) != 0 || unsafe.Offsetof(streamDeckUSBFSBulk{}.Length) != 4 || unsafe.Offsetof(streamDeckUSBFSBulk{}.Timeout) != 8 || unsafe.Offsetof(streamDeckUSBFSBulk{}.Data) != 16 {
+		t.Fatalf("usbdevfs bulk layout is incompatible: endpoint=%d length=%d timeout=%d data=%d", unsafe.Offsetof(streamDeckUSBFSBulk{}.Endpoint), unsafe.Offsetof(streamDeckUSBFSBulk{}.Length), unsafe.Offsetof(streamDeckUSBFSBulk{}.Timeout), unsafe.Offsetof(streamDeckUSBFSBulk{}.Data))
 	}
 }

@@ -193,8 +193,8 @@ type streamDeckUSBFSControl struct {
 type streamDeckUSBFSBulk struct {
 	Endpoint uint32
 	Length   uint32
-	Data     uintptr
 	Timeout  uint32
+	Data     uintptr
 }
 
 func (d *nativeStreamDeck) control(ctx context.Context, value uint16, data []byte) error {
