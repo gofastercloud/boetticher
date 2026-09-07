@@ -21,12 +21,12 @@ const (
 	OpenWrtImageBuilderURL   = "https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-imagebuilder-25.12.5-x86-64.Linux-x86_64.tar.zst"
 	OpenWrtImageProfile      = "generic"
 	OpenWrtImageArchitecture = "x86/64"
-	OpenWrtImageContract     = "v2"
+	OpenWrtImageContract     = "v3"
 )
 
 var OpenWrtPackages = []string{
 	"uhttpd", "uhttpd-mod-ubus", "rpcd", "rpcd-mod-file", "rpcd-mod-iwinfo",
-	"px5g-mbedtls", "coreutils-base64", "ca-bundle", "firewall4", "nftables", "qemu-ga",
+	"px5g-mbedtls", "ca-bundle", "firewall4", "nftables", "qemu-ga",
 }
 
 type Image struct {

@@ -3,7 +3,6 @@ package firewallmodule
 import (
 	"context"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -43,7 +42,7 @@ type HostApplyResult struct {
 // the authenticated Host's QEMU guest agent. It is bootstrap-only; normal API
 // requests use the stored certificate as verified TLS trust.
 func CaptureProviderTrustViaHost(ctx context.Context, host HostClient) ([]byte, error) {
-	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /usr/bin/base64 /etc/uhttpd.crt")
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/cat /etc/uhttpd.crt")
 	if err != nil {
 		return nil, fmt.Errorf("read provider certificate through Host guest agent: %w", err)
 	}
@@ -61,12 +60,7 @@ func CaptureProviderTrustViaHost(ctx context.Context, host HostClient) ([]byte, 
 		}
 		return nil, fmt.Errorf("provider guest agent certificate command failed (%d)", output.ExitCode)
 	}
-	encoded := strings.Join(strings.Fields(output.Data), "")
-	data, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, errors.New("provider guest agent returned invalid encoded TLS certificate")
-	}
-	trust, err := normalizeProviderCertificate(data)
+	trust, err := normalizeProviderCertificate([]byte(output.Data))
 	if err != nil {
 		return nil, err
 	}

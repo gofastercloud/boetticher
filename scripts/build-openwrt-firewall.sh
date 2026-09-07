@@ -103,6 +103,11 @@ uci -q set uhttpd.main.redirect_https='1'
 uci -q set uhttpd.main.listen_http='0.0.0.0:80'
 uci -q set uhttpd.main.listen_https='0.0.0.0:443'
 uci -q commit uhttpd
+px5g selfsigned -days 3650 -newkey rsa:2048 -keyout /etc/uhttpd.key.new -out /etc/uhttpd.crt.new -subj /C=AU/ST=NSW/L=Sydney/O=Boetticher/CN='$management_address' -addext subjectAltName=IP:$management_address
+mv /etc/uhttpd.key.new /etc/uhttpd.key
+mv /etc/uhttpd.crt.new /etc/uhttpd.crt
+chmod 600 /etc/uhttpd.key
+chmod 644 /etc/uhttpd.crt
 /etc/init.d/uhttpd enable
 /etc/init.d/qemu-ga enable
 /etc/init.d/uhttpd restart || true
@@ -137,7 +142,7 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
 }
 EOF
 
-packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls coreutils-base64 ca-bundle firewall4 nftables qemu-ga'
+packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables qemu-ga'
 log "checking ImageBuilder host prerequisites"
 make -C "$builder" TOPDIR="$builder" -f include/prereq-build.mk prereq IB=1 V=s
 touch "$builder/staging_dir/host/.prereq-build"
