@@ -22,8 +22,8 @@ boetticher module <capability> <action> [flags]
 Examples of the intended shape are:
 
 ```text
+boetticher module firewall plan
 boetticher module firewall status
-boetticher module firewall add-rule
 boetticher module dhcp status
 boetticher module dhcp add-reservation
 boetticher module dns status
@@ -35,8 +35,40 @@ boetticher module statuspage add-check
 boetticher module printer status
 ```
 
-These examples document the grammar and operator intent. They do not enable
-speculative capability implementation in Phase 3D.
+These examples document the grammar and operator intent. The firewall
+capability is the first Phase 4 implementation; the remaining examples remain
+future capability contracts until their own phase is qualified.
+
+## Phase 4A firewall capability
+
+The supported Phase 4A lifecycle is:
+
+```text
+boetticher module firewall plan
+boetticher module firewall apply
+boetticher module firewall status
+boetticher module firewall teardown
+```
+
+The capability owns one provider appliance named `lab-firewall-01`, its exact
+VM and disk, its six virtual IPv4 gateways, its reference firewall policy, and
+ordinary Internet NAT. The current provider implementation is OpenWrt, but
+OpenWrt is not a public Module namespace. The provider consumes the Host-owned
+VLAN-aware `vmbr1`; it never creates, repairs, or re-owns that bridge.
+
+Phase 4A configures IPv4 routing, inter-zone default-deny policy, and
+Controller-only provider management. DHCP and DNS are deliberately not
+configured. Provider state outside deterministic Boetticher-owned sections is
+preserved. Repeating `apply` when the provider and owned state are correct is a
+semantic no-op. `teardown --yes` removes only the exact firewall provider and
+Controller-local provider credential/trust, preserving Host trust, storage,
+`vmbr0`, `vmbr1`, and physical networking.
+
+The existing Controller status monitor maps the firewall provider check into
+the fixed `FW` Blinkt slot and the StreamDeck Host-detail view. `DHCP/NTP` and
+`DNS` remain RED placeholders until those capability checks are implemented;
+they use the same in-memory status model and polling loop, with no additional
+status database or scheduler.
 
 ## Capability, provider, runtime
 

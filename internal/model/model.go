@@ -57,6 +57,10 @@ const (
 	ArrDownloadsVolumeGiB       = 500
 	ArrDownloadsMountPath       = "/var/lib/arr/downloads"
 	DefaultGatewayUpstreamMAC   = "02:00:00:00:01:01"
+	GatewayManagementAddress    = "192.168.4.28"
+	GatewayManagementNetwork    = "192.168.4.0/22"
+	GatewayManagementGateway    = "192.168.4.1"
+	GatewayControllerAddress    = "192.168.4.6"
 	TransitVLAN                 = 5
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
@@ -261,6 +265,17 @@ type Gateway struct {
 	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=managed,enum=external" jsonschema_description:"Use Boetticher's managed gateway or publish a contract for an external firewall."`
 	// Upstream describes the existing HOME-side connection used by the gateway.
 	Upstream GatewayUpstream `yaml:"upstream" json:"upstream"`
+	// ManagementAddress is the explicit HOME-side address used by the
+	// capability provider for Controller management. It is not a LAB gateway.
+	ManagementAddress string `yaml:"management_address,omitempty" json:"management_address,omitempty"`
+	// ManagementNetwork and ManagementGateway describe the HOME prefix and
+	// route used by the capability provider. They are site bindings, not LAB
+	// network intent.
+	ManagementNetwork string `yaml:"management_network,omitempty" json:"management_network,omitempty"`
+	ManagementGateway string `yaml:"management_gateway,omitempty" json:"management_gateway,omitempty"`
+	// ControllerAddress is the exact HOME source allowed to reach provider
+	// administration.
+	ControllerAddress string `yaml:"controller_address,omitempty" json:"controller_address,omitempty"`
 	// Publish lists the small set of platform services that may be published upstream.
 	Publish []GatewayPublication `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
@@ -619,7 +634,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		PlatformVersion:        PlatformVersion,
 		SchemaVersion:          SchemaVersion,
 		StorageProfile:         "single-disk",
-		Gateway:                Gateway{Mode: gatewayMode, Upstream: GatewayUpstream{Mode: "dhcp", MAC: DefaultGatewayUpstreamMAC}},
+		Gateway:                Gateway{Mode: gatewayMode, ManagementAddress: GatewayManagementAddress, ManagementNetwork: GatewayManagementNetwork, ManagementGateway: GatewayManagementGateway, ControllerAddress: GatewayControllerAddress, Upstream: GatewayUpstream{Mode: "dhcp", MAC: DefaultGatewayUpstreamMAC}},
 		LogicalProxmoxIdentity: LogicalProxmoxIdentity,
 		TestedVersions: TestedVersions{
 			Gateway: QualifiedGatewayImage,
@@ -1264,6 +1279,38 @@ func (m Component) Validate() error {
 func validateGatewayConfiguration(s Site) error {
 	if s.Gateway.Upstream.Mode != "dhcp" {
 		return fmt.Errorf("gateway.upstream.mode must be dhcp")
+	}
+	managementAddress := s.Gateway.ManagementAddress
+	if managementAddress == "" {
+		managementAddress = GatewayManagementAddress
+	}
+	managementNetwork := s.Gateway.ManagementNetwork
+	if managementNetwork == "" {
+		managementNetwork = GatewayManagementNetwork
+	}
+	managementGateway := s.Gateway.ManagementGateway
+	if managementGateway == "" {
+		managementGateway = GatewayManagementGateway
+	}
+	controllerAddress := s.Gateway.ControllerAddress
+	if controllerAddress == "" {
+		controllerAddress = GatewayControllerAddress
+	}
+	_, network, networkErr := net.ParseCIDR(managementNetwork)
+	if networkErr != nil || network.IP.To4() == nil || network.String() != managementNetwork {
+		return fmt.Errorf("gateway.management_network must be a canonical IPv4 CIDR")
+	}
+	parsedManagementAddress := net.ParseIP(managementAddress)
+	parsedManagementGateway := net.ParseIP(managementGateway)
+	parsedControllerAddress := net.ParseIP(controllerAddress)
+	if parsedManagementAddress == nil || parsedManagementAddress.To4() == nil || parsedManagementAddress.To4().String() != managementAddress || !network.Contains(parsedManagementAddress) {
+		return fmt.Errorf("gateway.management_address must be a canonical IPv4 address")
+	}
+	if parsedManagementGateway == nil || parsedManagementGateway.To4() == nil || parsedManagementGateway.To4().String() != managementGateway || !network.Contains(parsedManagementGateway) || parsedManagementGateway.Equal(parsedManagementAddress) {
+		return fmt.Errorf("gateway.management_gateway must be a distinct canonical IPv4 address in management_network")
+	}
+	if parsedControllerAddress == nil || parsedControllerAddress.To4() == nil || parsedControllerAddress.To4().String() != controllerAddress || !network.Contains(parsedControllerAddress) {
+		return fmt.Errorf("gateway.controller_address must be a canonical IPv4 address in management_network")
 	}
 	if err := ValidateGatewayUpstreamMAC(s.Gateway.Upstream.MAC); err != nil {
 		return err
