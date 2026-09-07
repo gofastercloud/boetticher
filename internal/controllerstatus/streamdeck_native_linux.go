@@ -87,12 +87,8 @@ func openNativeStreamDeck(ctx context.Context, config StreamDeckConfig, brightne
 		value = 100
 	}
 	controlCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	err = device.setBrightness(controlCtx, value)
+	_ = device.setBrightness(controlCtx, value)
 	cancel()
-	if err != nil {
-		_ = device.Close()
-		return nil, fmt.Errorf("set StreamDeck brightness: %w", err)
-	}
 	inputCtx, cancelInput := context.WithCancel(ctx)
 	device.cancel = cancelInput
 	device.wg.Add(1)
