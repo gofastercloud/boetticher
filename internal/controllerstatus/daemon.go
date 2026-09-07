@@ -23,28 +23,28 @@ type Daemon struct {
 	Host         func(context.Context) CheckResult
 	Connectivity func(context.Context) CheckResult
 	Throughput   func(context.Context) (float64, error)
-	Reboot       func(string) Component
 	Now          func() time.Time
 
-	renderer      Renderer
-	snapshot      StatusSnapshot
-	controller    *Debouncer
-	host          *Debouncer
-	internet      *Debouncer
-	throughput    float64
-	throughputAt  time.Time
-	throughputTry time.Time
-	operation     *operationDisplay
-	configFailed  bool
-	previous      StatusSnapshot
-	driverBroken  bool
+	renderer         Renderer
+	snapshot         StatusSnapshot
+	controller       *Debouncer
+	host             *Debouncer
+	internet         *Debouncer
+	throughput       float64
+	throughputAt     time.Time
+	throughputTry    time.Time
+	connectivityAt   time.Time
+	lastConnectivity CheckResult
+	operation        *operationDisplay
+	configStaged     bool
+	previous         StatusSnapshot
+	driverBroken     bool
 }
 
 type operationDisplay struct {
-	event         OperationEvent
-	result        State
-	until         time.Time
-	configuration bool
+	event  OperationEvent
+	result State
+	until  time.Time
 }
 
 func NewDaemon(settings Settings, driver Driver) *Daemon {
@@ -54,11 +54,11 @@ func NewDaemon(settings Settings, driver Driver) *Daemon {
 	if settings.ThroughputInterval <= 0 {
 		settings.ThroughputInterval = DefaultThroughputPeriod
 	}
+	if settings.PingInterval <= 0 {
+		settings.PingInterval = DefaultPingPeriod
+	}
 	if settings.HealthyMbps <= 0 {
 		settings.HealthyMbps = DefaultHealthyMbps
-	}
-	if settings.TransferBytes <= 0 {
-		settings.TransferBytes = DefaultTransferBytes
 	}
 	if settings.SocketPath == "" {
 		settings.SocketPath = DefaultSocketPath
@@ -67,7 +67,6 @@ func NewDaemon(settings Settings, driver Driver) *Daemon {
 		Settings:   settings,
 		Driver:     driver,
 		Logger:     log.New(io.Discard, "", 0),
-		Reboot:     RebootResult,
 		Now:        time.Now,
 		renderer:   NewRenderer(settings.Brightness),
 		controller: NewDebouncer(Checking),
@@ -82,19 +81,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.Logger = log.New(io.Discard, "", 0)
 	}
 	if d.Controller == nil {
-		d.Controller = ControllerChecker{ConfigPath: d.Settings.ConfigPath}.Check
+		d.Controller = ControllerChecker{ConfigPath: d.Settings.ConfigPath, RebootRequiredPath: d.Settings.RebootRequiredPath}.Check
 	}
 	if d.Host == nil {
 		d.Host = HostChecker{}.Check
 	}
 	if d.Connectivity == nil {
-		d.Connectivity = func(ctx context.Context) CheckResult { return CheckInternet(ctx, nil) }
+		d.Connectivity = (HostConnectivityChecker{}).Check
 	}
 	if d.Throughput == nil {
-		d.Throughput = func(ctx context.Context) (float64, error) { return DownloadThroughput(ctx, d.Settings.TransferBytes) }
-	}
-	if d.Reboot == nil {
-		d.Reboot = RebootResult
+		d.Throughput = func(ctx context.Context) (float64, error) {
+			return (HostSpeedtestChecker{}).Sample(ctx)
+		}
 	}
 	_, cleanup, events, err := listen(ctx, d.Settings.SocketPath)
 	if err != nil {
@@ -135,16 +133,22 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 		kind string
 		data CheckResult
 	}
-	results := make(chan result, 3)
-	var group sync.WaitGroup
+	runConnectivity := d.connectivityAt.IsZero() || now.Sub(d.connectivityAt) >= d.Settings.PingInterval
 	checks := []struct {
 		kind string
 		fn   func(context.Context) CheckResult
 	}{
 		{"controller", d.Controller},
 		{"host", d.Host},
-		{"internet", d.Connectivity},
 	}
+	if runConnectivity {
+		checks = append(checks, struct {
+			kind string
+			fn   func(context.Context) CheckResult
+		}{"internet", d.Connectivity})
+	}
+	results := make(chan result, len(checks))
+	var group sync.WaitGroup
 	for _, check := range checks {
 		group.Add(1)
 		go func(check struct {
@@ -164,24 +168,44 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 		switch result.kind {
 		case "controller":
 			d.snapshot.Controller = d.controller.Update(result.data.Healthy, result.data.Detail)
+			d.snapshot.ControllerUpdates = result.data.Update
+			if d.snapshot.ControllerUpdates.State == "" {
+				d.snapshot.ControllerUpdates = Component{State: Checking, Detail: "Controller update state unavailable"}
+			}
+			if d.configStaged {
+				d.snapshot.ControllerUpdates = Component{State: Checking, Detail: "Boetticher configuration changes staged"}
+			}
 		case "host":
 			if !result.data.Configured {
 				d.snapshot.Host = Component{State: Off, Detail: result.data.Detail}
+				d.snapshot.HostUpdates = Component{State: Off, Detail: "Host not enrolled"}
 			} else {
 				d.snapshot.Host = d.host.Update(result.data.Healthy, result.data.Detail)
+				d.snapshot.HostUpdates = result.data.Update
+				if d.snapshot.HostUpdates.State == "" {
+					d.snapshot.HostUpdates = Component{State: Attention, Detail: "Host update state unavailable"}
+				}
 			}
 		case "internet":
 			connectivity = result.data
+			d.lastConnectivity = result.data
+			d.connectivityAt = now
 		}
 	}
-	if !connectivity.Configured {
-		connectivity.Configured = true
+	if !runConnectivity {
+		connectivity = d.lastConnectivity
 	}
-	connectivityComponent := d.internet.Update(connectivity.Healthy, connectivity.Detail)
-	d.snapshot.Internet.Component = connectivityComponent
+	if !connectivity.Configured && d.connectivityAt.IsZero() {
+		connectivity.Configured = true
+		connectivity.Detail = "waiting for first connectivity check"
+	}
+	if runConnectivity {
+		connectivityComponent := d.internet.Update(connectivity.Healthy, connectivity.Detail)
+		d.snapshot.Internet.Component = connectivityComponent
+	}
 	if connectivity.Healthy && (d.throughputTry.IsZero() || now.Sub(d.throughputTry) >= d.Settings.ThroughputInterval) {
 		d.throughputTry = now
-		throughputCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		throughputCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		value, err := d.Throughput(throughputCtx)
 		cancel()
 		if err != nil {
@@ -201,12 +225,6 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			d.snapshot.Internet.State = Attention
 			d.snapshot.Internet.Detail = fmt.Sprintf("Internet reachable; recent throughput %.0f Mbps is below %.0f Mbps", d.throughput, d.Settings.HealthyMbps)
 		}
-	}
-	d.snapshot.RebootRequired = d.Reboot(d.Settings.RebootRequiredPath)
-	if d.configFailed {
-		d.snapshot.Configuration = Component{State: Failed, Detail: "last mutating operation failed"}
-	} else {
-		d.snapshot.Configuration = Component{State: Off}
 	}
 	d.logTransitions()
 }
@@ -235,26 +253,24 @@ func (d *Daemon) handleEvent(event OperationEvent) {
 			if event.TotalSteps <= 0 && event.Steps <= 0 {
 				event.TotalSteps = PixelCount
 			}
-			d.operation = &operationDisplay{event: event, configuration: event.ConfigurationFailed}
+			d.operation = &operationDisplay{event: event}
 		}
 		d.operation.event.CurrentStep = d.operation.event.totalSteps()
 		d.operation.result = Healthy
 		d.operation.until = now.Add(time.Second)
-		d.configFailed = false
-		d.snapshot.Configuration = Component{State: Off}
 		d.Logger.Printf("operation succeeded: %s", event.Name)
 	case "operation-failure":
 		if d.operation == nil || d.operation.event.Name != event.Name {
 			d.operation = &operationDisplay{event: event}
 		}
 		d.operation.result = Failed
-		d.operation.configuration = event.ConfigurationFailed
 		d.operation.until = now.Add(time.Second)
-		if event.ConfigurationFailed {
-			d.configFailed = true
-			d.snapshot.Configuration = Component{State: Failed, Detail: "last mutating operation failed"}
-		}
 		d.Logger.Printf("operation failed: %s: %s", event.Name, event.Detail)
+	case "configuration-staged":
+		d.configStaged = true
+		d.snapshot.ControllerUpdates = Component{State: Checking, Detail: "Boetticher configuration changes staged"}
+	case "configuration-applied":
+		d.configStaged = false
 	}
 }
 
@@ -293,9 +309,9 @@ func (d *Daemon) startup(ctx context.Context) {
 		return
 	}
 	for _, index := range []int{0, 1, 2, 3, 4, 5, 6, 7, 6, 4, 2, 0} {
-		frame := make([]Pixel, PixelCount)
-		frame[index] = d.renderer.componentPixel(Checking, d.Now(), index)
-		d.show(ctx, frame)
+		logical := make([]Pixel, PixelCount)
+		logical[index] = d.renderer.componentPixel(Checking, d.Now(), index)
+		d.show(ctx, physicalFrame(logical))
 		select {
 		case <-ctx.Done():
 			return
@@ -335,8 +351,8 @@ func (d *Daemon) logTransitions() {
 		{"CTL", d.previous.Controller.State, d.snapshot.Controller.State},
 		{"HOST", d.previous.Host.State, d.snapshot.Host.State},
 		{"NET", d.previous.Internet.State, d.snapshot.Internet.State},
-		{"CFG", d.previous.Configuration.State, d.snapshot.Configuration.State},
-		{"RBT", d.previous.RebootRequired.State, d.snapshot.RebootRequired.State},
+		{"CTRL-UPDATES", d.previous.ControllerUpdates.State, d.snapshot.ControllerUpdates.State},
+		{"HOST-UPDATES", d.previous.HostUpdates.State, d.snapshot.HostUpdates.State},
 	} {
 		if transition.before != "" && transition.before != transition.after {
 			d.Logger.Printf("%s state: %s -> %s", transition.name, transition.before, transition.after)

@@ -91,11 +91,10 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) (err error) 
 			return errors.New("Host teardown cancelled")
 		}
 	}
-	mutationAttempted := false
 	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "host teardown", Steps: 4})
 	defer func() {
 		if err != nil {
-			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "host teardown", Detail: err.Error(), ConfigurationFailed: mutationAttempted})
+			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "host teardown", Detail: err.Error()})
 			return
 		}
 		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "host teardown"})
@@ -113,7 +112,6 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) (err error) 
 		if commandErr != nil {
 			return teardownFailure(out, "Host teardown stopped before network removal.", commandErr, "No Host state was changed.", "sudo boetticher host teardown --plan")
 		}
-		mutationAttempted = true
 		if _, commandErr = transport.Run(ctx, command); commandErr != nil {
 			return teardownFailure(out, "Host teardown incomplete.", commandErr, "Internal network removal was not verified.", "sudo boetticher host teardown --plan")
 		}
@@ -141,7 +139,6 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) (err error) 
 		if commandErr != nil {
 			return teardownFailure(out, "Host teardown stopped before storage removal.", commandErr, "vmbr1 was removed; storage remains.", "sudo boetticher host teardown --plan")
 		}
-		mutationAttempted = true
 		if _, commandErr = transport.Run(ctx, command); commandErr != nil {
 			return teardownFailure(out, "Host teardown incomplete.", commandErr, "vmbr1 was removed; storage teardown is incomplete.", "sudo boetticher host teardown --plan --data-disk "+*dataDisk)
 		}
@@ -158,7 +155,6 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) (err error) 
 	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host teardown", CurrentStep: 2, TotalSteps: 4, Detail: "Dedicated storage removed"})
 
 	if baseline {
-		mutationAttempted = true
 		if _, commandErr := transport.Run(ctx, controllerhost.HostBaselineTeardownCommand()); commandErr != nil {
 			return teardownFailure(out, "Host teardown incomplete.", commandErr, "Network and storage were removed; Host configuration remains.", "sudo boetticher host teardown --plan")
 		}

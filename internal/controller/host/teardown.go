@@ -20,7 +20,7 @@ const headlessPolicy = "[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternal
 // power configuration are deliberately preserved.
 func HostBaselineTeardownCommand() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
-	return "set -eu; for path in " + proxmoxRepositoryPath + " " + headlessPolicyPath + "; do test ! -L \"$path\"; done; if [ -f " + proxmoxRepositoryPath + " ] && printf %s " + quote(proxmoxRepository) + " | cmp -s - " + proxmoxRepositoryPath + "; then rm -f " + proxmoxRepositoryPath + "; fi; if [ -f " + headlessPolicyPath + " ] && printf %s " + quote(headlessPolicy) + " | cmp -s - " + headlessPolicyPath + "; then rm -f " + headlessPolicyPath + "; systemctl daemon-reload; systemctl reload systemd-logind.service; fi"
+	return "set -eu; for path in " + proxmoxRepositoryPath + " " + headlessPolicyPath + " /usr/local/libexec/boetticher-host-speedtest; do test ! -L \"$path\"; done; if [ -f " + proxmoxRepositoryPath + " ] && printf %s " + quote(proxmoxRepository) + " | cmp -s - " + proxmoxRepositoryPath + "; then rm -f " + proxmoxRepositoryPath + "; fi; if [ -f " + headlessPolicyPath + " ] && printf %s " + quote(headlessPolicy) + " | cmp -s - " + headlessPolicyPath + "; then rm -f " + headlessPolicyPath + "; systemctl daemon-reload; systemctl reload systemd-logind.service; fi; if [ -e /usr/local/libexec/boetticher-host-speedtest ]; then rm -f /usr/local/libexec/boetticher-host-speedtest; fi"
 }
 
 // NetworkTeardownCommand removes an exact, owned vmbr1 and its host IPv6

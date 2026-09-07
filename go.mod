@@ -7,6 +7,7 @@ require (
 	github.com/getsops/sops/v3 v3.13.3
 	github.com/invopop/jsonschema v0.14.0
 	github.com/matthewpi/streamdeck v0.0.0-20240226234722-6586ce762db3
+	github.com/showwin/speedtest-go v1.8.3
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.39.0
 	golang.org/x/net v0.57.0

@@ -42,11 +42,10 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 	if err != nil {
 		return err
 	}
-	mutationAttempted := false
 	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-start", Name: "host apply", Steps: 5})
 	defer func() {
 		if err != nil {
-			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "host apply", Detail: err.Error(), ConfigurationFailed: mutationAttempted})
+			controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "host apply", Detail: err.Error()})
 			return
 		}
 		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-success", Name: "host apply"})
@@ -87,7 +86,6 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 			return err
 		}
 		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "host apply", CurrentStep: 1, TotalSteps: 5, Detail: "Verifying Host access"})
-		mutationAttempted = true
 		applyCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 		err := controllerhost.RunPrepare(applyCtx, config, transport, io.Discard)
 		if err == nil {
@@ -149,7 +147,6 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 		if err != nil {
 			return err
 		}
-		mutationAttempted = true
 		if _, err := transport.Run(ctx, command); err != nil {
 			return fmt.Errorf("Host storage apply failed: %w", err)
 		}
@@ -193,7 +190,6 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 		if err != nil {
 			return err
 		}
-		mutationAttempted = true
 		if _, err := transport.Run(ctx, command); err != nil {
 			return fmt.Errorf("Host network apply failed: %w", err)
 		}

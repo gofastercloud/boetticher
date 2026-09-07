@@ -62,7 +62,8 @@ sudo boetticher controller status
 
 `controller bootstrap` runs one local Ansible playbook and then local readiness
 checks. `controller status` is read-only: it does not repair the host, run
-Ansible, change Blinkt, load lab state, or contact Proxmox.
+Ansible, or change Blinkt. The status daemon may contact the enrolled Host for
+its lightweight health, update, and connectivity checks.
 
 The controller installs Go 1.26.5 under
 `/opt/boetticher/toolchains/go1.26.5/` and Ansible Core 2.19.11 in
@@ -90,10 +91,10 @@ Host operations send best-effort progress events over its root-only Unix socket
 at `/run/boetticher/status.sock`. If the socket or hardware is unavailable,
 the operation continues normally.
 
-The fixed physical layout is:
+The fixed physical layout, viewed from the operator side, is:
 
 ```text
-CTL HOST FW DNS DHCP NET CFG RBT
+CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES
 ```
 
 | Display | Meaning |
@@ -105,18 +106,22 @@ CTL HOST FW DNS DHCP NET CFG RBT
 | Off | Not configured or not applicable |
 
 `CTL` is local Controller health, `HOST` is the enrolled Proxmox Host, and
-`FW`, `DNS`, and `DHCP` remain off until those capabilities exist. `CFG` is
-normally off, turns blue during a mutating operation, and can turn red after a
-failed apply. `RBT` is amber only when the Controller OS exposes the native
-`/var/run/reboot-required` marker; Host reboot state is not shown there.
+`FW`, `DHCP/NTP`, and `DNS` remain off until those capabilities exist.
+`CTRL-UPDATES` is green when no Controller updates are available, amber when
+updates or the native `/var/run/reboot-required` marker require attention, and
+blue when an explicit Boetticher configuration-staged event is active.
+`HOST-UPDATES` is green when no Proxmox package updates or Host reboot are
+reported, and amber when either is reported. Both update views are read-only;
+they do not run package installation, refresh package lists, or reboot.
 
-`NET` is green when Internet connectivity is available and the most recent
-usable throughput sample is at least the configured threshold. It is amber
-when connectivity works but throughput is below the threshold or has not been
-measured recently, and red only after connectivity fails twice consecutively.
-The reference-lab threshold is 500 Mbps for its approximately 1000 Mbps
-service. Throughput sampling uses a small transfer approximately every ten
-minutes; normal checks run approximately every 30 seconds.
+`NET` runs a lightweight Host-side ping/connectivity check every 60 seconds.
+It is green when Host Internet connectivity is available and the most recent
+full speedtest download meets the configured threshold. It is amber when
+connectivity works but the speedtest is below the threshold or has no usable
+recent result, and red only after connectivity fails twice consecutively. The
+full speedtest runs from the Host approximately every hour using the
+release-built `showwin/speedtest-go` helper on `vmbr0`; the reference-lab
+threshold is 500 Mbps for its approximately 1000 Mbps service.
 
 The optional configuration keeps these defaults explicit without adding a
 status database or generated state:
@@ -124,8 +129,9 @@ status database or generated state:
 ```yaml
 status:
   interval: 30s
+  ping_interval: 60s
   internet:
-    throughput_interval: 10m
+    throughput_interval: 1h
     healthy_mbps: 500
   blinkt:
     enabled: true
@@ -136,9 +142,10 @@ The display is a lightweight operator convenience, not authoritative
 monitoring or qualification. A green LED means only that its corresponding
 simple, read-only check passed. It has no dependency on Pulse, Prometheus,
 Loki, Alertmanager, Gatus, a monitoring database, or an external monitoring
-API. The Controller daemon runs with root privileges in the reference image
-because the GPIO device is root-owned; its systemd unit otherwise confines
-network, filesystem, and device access.
+API. The hourly speedtest uses the external speedtest.net measurement service
+only for that explicit performance sample. The Controller daemon runs with
+root privileges in the reference image because the GPIO device is root-owned;
+its systemd unit otherwise confines network, filesystem, and device access.
 
 ## Installed paths and maintenance
 
@@ -231,9 +238,9 @@ host is reported as requiring preparation, not as unhealthy.
 `host apply` displays its bounded Host change set and requires confirmation (or
 `--yes`). Its dedicated Ansible role only configures the known Proxmox
 no-subscription repository policy, required host prerequisites, and headless
-power behavior. It never formats disks, changes guests, storage, bridges,
-addresses, routes, firewall, or recovery access. Re-running it is safe; it does
-not upgrade or reboot Proxmox.
+power behavior, and the signed release-built Host speedtest helper. It never
+formats disks, changes guests, storage, bridges, addresses, routes, firewall, or
+recovery access. Re-running it is safe; it does not upgrade or reboot Proxmox.
 
 The controller keeps the private key at
 `/var/lib/boetticher/controller/ssh/id_ed25519` with root-only permissions and

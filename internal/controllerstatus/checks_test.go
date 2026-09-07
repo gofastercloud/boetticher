@@ -18,8 +18,13 @@ func TestControllerCheckerRequiresReadableConfigServicesAndDiskSpace(t *testing.
 	if err := os.WriteFile(config, []byte("operator_user: pi\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	updates := filepath.Join(t.TempDir(), "unattended.conf")
+	if err := os.WriteFile(updates, []byte("APT::Periodic::Unattended-Upgrade \"1\";\nUnattended-Upgrade::Automatic-Reboot \"false\";\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	checker := ControllerChecker{
 		ConfigPath:       config,
+		UpdateConfigPath: updates,
 		RequiredServices: []string{"ssh.service"},
 		RunCommand: func(context.Context, string, ...string) ([]byte, error) {
 			return nil, nil
@@ -30,7 +35,7 @@ func TestControllerCheckerRequiresReadableConfigServicesAndDiskSpace(t *testing.
 			return nil
 		},
 	}
-	if result := checker.Check(context.Background()); !result.Healthy {
+	if result := checker.Check(context.Background()); !result.Healthy || result.Update.State != Healthy {
 		t.Fatalf("healthy controller result = %#v", result)
 	}
 	checker.RunCommand = func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("inactive") }
@@ -68,7 +73,7 @@ func TestHostCheckerIsOffWhenNotEnrolledAndReadOnlyWhenEnrolled(t *testing.T) {
 	}
 	checker.Run = func(_ context.Context, _ controllerhost.Transport, value string) (controllerhost.Result, error) {
 		command = value
-		return controllerhost.Result{}, nil
+		return controllerhost.Result{Stdout: []byte("BOETTICHER_PVE_UPDATES=pve-manager,\nBOETTICHER_PVE_REBOOT=0\n")}, nil
 	}
 	if result := checker.Check(context.Background()); !result.Healthy {
 		t.Fatalf("healthy Host result = %#v", result)
@@ -78,6 +83,48 @@ func TestHostCheckerIsOffWhenNotEnrolledAndReadOnlyWhenEnrolled(t *testing.T) {
 	}
 	if containsAny(command, "ansible", "apply", "rm -", "mktemp") {
 		t.Fatalf("Host check command contains mutation: %s", command)
+	}
+	if result := checker.Check(context.Background()); result.Update.State != Attention {
+		t.Fatalf("Host update state did not report pending Proxmox update: %#v", result.Update)
+	}
+	checker.Run = func(_ context.Context, _ controllerhost.Transport, _ string) (controllerhost.Result, error) {
+		return controllerhost.Result{Stdout: []byte("BOETTICHER_PVE_UPDATES=\nBOETTICHER_PVE_REBOOT=0\n")}, errors.New("vmbr1 conflict")
+	}
+	if result := checker.Check(context.Background()); result.Healthy || result.Update.State != Healthy {
+		t.Fatalf("Host health failure obscured update state = %#v", result)
+	}
+	checker.Run = func(_ context.Context, _ controllerhost.Transport, _ string) (controllerhost.Result, error) {
+		return controllerhost.Result{}, errors.New("connection failed")
+	}
+	if result := checker.Check(context.Background()); result.Update.State != Attention {
+		t.Fatalf("missing Host update markers were accepted: %#v", result.Update)
+	}
+}
+
+func TestHostSpeedtestCheckerUsesTheHostHelperAndParsesDownload(t *testing.T) {
+	network := controllerhost.DefaultNetworkConfig()
+	config := controllerhost.LabConfig{
+		Name:    "lab",
+		Proxmox: controllerhost.ProxmoxConfig{Address: "192.0.2.5", User: "root", Node: "pve", Repository: "no-subscription"},
+		Network: &network,
+	}
+	var command string
+	checker := HostSpeedtestChecker{
+		LoadConfig: func() (controllerhost.LabConfig, error) { return config, nil },
+		Transport: func(controllerhost.LabConfig) (controllerhost.Transport, error) {
+			return controllerhost.Transport{}, nil
+		},
+		Run: func(_ context.Context, _ controllerhost.Transport, value string) (controllerhost.Result, error) {
+			command = value
+			return controllerhost.Result{Stdout: []byte(`[{"download_mbps": 612.5}]`)}, nil
+		},
+	}
+	speed, err := checker.Sample(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if speed != 612.5 || command != DefaultHostSpeedtestPath+" --source vmbr0 --json" {
+		t.Fatalf("Host speedtest = %.1f command=%q", speed, command)
 	}
 }
 
@@ -136,6 +183,7 @@ func TestInternetThresholdAndFailureDebounce(t *testing.T) {
 	if d.snapshot.Internet.State != Checking {
 		t.Fatalf("first connectivity failure = %s, want checking", d.snapshot.Internet.State)
 	}
+	d.connectivityAt = time.Time{}
 	d.refresh(context.Background())
 	if d.snapshot.Internet.State != Failed {
 		t.Fatalf("second connectivity failure = %s, want failed", d.snapshot.Internet.State)

@@ -20,6 +20,10 @@ main() {
     go build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
   chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status"
   cp -R controller "$stage/controller"
+  mkdir -p "$stage/controller/proxmox/libexec"
+  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-host-speedtest" ./cmd/boetticher-host-speedtest
+  chmod 0755 "$stage/controller/proxmox/libexec/boetticher-host-speedtest"
   printf '%s\n' "$build_id" >"$stage/BUILD_ID"
 
     COPYFILE_DISABLE=1 tar -C "$stage" -czf dist/controller/boetticher-controller-linux-arm64.tar.gz \

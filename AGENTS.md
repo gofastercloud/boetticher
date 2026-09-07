@@ -99,6 +99,16 @@ retain `--confirm`, `--approve`, `--non-interactive`, or
   external observability system.
 - Blinkt or status-daemon failure must never gate Controller, Host, or Module
   operations.
+- The fixed operator layout is `CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES
+  HOST-UPDATES`; Controller and Host update indicators are read-only status,
+  not update or reboot workflows.
+- Controller update status may be green with no available updates, amber for
+  pending updates or the native reboot-required marker, or blue for an
+  explicit Boetticher configuration-staged event. Host update status may be
+  green with no Proxmox update/reboot requirement or amber when one exists.
+- Host Internet ping checks may run every 60 seconds, but the full speedtest
+  runs from the enrolled Host no more than hourly. Do not refresh APT lists,
+  install packages, or reboot from a status check.
 - Do not add hashes, manifests, evidence, persistent status databases, or
   synthetic monitoring journeys to improve LED correctness. Future Controller
   peripherals should consume the shared status snapshot rather than becoming

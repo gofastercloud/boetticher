@@ -10,14 +10,15 @@ import (
 )
 
 const (
-	DefaultConfigPath       = "/etc/boetticher/controller.yml"
-	DefaultSocketPath       = "/run/boetticher/status.sock"
-	DefaultDriverPath       = "/opt/boetticher/current/controller/roles/controller-baseline/files/boetticher-blinkt-driver"
-	DefaultRebootRequired   = "/var/run/reboot-required"
-	DefaultInterval         = 30 * time.Second
-	DefaultThroughputPeriod = 10 * time.Minute
-	DefaultHealthyMbps      = 500.0
-	DefaultTransferBytes    = 10 << 20
+	DefaultConfigPath        = "/etc/boetticher/controller.yml"
+	DefaultSocketPath        = "/run/boetticher/status.sock"
+	DefaultDriverPath        = "/opt/boetticher/current/controller/roles/controller-baseline/files/boetticher-blinkt-driver"
+	DefaultHostSpeedtestPath = "/usr/local/libexec/boetticher-host-speedtest"
+	DefaultRebootRequired    = "/var/run/reboot-required"
+	DefaultInterval          = 30 * time.Second
+	DefaultPingPeriod        = 60 * time.Second
+	DefaultThroughputPeriod  = time.Hour
+	DefaultHealthyMbps       = 500.0
 )
 
 type Settings struct {
@@ -27,9 +28,9 @@ type Settings struct {
 	RebootRequiredPath string
 	GPIOChip           int
 	Interval           time.Duration
+	PingInterval       time.Duration
 	ThroughputInterval time.Duration
 	HealthyMbps        float64
-	TransferBytes      int64
 	BlinktEnabled      bool
 	Brightness         float64
 }
@@ -42,9 +43,9 @@ func DefaultSettings() Settings {
 		RebootRequiredPath: DefaultRebootRequired,
 		GPIOChip:           0,
 		Interval:           DefaultInterval,
+		PingInterval:       DefaultPingPeriod,
 		ThroughputInterval: DefaultThroughputPeriod,
 		HealthyMbps:        DefaultHealthyMbps,
-		TransferBytes:      DefaultTransferBytes,
 		BlinktEnabled:      true,
 		Brightness:         0.3,
 	}
@@ -56,11 +57,11 @@ type rawSettings struct {
 		GPIOChip *int  `yaml:"gpiochip"`
 	} `yaml:"blinkt"`
 	Status *struct {
-		Interval string `yaml:"interval"`
-		Internet struct {
+		Interval     string `yaml:"interval"`
+		PingInterval string `yaml:"ping_interval"`
+		Internet     struct {
 			ThroughputInterval string  `yaml:"throughput_interval"`
 			HealthyMbps        float64 `yaml:"healthy_mbps"`
-			TransferMB         int64   `yaml:"transfer_mb"`
 		} `yaml:"internet"`
 		Blinkt struct {
 			Enabled    *bool    `yaml:"enabled"`
@@ -103,6 +104,12 @@ func LoadSettings(path string) (Settings, error) {
 			return settings, fmt.Errorf("status interval must be a positive duration")
 		}
 	}
+	if raw.Status.PingInterval != "" {
+		settings.PingInterval, err = time.ParseDuration(raw.Status.PingInterval)
+		if err != nil || settings.PingInterval <= 0 {
+			return settings, fmt.Errorf("status ping_interval must be a positive duration")
+		}
+	}
 	if raw.Status.Internet.ThroughputInterval != "" {
 		settings.ThroughputInterval, err = time.ParseDuration(raw.Status.Internet.ThroughputInterval)
 		if err != nil || settings.ThroughputInterval <= 0 {
@@ -111,9 +118,6 @@ func LoadSettings(path string) (Settings, error) {
 	}
 	if raw.Status.Internet.HealthyMbps > 0 {
 		settings.HealthyMbps = raw.Status.Internet.HealthyMbps
-	}
-	if raw.Status.Internet.TransferMB > 0 {
-		settings.TransferBytes = raw.Status.Internet.TransferMB * 1024 * 1024
 	}
 	if raw.Status.Blinkt.Enabled != nil {
 		settings.BlinktEnabled = *raw.Status.Blinkt.Enabled

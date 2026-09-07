@@ -158,12 +158,12 @@ func runtimeReady(runtime string) bool {
 	if err != nil || resolved == "" {
 		return false
 	}
-	for _, path := range []string{filepath.Join(resolved, "bin", "boetticher"), filepath.Join(resolved, "bin", "boetticher-status"), filepath.Join(resolved, "controller", "bootstrap.yml"), filepath.Join(resolved, "controller", "requirements.txt"), filepath.Join(resolved, "controller", "roles", "controller-baseline", "files", "boetticher-blinkt-driver")} {
+	for _, path := range []string{filepath.Join(resolved, "bin", "boetticher"), filepath.Join(resolved, "bin", "boetticher-status"), filepath.Join(resolved, "controller", "bootstrap.yml"), filepath.Join(resolved, "controller", "requirements.txt"), filepath.Join(resolved, "controller", "roles", "controller-baseline", "files", "boetticher-blinkt-driver"), filepath.Join(resolved, "controller", "proxmox", "libexec", "boetticher-host-speedtest")} {
 		info, err := os.Stat(path)
 		if err != nil || !info.Mode().IsRegular() {
 			return false
 		}
-		if filepath.Base(path) == "boetticher" || filepath.Base(path) == "boetticher-status" || filepath.Base(path) == "boetticher-blinkt-driver" {
+		if filepath.Base(path) == "boetticher" || filepath.Base(path) == "boetticher-status" || filepath.Base(path) == "boetticher-blinkt-driver" || filepath.Base(path) == "boetticher-host-speedtest" {
 			if info.Mode()&0111 == 0 {
 				return false
 			}

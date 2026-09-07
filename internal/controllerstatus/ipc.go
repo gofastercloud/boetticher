@@ -12,7 +12,7 @@ import (
 
 func ValidateEvent(event OperationEvent) error {
 	switch event.Event {
-	case "operation-start", "operation-progress", "operation-success", "operation-failure":
+	case "operation-start", "operation-progress", "operation-success", "operation-failure", "configuration-staged", "configuration-applied":
 	default:
 		return fmt.Errorf("unknown status operation event %q", event.Event)
 	}

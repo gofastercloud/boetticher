@@ -165,7 +165,7 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 	ansible := filepath.Join(VenvPath, "bin", "ansible-playbook")
 	args := []string{"-i", "localhost,", "-c", "local", playbook, "--extra-vars", string(extra)}
 	if err := options.Run(ctx, ansible, args, runtimeDir, env, stream, stream); err != nil {
-		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "controller bootstrap", Detail: err.Error(), ConfigurationFailed: true})
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "controller bootstrap", Detail: err.Error()})
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return fmt.Errorf("controller bootstrap interrupted: %w", ctx.Err())
 		}
@@ -192,7 +192,7 @@ func RunBootstrap(ctx context.Context, options BootstrapOptions, out, errOut io.
 		} else {
 			fmt.Fprintln(out, "\nController readiness: FAIL")
 		}
-		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "controller bootstrap", Detail: "Controller readiness failed", ConfigurationFailed: true})
+		controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-failure", Name: "controller bootstrap", Detail: "Controller readiness failed"})
 		return errors.New("controller readiness failed")
 	}
 	controllerstatus.NotifyBestEffort(controllerstatus.OperationEvent{Event: "operation-progress", Name: "controller bootstrap", CurrentStep: 3, TotalSteps: 4, Detail: "Controller readiness verified"})
