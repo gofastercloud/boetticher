@@ -161,14 +161,14 @@ func prefixNetmask(prefix netip.Prefix) (string, error) {
 
 func networkSections(zones []Zone, managementAddress, managementNetmask, managementGateway string) []Section {
 	sections := []Section{
-		{Name: "boetticher_home", Type: "interface", Options: map[string]string{"device": "eth0", "proto": "static", "ipaddr": managementAddress, "netmask": managementNetmask, "gateway": managementGateway, "delegate": "0"}, Lists: map[string][]string{}},
-		{Name: "boetticher_lab_trunk", Type: "device", Options: map[string]string{"name": "br-lab", "type": "bridge"}, Lists: map[string][]string{"ports": {"eth1"}}},
+		{Name: "boetticher_home", Type: "interface", Options: map[string]string{"device": "eth0", "proto": "static", "ipaddr": managementAddress, "netmask": managementNetmask, "gateway": managementGateway, "delegate": "0", "ipv6": "0"}, Lists: map[string][]string{}},
+		{Name: "boetticher_lab_trunk", Type: "device", Options: map[string]string{"name": "br-lab", "type": "bridge", "ipv6": "0"}, Lists: map[string][]string{"ports": {"eth1"}}},
 	}
 	for _, zone := range zones {
 		name := strings.ToLower(zone.Name)
 		sections = append(sections,
 			Section{Name: "boetticher_vlan_" + name, Type: "bridge-vlan", Options: map[string]string{"device": "br-lab", "vlan": strconv.Itoa(zone.VLAN)}, Lists: map[string][]string{"ports": {"eth1:t"}}},
-			Section{Name: "boetticher_iface_" + name, Type: "interface", Options: map[string]string{"device": "br-lab." + strconv.Itoa(zone.VLAN), "proto": "static", "ipaddr": zone.Gateway, "netmask": "255.255.255.0", "delegate": "0"}, Lists: map[string][]string{}},
+			Section{Name: "boetticher_iface_" + name, Type: "interface", Options: map[string]string{"device": "br-lab." + strconv.Itoa(zone.VLAN), "proto": "static", "ipaddr": zone.Gateway, "netmask": "255.255.255.0", "delegate": "0", "ipv6": "0"}, Lists: map[string][]string{}},
 		)
 	}
 	return sections

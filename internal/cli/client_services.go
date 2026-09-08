@@ -127,10 +127,11 @@ func serviceUsageSuffix(allowYes, allowPlan, allowCleanup bool) string {
 }
 
 type clientServiceContext struct {
-	Config  controllerhost.LabConfig
-	Site    model.Site
-	Desired firewallmodule.DesiredState
-	Host    firewallmodule.HostClient
+	Config     controllerhost.LabConfig
+	Site       model.Site
+	Desired    firewallmodule.DesiredState
+	Host       firewallmodule.HostClient
+	VPNProfile *firewallmodule.VPNProfile
 }
 
 func loadClientServiceContext() (clientServiceContext, error) {
@@ -142,11 +143,37 @@ func loadClientServiceContext() (clientServiceContext, error) {
 	if err != nil {
 		return clientServiceContext{}, err
 	}
-	return clientServiceContext{Config: config, Site: current, Desired: desired, Host: host}, nil
+	serviceContext := clientServiceContext{Config: config, Site: current, Desired: desired, Host: host}
+	if config.Modules.VPN != nil && clientservices.Enabled(config.Modules.VPN.Enabled) {
+		profile, _, present, materialErr := loadVPNMaterial(current)
+		if materialErr == nil && present {
+			projection, projectionErr := vpnProfileProjection(profile)
+			if projectionErr != nil {
+				return clientServiceContext{}, projectionErr
+			}
+			serviceContext.VPNProfile = &projection
+		}
+	}
+	return serviceContext, nil
 }
 
 func acquireClientServicesLock() (*site.OperationLock, error) {
 	return site.AcquireOperationLockAt(controllerhost.ClientServicesLockPath)
+}
+
+func composeClientAppliance(serviceContext clientServiceContext, modules clientservices.Modules) (firewallmodule.ApplianceComposition, error) {
+	if serviceContext.Config.Network == nil || serviceContext.Config.Network.ProtectedRanges == nil {
+		return firewallmodule.ApplianceComposition{}, errors.New("protected ranges require explicit Host adoption before client-service mutation")
+	}
+	ranges := serviceContext.Config.Network.ProtectedRanges
+	policy := &firewallmodule.CompositionPolicy{ProtectedIPv4: []string{ranges.Infra, ranges.Servers, ranges.Trusted, ranges.Sandbox}}
+	if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
+		if serviceContext.VPNProfile == nil {
+			return firewallmodule.ApplianceComposition{}, errors.New("VPN connection material is unavailable; provision or retain the configured profile before applying")
+		}
+		return firewallmodule.ComposeApplianceWithVPN(serviceContext.Site, modules, policy, *serviceContext.VPNProfile)
+	}
+	return firewallmodule.ComposeAppliance(serviceContext.Site, modules, policy)
 }
 
 func requireClientProvider(ctx context.Context, current model.Site, desired firewallmodule.DesiredState, host firewallmodule.HostClient) (*openwrt.Client, error) {
@@ -174,55 +201,100 @@ func requireClientProvider(ctx context.Context, current model.Site, desired fire
 	return provider, nil
 }
 
-func reconcileClientServices(ctx context.Context, provider *openwrt.Client, current model.Site, modules clientservices.Modules) (firewallmodule.ServiceState, int, error) {
-	state, err := firewallmodule.ServiceStateFromModules(current, modules)
+func reconcileClientServices(ctx context.Context, provider *openwrt.Client, serviceContext clientServiceContext, modules clientservices.Modules) (firewallmodule.ServiceState, int, error) {
+	state, err := firewallmodule.ServiceStateFromModules(serviceContext.Site, modules)
 	if err != nil {
 		return firewallmodule.ServiceState{}, 0, err
 	}
 	if err := firewallmodule.ValidateServiceState(state); err != nil {
 		return firewallmodule.ServiceState{}, 0, err
 	}
-	changes := 0
-	for _, item := range []struct {
-		packageName string
-		desired     []firewallmodule.Section
-	}{
-		{packageName: "system", desired: state.System},
-		{packageName: "stubby", desired: state.Stubby},
-		{packageName: "dhcp", desired: state.DHCP},
-	} {
-		observed, err := provider.UCIGet(ctx, item.packageName)
-		if err != nil {
-			return firewallmodule.ServiceState{}, changes, err
-		}
-		if err := firewallmodule.ValidateServicePackage(item.packageName, observed, item.desired); err != nil {
-			return firewallmodule.ServiceState{}, changes, err
-		}
-		count, err := firewallmodule.ReconcileOwned(ctx, provider, item.packageName, observed, item.desired)
-		if err != nil {
-			return firewallmodule.ServiceState{}, changes, err
-		}
-		changes += count
-	}
-	// Service policy is part of the firewall's composed desired state. This
-	// preserves 4A segmentation while adding/removing appliance services.
-	observedFirewall, err := provider.UCIGet(ctx, "firewall")
+	composed, err := composeClientAppliance(serviceContext, modules)
 	if err != nil {
-		return firewallmodule.ServiceState{}, changes, err
+		return firewallmodule.ServiceState{}, 0, err
 	}
-	firewallDesired, err := firewallmodule.DesiredFromSiteWithServices(current, modules)
-	if err != nil {
-		return firewallmodule.ServiceState{}, changes, err
+	verify := firewallmodule.ApplianceVerifyCallbacks{
+		SafetyBeforeNetwork: func(ctx context.Context) error {
+			if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
+				if err := firewallmodule.EnsureVPNIPv6DisabledViaHost(ctx, serviceContext.Host); err != nil {
+					return err
+				}
+			}
+			if err := verifyComposedFirewall(ctx, provider, composed.Firewall); err != nil {
+				return err
+			}
+			ok, err := firewallmodule.FirewallSafetyStatusViaHost(ctx, serviceContext.Host)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("provider firewall safety status failed")
+			}
+			return nil
+		},
+		NetworkReady: func(ctx context.Context) error {
+			dump, err := provider.InterfaceDump(ctx)
+			if err != nil {
+				return err
+			}
+			if firewallmodule.GatewayCount(dump, composed.DesiredState) != len(composed.Zones) {
+				return errors.New("provider gateway interfaces are not ready")
+			}
+			ok, err := openwrt.DefaultRouteVia(dump, composed.ManagementGateway)
+			if err != nil || !ok {
+				return errors.New("provider default route is not ready")
+			}
+			return nil
+		},
+		SafetyAfterNetwork: func(ctx context.Context) error {
+			if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
+				if err := firewallmodule.EnsureVPNIPv6DisabledViaHost(ctx, serviceContext.Host); err != nil {
+					return err
+				}
+			}
+			if err := verifyComposedFirewall(ctx, provider, composed.Firewall); err != nil {
+				return err
+			}
+			ok, err := firewallmodule.FirewallSafetyStatusViaHost(ctx, serviceContext.Host)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("provider firewall safety status failed after network activation")
+			}
+			return nil
+		},
+		RuntimeReapply: provider.ReloadFirewall,
 	}
-	count, err := firewallmodule.ReconcileOwned(ctx, provider, "firewall", observedFirewall, firewallDesired.Firewall)
-	if err != nil {
-		return firewallmodule.ServiceState{}, changes, err
-	}
-	return state, changes + count, nil
+	changes, err := firewallmodule.ReconcileAppliance(ctx, provider, composed, verify)
+	return state, changes, err
 }
 
-func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, current model.Site, modules clientservices.Modules) (int, error) {
-	state, err := firewallmodule.ServiceStateFromModules(current, modules)
+func verifyComposedFirewall(ctx context.Context, provider *openwrt.Client, desired []firewallmodule.Section) error {
+	current, err := provider.UCIGet(ctx, "firewall")
+	if err != nil {
+		return err
+	}
+	changes, err := firewallmodule.DiffOwned(current, desired)
+	if err != nil {
+		return err
+	}
+	if len(changes) != 0 {
+		names := make([]string, 0, len(changes))
+		for _, change := range changes {
+			names = append(names, change.Section.Name)
+		}
+		return fmt.Errorf("provider firewall UCI is not at composed desired state (%d changes: %s)", len(changes), strings.Join(names, ", "))
+	}
+	return nil
+}
+
+func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, serviceContext clientServiceContext, modules clientservices.Modules) (int, error) {
+	composed, err := composeClientAppliance(serviceContext, modules)
+	if err != nil {
+		return 0, err
+	}
+	state, err := firewallmodule.ServiceStateFromModules(serviceContext.Site, modules)
 	if err != nil {
 		return 0, err
 	}
@@ -234,6 +306,7 @@ func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, cur
 		{packageName: "system", desired: state.System},
 		{packageName: "stubby", desired: state.Stubby},
 		{packageName: "dhcp", desired: state.DHCP},
+		{packageName: "network", desired: composed.Network},
 	} {
 		observed, err := provider.UCIGet(ctx, item.packageName)
 		if err != nil {
@@ -242,17 +315,21 @@ func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, cur
 		if err := firewallmodule.ValidateServicePackage(item.packageName, observed, item.desired); err != nil {
 			return 0, err
 		}
-		changes += len(firewallmodule.DiffOwned(observed, item.desired))
-	}
-	firewallDesired, err := firewallmodule.DesiredFromSiteWithServices(current, modules)
-	if err != nil {
-		return 0, err
+		itemChanges, diffErr := firewallmodule.DiffOwned(observed, item.desired)
+		if diffErr != nil {
+			return 0, diffErr
+		}
+		changes += len(itemChanges)
 	}
 	observed, err := provider.UCIGet(ctx, "firewall")
 	if err != nil {
 		return 0, err
 	}
-	return changes + len(firewallmodule.DiffOwned(observed, firewallDesired.Firewall)), nil
+	itemChanges, diffErr := firewallmodule.DiffOwned(observed, composed.Firewall)
+	if diffErr != nil {
+		return 0, diffErr
+	}
+	return changes + len(itemChanges), nil
 }
 
 func verifyClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState, capability string) error {
@@ -271,7 +348,11 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 		if err := firewallmodule.ValidateServicePackage(item.packageName, observed, item.desired); err != nil {
 			return err
 		}
-		if changes := firewallmodule.DiffOwned(observed, item.desired); len(changes) > 0 {
+		changes, diffErr := firewallmodule.DiffOwned(observed, item.desired)
+		if diffErr != nil {
+			return diffErr
+		}
+		if len(changes) > 0 {
 			return fmt.Errorf("provider %s configuration is not at the desired state", item.packageName)
 		}
 	}
@@ -315,7 +396,11 @@ func verifyDisabledClientServices(ctx context.Context, provider *openwrt.Client,
 		if err := firewallmodule.ValidateServicePackage(item.packageName, observed, item.desired); err != nil {
 			return err
 		}
-		if changes := firewallmodule.DiffOwned(observed, item.desired); len(changes) > 0 {
+		changes, diffErr := firewallmodule.DiffOwned(observed, item.desired)
+		if diffErr != nil {
+			return diffErr
+		}
+		if len(changes) > 0 {
 			return fmt.Errorf("provider %s disabled-state configuration is incomplete", item.packageName)
 		}
 	}
@@ -398,7 +483,10 @@ func runClientServicePlan(ctx context.Context, capability string, serviceContext
 		if err != nil {
 			return err
 		}
-		packageChanges := firewallmodule.DiffOwned(current, item.sections)
+		packageChanges, diffErr := firewallmodule.DiffOwned(current, item.sections)
+		if diffErr != nil {
+			return diffErr
+		}
 		changes += len(packageChanges)
 		for _, change := range packageChanges {
 			fmt.Fprintf(out, "  %s %s.%s\n", change.Kind, item.packageName, change.Section.Name)
@@ -489,7 +577,7 @@ func runClientServiceApply(ctx context.Context, capability string, serviceContex
 	if err != nil {
 		return err
 	}
-	changes, err := clientServiceChangeCount(ctx, provider, serviceContext.Site, proposed)
+	changes, err := clientServiceChangeCount(ctx, provider, serviceContext, proposed)
 	if err != nil {
 		return err
 	}
@@ -517,7 +605,7 @@ func runClientServiceApply(ctx context.Context, capability string, serviceContex
 	if err := controllerhost.SaveConfig(serviceContext.Config); err != nil {
 		return err
 	}
-	if _, _, err := reconcileClientServices(ctx, provider, serviceContext.Site, proposed); err != nil {
+	if _, _, err := reconcileClientServices(ctx, provider, serviceContext, proposed); err != nil {
 		fmt.Fprintln(out, "Configuration saved; application failed.")
 		return fmt.Errorf("reconcile %s service configuration: %w", capability, err)
 	}
@@ -542,7 +630,7 @@ func runClientServiceTeardown(ctx context.Context, capability string, serviceCon
 	if err != nil {
 		return err
 	}
-	changes, err := clientServiceChangeCount(ctx, provider, serviceContext.Site, proposed)
+	changes, err := clientServiceChangeCount(ctx, provider, serviceContext, proposed)
 	if err != nil {
 		return err
 	}
@@ -585,7 +673,7 @@ func runClientServiceTeardown(ctx context.Context, capability string, serviceCon
 			return err
 		}
 	}
-	if _, _, err := reconcileClientServices(ctx, provider, serviceContext.Site, proposed); err != nil {
+	if _, _, err := reconcileClientServices(ctx, provider, serviceContext, proposed); err != nil {
 		if configChanged {
 			fmt.Fprintln(out, "Configuration saved; application failed.")
 		}
@@ -654,7 +742,7 @@ func runClientServiceTest(ctx context.Context, capability string, serviceContext
 			if err := controllerhost.SaveConfig(serviceContext.Config); err != nil {
 				return err
 			}
-			if _, _, err := reconcileClientServices(ctx, provider, serviceContext.Site, proposedModules); err != nil {
+			if _, _, err := reconcileClientServices(ctx, provider, serviceContext, proposedModules); err != nil {
 				return fmt.Errorf("apply test-owned DHCP identities: %w", err)
 			}
 			state, err = firewallmodule.ServiceStateFromModules(serviceContext.Site, proposedModules)
@@ -977,7 +1065,7 @@ func restoreClientServiceTestIntent(ctx context.Context, serviceContext clientSe
 	if err := controllerhost.SaveConfig(serviceContext.Config); err != nil {
 		return err
 	}
-	_, _, err := reconcileClientServices(ctx, provider, serviceContext.Site, original)
+	_, _, err := reconcileClientServices(ctx, provider, serviceContext, original)
 	return err
 }
 
@@ -1024,7 +1112,7 @@ func cleanupClientServiceTest(ctx context.Context, serviceContext clientServiceC
 			if providerErr != nil {
 				return fmt.Errorf("test-owned client intent removed; provider cleanup is pending: %w", providerErr)
 			}
-			if _, _, reconcileErr := reconcileClientServices(ctx, provider, serviceContext.Site, config.Modules); reconcileErr != nil {
+			if _, _, reconcileErr := reconcileClientServices(ctx, provider, serviceContext, config.Modules); reconcileErr != nil {
 				return fmt.Errorf("remove test-owned provider client state: %w", reconcileErr)
 			}
 		}
@@ -1398,7 +1486,7 @@ func applyClientResourceMutation(serviceContext clientServiceContext, descriptio
 	if err != nil {
 		return err
 	}
-	changes, err := clientServiceChangeCount(ctx, provider, serviceContext.Site, serviceContext.Config.Modules)
+	changes, err := clientServiceChangeCount(ctx, provider, serviceContext, serviceContext.Config.Modules)
 	if err != nil {
 		return err
 	}
@@ -1432,7 +1520,7 @@ func applyClientResourceMutation(serviceContext clientServiceContext, descriptio
 			return err
 		}
 	}
-	if _, _, err := reconcileClientServices(ctx, provider, serviceContext.Site, serviceContext.Config.Modules); err != nil {
+	if _, _, err := reconcileClientServices(ctx, provider, serviceContext, serviceContext.Config.Modules); err != nil {
 		if configChanged {
 			fmt.Fprintln(out, "Configuration saved; application failed.")
 		}

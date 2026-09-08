@@ -113,6 +113,14 @@ func runFirewallPlan(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	hostConfig, err := controllerhost.LoadConfig()
+	if err != nil {
+		return err
+	}
+	hostConfig, err = prepareProtectedRanges(ctx, hostConfig, host, provider, false, false, nil, out)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(out, "Firewall plan")
 	if !provider.Exists {
 		fmt.Fprintf(out, "\nCreate:\n  provider %s\n  six LAB IPv4 gateways\n  reference zone firewall policy\n  ordinary Internet NAT\n", firewallmodule.ProviderName)
@@ -139,10 +147,6 @@ func runFirewallPlan(args []string, out io.Writer) error {
 		}
 	}
 	fmt.Fprintln(out, "\nPreserve:\n  Controller\n  Host enrollment and SSH trust\n  vmbr0\n  vmbr1\n  boetticher-data\n  physical networking")
-	hostConfig, err := controllerhost.LoadConfig()
-	if err != nil {
-		return err
-	}
 	fmt.Fprintf(out, "\nDHCP: %s\nDNS: %s\n", clientCapabilityIntentLabel(hostConfig.Modules.DHCP), clientCapabilityIntentLabel(hostConfig.Modules.DNS))
 	return nil
 }
@@ -160,8 +164,15 @@ func firewallPlanChanges(ctx context.Context, current model.Site, desired firewa
 	if err != nil {
 		return nil, err
 	}
-	changes := firewallmodule.DiffOwned(networkCurrent, desired.Network)
-	changes = append(changes, firewallmodule.DiffOwned(firewallCurrent, desired.Firewall)...)
+	changes, err := firewallmodule.DiffOwned(networkCurrent, desired.Network)
+	if err != nil {
+		return nil, err
+	}
+	firewallChanges, err := firewallmodule.DiffOwned(firewallCurrent, desired.Firewall)
+	if err != nil {
+		return nil, err
+	}
+	changes = append(changes, firewallChanges...)
 	return changes, nil
 }
 
@@ -193,7 +204,26 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if err != nil {
 		return err
 	}
+	hostConfig, err := controllerhost.LoadConfig()
+	if err != nil {
+		return err
+	}
+	if _, err := prepareProtectedRanges(ctx, hostConfig, host, providerStatus, options.yes, true, input, out); err != nil {
+		return err
+	}
 	bootstrapNeeded := !providerStatus.Exists || !strings.Contains(providerStatus.Config, "scsi0:")
+	replaceProvider := false
+	if providerStatus.Exists && strings.Contains(providerStatus.Config, "scsi0:") {
+		ready, readyErr := firewallmodule.ClientServicesImageReady(ctx, host)
+		if readyErr != nil {
+			return readyErr
+		}
+		if !ready {
+			replaceProvider = true
+			bootstrapNeeded = true
+			fmt.Fprintln(out, "Provider image: replacing the owned VM 280 image to establish the current client-services contract")
+		}
+	}
 	if !providerStatus.Exists && !options.yes {
 		if input == nil {
 			return errors.New("firewall apply requires --yes or an interactive confirmation")
@@ -235,6 +265,15 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 			return err
 		}
 	}
+	if replaceProvider {
+		if err := firewallmodule.DestroyHostProvider(ctx, host, "boetticher-data"); err != nil {
+			return err
+		}
+		if err := firewallmodule.RemoveTrust(stateDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove replaced provider TLS trust: %w", err)
+		}
+		providerStatus = firewallmodule.HostProviderStatus{}
+	}
 	if !providerStatus.Exists {
 		fmt.Fprintf(out, "Firewall:\n  Provider: creating %s\n", firewallmodule.ProviderName)
 	}
@@ -264,23 +303,56 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 		return fmt.Errorf("wait for firewall provider management API: %w", err)
 	}
 	display.Progress(5, "Network reconciled")
-	networkCurrent, err := provider.UCIGet(ctx, "network")
+	config, err := controllerhost.LoadConfig()
 	if err != nil {
+		return err
+	}
+	if config.Network == nil || config.Network.ProtectedRanges == nil {
+		return errors.New("protected ranges require explicit Host adoption before firewall mutation")
+	}
+	ranges := config.Network.ProtectedRanges
+	composed, err := firewallmodule.ComposeAppliance(current, config.Modules, &firewallmodule.CompositionPolicy{ProtectedIPv4: []string{ranges.Infra, ranges.Servers, ranges.Trusted, ranges.Sandbox}})
+	if err != nil {
+		return err
+	}
+	verify := firewallmodule.ApplianceVerifyCallbacks{
+		SafetyBeforeNetwork: func(ctx context.Context) error {
+			ok, err := firewallmodule.FirewallSafetyStatusViaHost(ctx, host)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("provider firewall safety status failed")
+			}
+			return nil
+		},
+		NetworkReady: func(ctx context.Context) error {
+			dump, err := provider.InterfaceDump(ctx)
+			if err != nil {
+				return err
+			}
+			if firewallmodule.GatewayCount(dump, composed.DesiredState) != len(composed.Zones) {
+				return errors.New("provider gateway interfaces are not ready")
+			}
+			return nil
+		},
+		SafetyAfterNetwork: func(ctx context.Context) error {
+			ok, err := firewallmodule.FirewallSafetyStatusViaHost(ctx, host)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("provider firewall safety status failed after network activation")
+			}
+			return nil
+		},
+		RuntimeReapply: provider.ReloadFirewall,
+	}
+	if _, err := firewallmodule.ReconcileAppliance(ctx, provider, composed, verify); err != nil {
 		return err
 	}
 	display.Progress(6, "Firewall policy reconciled")
-	networkChanges, err := firewallmodule.ReconcileOwned(ctx, provider, "network", networkCurrent, desired.Network)
-	if err != nil {
-		return err
-	}
-	firewallCurrent, err := provider.UCIGet(ctx, "firewall")
-	if err != nil {
-		return err
-	}
-	firewallChanges, err := firewallmodule.ReconcileOwned(ctx, provider, "firewall", firewallCurrent, desired.Firewall)
-	if err != nil {
-		return err
-	}
+	networkChanges, firewallChanges := 1, 1
 	health, err := firewallmodule.CheckHealthViaSSH(ctx, host, desired, provider)
 	if err != nil {
 		return fmt.Errorf("verify firewall provider runtime: %w", err)

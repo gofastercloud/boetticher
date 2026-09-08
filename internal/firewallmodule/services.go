@@ -98,7 +98,8 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 		}
 	}
 	state.System = append(state.System, ntpSections(site, ntpUpstreams, ntpServe)...)
-	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled)
+	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
+	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
 	return state, nil
 }
 
@@ -224,7 +225,7 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Se
 		if err != nil {
 			continue
 		}
-		safe := nativeRecordSuffix(strings.TrimSuffix(name, "."))
+		safe := strings.TrimPrefix(nativeRecordSectionName(name), "boetticher_record_")
 		switch record.Type {
 		case "A":
 			sections = append(sections, Section{Name: "boetticher_record_" + safe, Type: "hostrecord", Options: map[string]string{"name": name, "ip": record.Value}, Lists: map[string][]string{}})
@@ -233,7 +234,7 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Se
 			if targetErr != nil {
 				continue
 			}
-			sections = append(sections, Section{Name: "boetticher_cname_" + safe, Type: "cname", Options: map[string]string{"cname": name, "target": target}, Lists: map[string][]string{}})
+			sections = append(sections, Section{Name: "boetticher_cname_" + nativeRecordSuffix(strings.TrimSuffix(name, ".")), Type: "cname", Options: map[string]string{"cname": name, "target": target}, Lists: map[string][]string{}})
 		}
 	}
 	return sections
@@ -270,7 +271,7 @@ func stubbySections(upstreams []clientservices.DNSUpstream) []Section {
 		"idle_timeout":                "10000",
 	}, Lists: map[string][]string{"listen_address": {"127.0.0.1@5453"}, "dns_transport": {"GETDNS_TRANSPORT_TLS"}}}}
 	for _, upstream := range upstreams {
-		safe := strings.ReplaceAll(upstream.Address, ".", "_")
+		safe := strings.TrimPrefix(nativeResolverSectionName(upstream.Address), "boetticher_resolver_")
 		sections = append(sections, Section{Name: "boetticher_resolver_" + safe, Type: "resolver", Options: map[string]string{
 			"address":       upstream.Address,
 			"tls_auth_name": upstream.TLSName,
@@ -289,7 +290,7 @@ func ntpSections(site model.Site, upstreams []string, serve *bool) []Section {
 	return []Section{{Name: serviceNTPSection, Type: "timeserver", Options: map[string]string{"enabled": "1", "use_dhcp": "0", "enable_server": enableServer}, Lists: map[string][]string{"server": append([]string(nil), upstreams...)}}}
 }
 
-func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled bool) []Section {
+func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled, vpnEnabled bool) []Section {
 	if !dnsEnabled && !dhcpEnabled {
 		return nil
 	}
@@ -306,11 +307,17 @@ func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled bool) []Se
 			}
 			for _, item := range []struct{ suffix, protocol, port string }{{"dns_udp", "udp", "53"}, {"dns_tcp", "tcp", "53"}, {"dot_tcp", "tcp", "853"}} {
 				sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_" + item.suffix, Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external " + item.suffix, "src": name, "dest": "home_wan", "proto": item.protocol, "dest_port": item.port, "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+				if vpnEnabled {
+					sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_" + item.suffix + "_vpn", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external " + item.suffix + " via VPN", "src": name, "dest": "vpn", "proto": item.protocol, "dest_port": item.port, "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+				}
 			}
 		}
 		if dhcpEnabled {
 			sections = append(sections, Section{Name: "boetticher_allow_" + name + "_ntp", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " NTP", "src": name, "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}})
 			sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_ntp", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external NTP", "src": name, "dest": "home_wan", "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+			if vpnEnabled {
+				sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_ntp_vpn", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external NTP via VPN", "src": name, "dest": "vpn", "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+			}
 		}
 	}
 	return sections

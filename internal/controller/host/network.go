@@ -26,9 +26,78 @@ type VLANConfig struct {
 }
 
 type NetworkConfig struct {
-	InternalBridge string     `yaml:"internal_bridge"`
-	VLANs          VLANConfig `yaml:"vlans"`
-	Domain         string     `yaml:"domain,omitempty"`
+	InternalBridge  string           `yaml:"internal_bridge"`
+	VLANs           VLANConfig       `yaml:"vlans"`
+	Domain          string           `yaml:"domain,omitempty"`
+	ProtectedRanges *ProtectedRanges `yaml:"protected_ranges,omitempty"`
+}
+
+// ProtectedRanges is persisted only after an explicit adoption. A nil block
+// preserves legacy configurations and does not imply that ranges are free.
+type ProtectedRanges struct {
+	Infra   string `yaml:"infra,omitempty"`
+	Servers string `yaml:"servers,omitempty"`
+	Trusted string `yaml:"trusted,omitempty"`
+	Sandbox string `yaml:"sandbox,omitempty"`
+}
+
+// ProtectedRangeObservations are read-only addresses supplied by callers.
+// They are deliberately separated by source so a preparation decision can be
+// audited without performing live reads here.
+type ProtectedRangeObservations struct {
+	Reservations       []string
+	Leases             []string
+	ManagedAttachments []string
+}
+
+// PrepareProtectedRangeChange validates adoption or retention of protected
+// ranges. Existing ranges cannot be released or changed. A new range must be
+// empty according to every supplied observation source.
+func PrepareProtectedRangeChange(current, proposed *ProtectedRanges, observations ProtectedRangeObservations) error {
+	if err := validateProtectedObservations(observations, nil); err != nil {
+		return err
+	}
+	if proposed != nil {
+		if proposed.Infra != "10.10.10.224/28" || proposed.Servers != "10.10.20.224/28" || proposed.Trusted != "10.10.30.224/28" || proposed.Sandbox != "10.10.40.224/28" {
+			return errors.New("protected ranges must be the canonical reference .224/28 ranges")
+		}
+	}
+	if proposed == nil {
+		if current != nil {
+			return errors.New("adopted protected ranges cannot be released")
+		}
+		return nil
+	}
+	if current != nil {
+		if *current != *proposed {
+			return errors.New("adopted protected ranges cannot be changed")
+		}
+		return nil
+	}
+	if err := validateProtectedObservations(observations, proposed); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateProtectedObservations(observations ProtectedRangeObservations, proposed *ProtectedRanges) error {
+	for source, values := range map[string][]string{"reservation": observations.Reservations, "lease": observations.Leases, "managed attachment": observations.ManagedAttachments} {
+		for _, value := range values {
+			address, err := netip.ParseAddr(value)
+			if err != nil || !address.Is4() || address.String() != value {
+				return fmt.Errorf("protected range %s observation %q must be canonical IPv4", source, value)
+			}
+			if proposed != nil {
+				for zone, cidr := range map[string]string{"infra": proposed.Infra, "servers": proposed.Servers, "trusted": proposed.Trusted, "sandbox": proposed.Sandbox} {
+					prefix, _ := netip.ParsePrefix(cidr)
+					if prefix.Contains(address) {
+						return fmt.Errorf("protected range %s is occupied by %s %s", zone, source, value)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 type ManagementPath struct {
@@ -82,6 +151,17 @@ func ValidateNetworkConfig(config NetworkConfig) error {
 			return errors.New("network VLAN IDs must be unique values from 1 through 4094")
 		}
 		seen[value] = true
+	}
+	if config.ProtectedRanges != nil {
+		for zone, value := range map[string]string{"infra": config.ProtectedRanges.Infra, "servers": config.ProtectedRanges.Servers, "trusted": config.ProtectedRanges.Trusted, "sandbox": config.ProtectedRanges.Sandbox} {
+			if value == "" {
+				return fmt.Errorf("network protected range %s is required", zone)
+			}
+			want := map[string]string{"infra": "10.10.10.224/28", "servers": "10.10.20.224/28", "trusted": "10.10.30.224/28", "sandbox": "10.10.40.224/28"}[zone]
+			if value != want {
+				return fmt.Errorf("network protected range %s must be canonical %s", zone, want)
+			}
+		}
 	}
 	return nil
 }
