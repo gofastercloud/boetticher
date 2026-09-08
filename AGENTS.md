@@ -10,6 +10,10 @@ and acceptance records belong in README.md and docs/.
   `gpt-5.6-luna` and planning/design analysis to `gpt-5.6-terra`.
   Use subagents whenever bounded independent work saves time or tokens;
   keep trivial, tightly coupled, or urgent integration work local.
+- Use `gpt-5.6-luna` subagents for all Git-related work, including read-only
+  inspection, branching, staging, commits, pushes, pull requests, reviews,
+  merges, and cleanup. The coordinator retains scope, authorization, and final
+  verification ownership; delegate execution to one Git owner.
 - Give each delegate a short brief: outcome, exact read/write scope,
   constraints, acceptance criteria, and return format. Assign disjoint files;
   share only relevant context. Avoid full-history forks, recursive delegation,
@@ -23,6 +27,13 @@ and acceptance records belong in README.md and docs/.
 - Use targeted rg, bounded tool output, and relevant document sections. Batch
   independent reads; avoid rereading unchanged material. Give brief substantive
   progress updates, not repeated plans or command-by-command narration.
+- Proactively create focused, reusable skills when required for repository work,
+  especially when they reduce repeated investigation, improve token efficiency,
+  or improve output quality. This is standing authorization to create those
+  skills without separate confirmation. Reuse existing skills where suitable,
+  follow the skill-creator guidance, and keep new skills concise and grounded in
+  demonstrated needs. Skill creation does not expand authority for the actions
+  those skills perform.
 
 ## Scope and authority
 
