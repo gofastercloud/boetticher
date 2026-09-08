@@ -11,7 +11,9 @@ import (
 // It is operational status only; qualification remains a separate concern.
 type ModuleStatus struct {
 	Firewall CheckResult
+	VPN      CheckResult
 	DHCPNTP  CheckResult
+	DNS      CheckResult
 	Tailnet  CheckResult
 }
 
@@ -25,15 +27,15 @@ type ModuleChecker struct {
 
 func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 	status := ModuleStatus{
+		VPN:     CheckResult{State: Off, Detail: "VPN capability not configured"},
 		DHCPNTP: CheckResult{State: Off, Detail: "DHCP/NTP capability not configured"},
+		DNS:     CheckResult{State: Off, Detail: "DNS capability not configured"},
 		Tailnet: CheckResult{State: Off, Detail: "Tailnet capability not configured"},
 	}
 	if c.FirewallCommand != nil {
 		status.Firewall = c.FirewallCommand(ctx)
 		return status
 	}
-	status.DHCPNTP = c.checkCapability(ctx, "module", "dhcp", "status", "DHCP/NTP")
-	status.Tailnet = c.checkTailnet(ctx)
 	run := c.RunCommand
 	if run == nil {
 		run = defaultCommand
@@ -45,14 +47,44 @@ func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 	output, err := run(ctx, path, "module", "firewall", "status")
 	if err != nil {
 		status.Firewall = CheckResult{Configured: true, Detail: "firewall capability status check failed"}
-		return status
-	}
-	if strings.Contains(string(output), "Firewall: PASS") {
+	} else if strings.Contains(string(output), "Firewall: PASS") {
 		status.Firewall = CheckResult{Configured: true, Healthy: true, State: Healthy, Detail: "firewall capability status is healthy"}
 	} else {
 		status.Firewall = CheckResult{Configured: true, State: Failed, Detail: "firewall capability status is not healthy"}
 	}
+	status.DHCPNTP = c.checkCapability(ctx, "module", "dhcp", "status", "DHCP/NTP")
+	status.DNS = c.checkCapability(ctx, "module", "dns", "status", "DNS")
+	status.VPN = c.checkVPN(ctx)
+	status.Tailnet = c.checkTailnet(ctx)
 	return status
+}
+
+func (c ModuleChecker) checkVPN(ctx context.Context) CheckResult {
+	run := c.RunCommand
+	if run == nil {
+		run = defaultCommand
+	}
+	path := c.CommandPath
+	if path == "" {
+		path = "/usr/local/bin/boetticher"
+	}
+	output, err := run(ctx, path, "module", "vpn", "status")
+	text := strings.TrimSpace(string(output))
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "VPN: OFF" && err == nil:
+			return CheckResult{State: Off, Detail: "VPN capability not configured"}
+		case line == "VPN: CONNECTED" && err == nil:
+			return CheckResult{Configured: true, Healthy: true, State: Healthy, Detail: "VPN connection is available; enforcement is reported separately"}
+		case strings.HasPrefix(line, "VPN: "):
+			return CheckResult{Configured: true, State: Failed, Detail: "VPN status is not healthy"}
+		}
+	}
+	if err != nil {
+		return CheckResult{Configured: true, State: Failed, Detail: "VPN status check failed"}
+	}
+	return CheckResult{Configured: true, State: Failed, Detail: "VPN status evidence is missing or malformed"}
 }
 
 func (c ModuleChecker) checkTailnet(ctx context.Context) CheckResult {

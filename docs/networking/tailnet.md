@@ -32,6 +32,9 @@ and IPv6. Tailscale coordination uses its encrypted TCP 80 transport with TCP
 Native status verifies the loaded policy, TUN, exact preferences,
 route approval, package version, and persistent runtime files.
 
+The current Controller native test passes local runtime and DNS TCP/UDP checks.
+The exact CT200 identity was retained through an identity-preserving daemon
+restart after a coordination map-poll timeout; native status is healthy again.
 This status is local evidence. It does not prove remote peer reachability,
 manual split-DNS grants, packet journeys through the physical network, or
 same-VLAN/Wi-Fi isolation. The bounded module test reports those acceptance

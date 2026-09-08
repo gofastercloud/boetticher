@@ -42,8 +42,10 @@ type StatusSnapshot struct {
 	Controller        Component
 	Host              Component
 	Firewall          Component
+	VPN               Component
 	Tailnet           Component
 	DHCPNTP           Component
+	DNS               Component
 	Internet          InternetStatus
 	HostUpdates       Component
 	ControllerUpdates Component
@@ -58,8 +60,10 @@ func NewSnapshot(hostConfigured bool) StatusSnapshot {
 		Controller:        Component{State: Checking, Detail: "Establishing Controller state"},
 		Host:              host,
 		Firewall:          Component{State: Off, Detail: "Firewall capability not configured"},
+		VPN:               Component{State: Off, Detail: "VPN capability not configured"},
 		Tailnet:           Component{State: Off, Detail: "Tailnet capability not configured"},
 		DHCPNTP:           Component{State: Off, Detail: "DHCP/NTP capabilities not configured"},
+		DNS:               Component{State: Off, Detail: "DNS capability not configured"},
 		Internet:          InternetStatus{Component: Component{State: Checking, Detail: "Checking Internet connectivity"}},
 		HostUpdates:       Component{State: Checking, Detail: "Checking Host update state"},
 		ControllerUpdates: Component{State: Checking, Detail: "Checking Controller update state"},

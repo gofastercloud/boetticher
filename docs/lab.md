@@ -72,8 +72,9 @@ and conflicting or ambiguous state stops without mutation.
 
 ## Fixed virtual topology
 
-HOME management remains on `vmbr0`. Host apply configures a virtual-only,
-VLAN-aware `vmbr1` with no Host address and no physical member. The current
+HOME management remains on `vmbr0`. The current Host binding uses a
+VLAN-aware `vmbr1` with no Host address and the verified `nic1` physical member
+restricted to tagged VLANs 20 and 40. The current
 semantic VLANs are:
 
 | VLAN | Zone | Role |
@@ -88,17 +89,23 @@ semantic VLANs are:
 The six VLAN numbers are Host configuration. The Phase 4A firewall capability
 consumes this substrate and provides the virtual gateways and IPv4 policy; it
 does not create or repair `vmbr1`.
-Physical LAB networking is a later Host configuration concern and remains
-outside the Module namespace. The current reference architecture is IPv4-only;
+Physical LAB networking is Host-owned and remains outside the Module namespace.
+The current reference architecture is IPv4-only;
 IPv6 forwarding and security policy are reserved for explicit future
 firewall/network Module work rather than inferred from the internal vmbr1
 regression.
 
+The accepted reference physical clients are the Controller Pi
+`dc:a6:32:e9:dd:82` with the permanent SERVERS reservation
+`10.10.20.10` (`lab-companion.lab.home.arpa`) and the observed SANDBOX MacBook
+lease `10.10.40.181`. These are evidence of the current installation binding,
+not reusable fixture identities.
+
 For the read-only `host status` health check, `vmbr1` is healthy when the link is
 up, VLAN-aware, correctly configured, and has no Host L3 address or gateway.
-Attached ports, including Module virtual ports or an explicitly configured
-physical trunk, do not make an otherwise healthy bridge fail. Host apply remains
-conservative: it does not create, repair, or re-own physical LAB networking.
+Attached ports, including Module virtual ports and the approved tagged physical
+member, do not make an otherwise healthy bridge fail. Unknown physical bindings
+remain rejected by Host apply.
 
 ## Dedicated storage
 
@@ -125,7 +132,7 @@ are protected or rejected.
 - Host configuration;
 - dedicated storage;
 - the internal network;
-- physical LAB networking as `Not configured` until that Host concern exists;
+- physical LAB networking through the verified tagged `nic1` Host binding;
 - Module state; and
 - overall Host readiness.
 

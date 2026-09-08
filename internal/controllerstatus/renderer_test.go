@@ -28,7 +28,7 @@ func TestRendererMapsFixedStatesToColours(t *testing.T) {
 	snapshot.Controller = Component{State: Healthy}
 	snapshot.Host = Component{State: Failed}
 	snapshot.Firewall = Component{State: Off}
-	snapshot.DHCPNTP = Component{State: Checking}
+	snapshot.VPN = Component{State: Checking}
 	snapshot.Tailnet = Component{State: Attention}
 	snapshot.Internet.Component = Component{State: Healthy}
 	snapshot.ControllerUpdates = Component{State: Attention}
@@ -47,7 +47,7 @@ func TestRendererMapsFixedStatesToColours(t *testing.T) {
 		t.Fatalf("off firewall pixel = %#v", frame[2])
 	}
 	if frame[3].B == 0 || frame[3].G == 0 {
-		t.Fatalf("checking DHCP/NTP pixel = %#v", frame[3])
+		t.Fatalf("checking VPN pixel = %#v", frame[3])
 	}
 	if frame[4].R == 0 || frame[4].G == 0 || frame[4].B != 0 {
 		t.Fatalf("attention Tailnet pixel = %#v", frame[4])
@@ -127,7 +127,9 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 	snapshot.Internet = InternetStatus{Component: Component{State: Healthy}, ThroughputMbps: 812, ThroughputAt: time.Now()}
 	snapshot.HostUpdates = Component{State: Attention, Detail: "Proxmox Host updates available"}
 	snapshot.Firewall = Component{State: Healthy, Detail: "firewall provider is running"}
+	snapshot.VPN = Component{State: Failed, Detail: "VPN status is not healthy"}
 	snapshot.DHCPNTP = Component{State: Failed, Detail: "DHCP/NTP capability is unavailable"}
+	snapshot.DNS = Component{State: Healthy, Detail: "DNS capability is healthy"}
 	snapshot.Tailnet = Component{State: Failed, Detail: "Tailnet capability is unavailable"}
 	telemetry := ProxmoxSnapshot{
 		Host:      ProxmoxHostStats{Node: "lab-proxmox-01", Version: "pve-manager/9.2.2", CPUPercent: 18, MemoryUsed: 4 << 30, MemoryTotal: 8 << 30, Uptime: 25 * time.Hour},
@@ -141,11 +143,11 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 			t.Fatalf("home key %d title = %q, want %q", index, home[index].Title, want)
 		}
 	}
-	if home[0].State != Healthy || home[3].State != Healthy || home[4].Value != "812M" || home[5].Title != "CT201" || home[5].Value != "pulse" || home[5].Footer != "RUNNING" || home[5].State != Healthy || home[10].State != Healthy || home[11].State != Off || home[12].State != Failed {
+	if home[0].State != Healthy || home[3].State != Healthy || home[4].Value != "812M" || home[5].Title != "CT201" || home[5].Value != "pulse" || home[5].Footer != "RUNNING" || home[5].State != Healthy || home[10].State != Healthy || home[11].State != Failed || home[12].State != Failed {
 		t.Fatalf("home status keys = %#v %#v %#v %#v %#v %#v", home[0], home[3], home[4], home[5], home[10], home[12])
 	}
 	host := renderer.Render(snapshot, telemetry, nil, StreamDeckHostDetail, 0, -1)
-	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].Title != "TAILNET" || host[10].State != Failed || host[13].Title != "BACK" {
+	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].Title != "TAILNET" || host[10].State != Failed || host[11].Title != "DNS" || host[11].State != Healthy || host[13].Title != "BACK" {
 		t.Fatalf("host detail keys = %#v", host)
 	}
 	guest := renderer.Render(snapshot, telemetry, nil, StreamDeckGuestDetail, 0, 0)
