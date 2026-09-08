@@ -25,6 +25,9 @@ boetticher host status
 boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]
 boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|teardown|reboot ...
 boetticher module <capability> <action> [flags]
+boetticher module firewall plan|apply|status|reboot|test|teardown [flags]
+boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [flags]
+boetticher module dhcp plan|apply|status|teardown|test|add-reservation|remove-reservation|list-reservations|list-leases [flags]
 ```
 
 ## Advanced command menu

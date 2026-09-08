@@ -92,7 +92,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"controller", "--help"}, {"controller", "bootstrap", "--help"}, {"controller", "status", "--help"},
 		{"host", "--help"}, {"host", "apply", "--help"}, {"host", "status", "--help"}, {"host", "teardown", "--help"},
-		{"firewall", "--help"}, {"dhcp", "--help"}, {"dns", "--help"}, {"access", "--help"},
+		{"firewall", "--help"}, {"module", "dhcp", "--help"}, {"module", "dns", "--help"}, {"access", "--help"},
 		{"module", "--help"}, {"module", "firewall", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"},
 	} {
 		var output bytes.Buffer
@@ -107,7 +107,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 
 func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	paths := []string{
-		"firewall diff", "dhcp leases",
+		"firewall diff", "module dhcp list-leases",
 		"module firewall status", "module printer status",
 		"config schema",
 	}

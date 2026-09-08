@@ -17,8 +17,12 @@ type ProcessDriver struct {
 		Write([]byte) (int, error)
 		Close() error
 	}
-	cmd    *exec.Cmd
-	closed bool
+	cmd      *exec.Cmd
+	frames   chan []byte
+	stop     chan struct{}
+	done     chan struct{}
+	closed   bool
+	writeErr error
 }
 
 func NewProcessDriver(pythonPath, helperPath string, chip int) (*ProcessDriver, error) {
@@ -38,7 +42,9 @@ func NewProcessDriver(pythonPath, helperPath string, chip int) (*ProcessDriver, 
 		_ = input.Close()
 		return nil, fmt.Errorf("start Blinkt driver: %w", err)
 	}
-	return &ProcessDriver{input: input, cmd: command}, nil
+	driver := &ProcessDriver{input: input, cmd: command, frames: make(chan []byte, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	go driver.writeLoop()
+	return driver, nil
 }
 
 func (d *ProcessDriver) Show(ctx context.Context, frame []Pixel) error {
@@ -56,12 +62,60 @@ func (d *ProcessDriver) Show(ctx context.Context, frame []Pixel) error {
 	}
 	data = append(data, '\n')
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if d.closed {
+		d.mu.Unlock()
 		return errors.New("Blinkt driver is closed")
 	}
-	_, err = d.input.Write(data)
-	return err
+	if d.writeErr != nil {
+		err = d.writeErr
+		d.mu.Unlock()
+		return err
+	}
+	frames := d.frames
+	stop := d.stop
+	d.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-stop:
+		return errors.New("Blinkt driver is closed")
+	case frames <- data:
+		return nil
+	default:
+		// Keep the newest frame. The display is advisory, so a slow GPIO
+		// write must not block the Controller operation or animation loop.
+		select {
+		case <-frames:
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-stop:
+			return errors.New("Blinkt driver is closed")
+		case frames <- data:
+			return nil
+		default:
+			return nil
+		}
+	}
+}
+
+func (d *ProcessDriver) writeLoop() {
+	defer close(d.done)
+	for {
+		select {
+		case <-d.stop:
+			return
+		case data := <-d.frames:
+			if _, err := d.input.Write(data); err != nil {
+				d.mu.Lock()
+				d.writeErr = err
+				d.mu.Unlock()
+				return
+			}
+		}
+	}
 }
 
 func (d *ProcessDriver) Clear(ctx context.Context) error {
@@ -77,7 +131,10 @@ func (d *ProcessDriver) Close() error {
 	d.closed = true
 	input := d.input
 	command := d.cmd
+	stop := d.stop
 	d.mu.Unlock()
+	close(stop)
 	_ = input.Close()
+	<-d.done
 	return command.Wait()
 }

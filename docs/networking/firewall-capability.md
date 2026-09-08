@@ -130,8 +130,10 @@ failed test; `test --cleanup-only --yes` is the supported recovery and refuses
 ambiguous ownership. This suite validates routed IPv4 policy only; it does not
 claim same-VLAN, physical-switch, Wi-Fi, guest-firewall, or IPv6 isolation.
 
-The existing Controller status monitor now represents the firewall check on
-the `FW` Blinkt slot and the StreamDeck Host-detail view. DHCP/DDNS/NTP and DNS
-remain explicit red error placeholders until their capabilities are implemented;
-they do not require a new scheduler or status store. DHCP is Phase 4B, DNS is
-Phase 4C, and physical trunking/external switching remain out of scope.
+The existing Controller status monitor represents the firewall check on the
+`FW` Blinkt slot and the StreamDeck Host-detail view. Phase 4B adds peer
+`module dns` and `module dhcp` operations on this same appliance; DHCP-derived
+DNS and client-facing NTP are supporting functions, not standalone modules.
+Their status facts use the same polling/debounce model without a status
+database or repair loop. Physical trunking and external switching remain out
+of scope.

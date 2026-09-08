@@ -25,6 +25,8 @@
       - unzip
       - util-linux
       - iputils-arping
+      - isc-dhcp-client
+      - dnsutils
       - wget
       - which
       - xz-utils

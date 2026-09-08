@@ -36,3 +36,10 @@ func TestStreamDeckUSBFSBulkMatchesKernelLayout(t *testing.T) {
 		t.Fatalf("usbdevfs bulk layout is incompatible: endpoint=%d length=%d timeout=%d data=%d", unsafe.Offsetof(streamDeckUSBFSBulk{}.Endpoint), unsafe.Offsetof(streamDeckUSBFSBulk{}.Length), unsafe.Offsetof(streamDeckUSBFSBulk{}.Timeout), unsafe.Offsetof(streamDeckUSBFSBulk{}.Data))
 	}
 }
+
+func TestStreamDeckUSBFSWritesUseAReachableBoundedTimeout(t *testing.T) {
+	request := streamDeckUSBFSBulk{Endpoint: 2, Length: 1024, Timeout: streamDeckUSBTimeoutMS}
+	if request.Timeout == 0 || request.Timeout > 2000 {
+		t.Fatalf("StreamDeck USB write timeout = %dms, want a bounded nonzero timeout", request.Timeout)
+	}
+}

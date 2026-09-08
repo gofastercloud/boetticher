@@ -147,7 +147,7 @@ They are separate concepts:
 
 | Concept | Example |
 | --- | --- |
-| Capability | `firewall`, `dhcp`, `dns`, `ntp`, `vpn`, `monitoring`, `statuspage`, `printer` |
+| Capability | `firewall`, `dhcp`, `dns`, `vpn`, `monitoring`, `statuspage`, `printer` |
 | Provider | gateway appliance, DNS resolver, monitoring service, status-page server |
 | Runtime | gateway VM, monitoring VM/LXC, or the Controller |
 
@@ -165,9 +165,10 @@ fixed routed IPv4 suite against the existing provider; and
 leftovers without provider credentials. The suite is operational acceptance,
 not `status`: it uses six temporary LAB namespaces and fixed gateway, egress,
 inter-zone, HOME, and administration journeys, then requires exact cleanup.
-The existing status monitor consumes the same native firewall status command
-for the fixed `FW` slot and keeps DHCP/DDNS/NTP and DNS explicitly red until
-their capabilities are implemented. VPN, physical trunking, and
+The existing status monitor consumes the same native capability status facts
+for the fixed `FW`, `DHCP/NTP`, and `DNS` slots. Unconfigured client services
+are off rather than permanent faults; configured-but-unavailable services are
+failed. VPN, physical trunking, and
 external-switch management are later phases.
 
 Proxmox owns operator workloads. Boetticher never adopts, imports, or deletes

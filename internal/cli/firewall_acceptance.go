@@ -264,7 +264,7 @@ func firewallProviderClient(current model.Site, desired firewallmodule.DesiredSt
 }
 
 func verifyPhase4AScope(ctx context.Context, host firewallmodule.HostClient, provider *openwrt.Client, desired firewallmodule.DesiredState) error {
-	if _, err := host.Run(ctx, "set -eu; for unit in kea-dhcp4-server kea-dhcp-ddns-server dnsmasq; do if systemctl is-active --quiet \"$unit\" || systemctl is-enabled --quiet \"$unit\"; then echo \"unexpected active or enabled HOME DHCP service: $unit\" >&2; exit 1; fi; done"); err != nil {
+	if _, err := host.Run(ctx, "set -eu; for unit in dnsmasq stubby sysntpd; do if systemctl is-active --quiet \"$unit\" || systemctl is-enabled --quiet \"$unit\"; then echo \"unexpected active or enabled client service before Phase 4B: $unit\" >&2; exit 1; fi; done"); err != nil {
 		return fmt.Errorf("read Host HOME DHCP service ownership: %w", err)
 	}
 	dhcp, err := providerDHCPConfigViaHost(ctx, host)
@@ -311,8 +311,14 @@ func validateProviderDHCPConfig(config string) error {
 	}
 	for _, line := range strings.Split(config, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "config ") && strings.Contains(line, "'boetticher_") && !strings.Contains(line, "'boetticher_home'") {
-			return fmt.Errorf("provider DHCP scope unexpectedly contains %s", line)
+		if !strings.HasPrefix(line, "config ") {
+			continue
+		}
+		if strings.HasPrefix(line, "config dnsmasq ") && line != "config dnsmasq 'boetticher_dnsmasq'" {
+			return fmt.Errorf("provider DHCP scope contains an unowned dnsmasq instance: %s", line)
+		}
+		if strings.HasPrefix(line, "config dhcp ") && line != "config dhcp 'boetticher_home'" && !strings.HasPrefix(line, "config dhcp 'boetticher_dhcp_") {
+			return fmt.Errorf("provider DHCP scope contains an unowned DHCP instance: %s", line)
 		}
 	}
 	return nil

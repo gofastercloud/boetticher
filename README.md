@@ -54,8 +54,8 @@ never accepts Host trust or erases a disk without the exact operator approval.
 Boetticher is the small connector between a pile of brilliant projects. Huge
 thanks to [Proxmox VE](https://www.proxmox.com/), [Debian](https://www.debian.org/),
 [Ansible](https://www.ansible.com/), [Pulse](https://github.com/rcourtman/Pulse),
-[Blocky](https://github.com/0xERR0R/blocky), [PowerDNS](https://www.powerdns.com/),
-[Chrony](https://chrony-project.org/), [WireGuard](https://www.wireguard.com/),
+[OpenWrt](https://openwrt.org/), [Stubby](https://github.com/getdnsapi/stubby),
+[Quad9](https://quad9.net/), [WireGuard](https://www.wireguard.com/),
 and every project named in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 They did the hard work; this project is grateful to stand on it.
 

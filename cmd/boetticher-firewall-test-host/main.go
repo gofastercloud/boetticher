@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,10 +21,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/firewalltest"
 )
 
 const maxRequestBytes = 128 * 1024
+
+const (
+	clientWorkRoot   = "/tmp/boetticher-firewall-client-test"
+	clientWorkMarker = "boetticher-firewall-client-test/v2"
+)
 
 type ownedFixture struct {
 	zone        firewalltest.Zone
@@ -34,8 +41,9 @@ type ownedFixture struct {
 }
 
 type probeObservation struct {
-	code   int
-	detail string
+	code          int
+	detail        string
+	leaseAcquired bool
 }
 
 func main() {
@@ -67,6 +75,8 @@ func main() {
 	var response firewalltest.Response
 	if request.Action == "cleanup" {
 		response = cleanupOnly()
+	} else if request.Action == "client-services" {
+		response = runClientServices(request)
 	} else {
 		response = runSuite(request)
 	}
@@ -74,6 +84,145 @@ func main() {
 	if !response.OK || !response.CleanupOK {
 		os.Exit(1)
 	}
+}
+
+func runClientServices(request firewalltest.Request) (response firewalltest.Response) {
+	response.Version = firewalltest.ProtocolVersion
+	lock, err := acquireLock()
+	if err != nil {
+		response.Error = err.Error()
+		return response
+	}
+	defer lock.Close()
+	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(signalContext, 8*time.Minute)
+	defer cancel()
+	workDir, err := createClientWorkDir()
+	if err != nil {
+		response.Error = err.Error()
+		return response
+	}
+	defer func() {
+		if cleanupErr := cleanupClientWorkDir(workDir); cleanupErr != nil {
+			response.CleanupOK = false
+			response.OK = false
+			response.Error = joinDetail(response.Error, "client-test file cleanup failed: "+cleanupErr.Error())
+		}
+	}()
+	fixtures, err := prepareFixtures(ctx, request.Zones, !request.UseDHCP)
+	if err != nil {
+		response.Error = err.Error()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		response.CleanupOK = cleanupCreated(cleanupCtx, fixtures) == nil
+		cleanupCancel()
+		return response
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cleanupErr := cleanupCreated(cleanupCtx, fixtures)
+		cleanupCancel()
+		response.CleanupOK = cleanupErr == nil
+		if cleanupErr != nil {
+			response.Error = joinDetail(response.Error, "fixture cleanup failed: "+cleanupErr.Error())
+		}
+	}()
+	for _, fixture := range fixtures {
+		dhcpPassed := false
+		var dhcpObservation probeObservation
+		if fixture.zone.ClientMAC != "" {
+			if err := native(ctx, "netns", "exec", fixture.namespace, "ip", "link", "set", "dev", "eth0", "address", fixture.zone.ClientMAC); err != nil {
+				response.Error = joinDetail(response.Error, fmt.Sprintf("set %s DHCP client identity: %v", fixture.zone.Name, err))
+				continue
+			}
+		}
+		if request.UseDHCP {
+			dhcpObservation = runDHCPClient(ctx, fixture, request.Domain, workDir, false)
+			passed := dhcpObservation.code == 0
+			status := "FAIL"
+			if passed {
+				status = "PASS"
+				dhcpPassed = true
+			}
+			response.Results = append(response.Results, firewalltest.Result{Name: "dhcp/" + strings.ToLower(fixture.zone.Name), Group: "DHCP allocation and options", Source: fixture.zone.Name, Target: fixture.zone.Gateway, Protocol: "dhcpv4", Expected: expectedDHCPOutcome(fixture.zone), Observed: dhcpObservation.detail, Detail: dhcpObservation.detail, Status: status})
+			if !passed && response.Error == "" {
+				response.Error = "one or more DHCP client journeys failed"
+			}
+			if dhcpObservation.code == 0 {
+				ntp := runInNamespace(ctx, fixture.namespace, "--ntp", fixture.zone.Gateway)
+				ntpStatus := "FAIL"
+				if ntp.code == 0 {
+					ntpStatus = "PASS"
+				}
+				response.Results = append(response.Results, firewalltest.Result{Name: "ntp/" + strings.ToLower(fixture.zone.Name), Group: "DHCP allocation and options", Source: fixture.zone.Name, Target: fixture.zone.Gateway, Protocol: "ntp", Expected: "reply", Observed: ntp.detail, Detail: ntp.detail, Status: ntpStatus})
+				if ntpStatus != "PASS" && response.Error == "" {
+					response.Error = "one or more NTP client journeys failed"
+				}
+			}
+		}
+		if !request.UseDHCP || dhcpPassed {
+			for _, query := range request.DNSQueries {
+				expectNoAnswer := "0"
+				if query.ExpectNoAnswer {
+					expectNoAnswer = "1"
+				}
+				dnsResult := runInNamespace(ctx, fixture.namespace, "--dns", fixture.zone.Gateway, query.Name, query.Type, query.Expected, expectNoAnswer)
+				dnsStatus := "FAIL"
+				if dnsResult.code == 0 {
+					dnsStatus = "PASS"
+				}
+				response.Results = append(response.Results, firewalltest.Result{Name: "dns/" + strings.ToLower(fixture.zone.Name) + "/" + strings.ToLower(query.Type) + "/" + query.Name, Group: "Client-facing DNS", Source: fixture.zone.Name, Target: query.Name, Protocol: "dns", Expected: "answer", Observed: dnsResult.detail, Detail: dnsResult.detail, Status: dnsStatus})
+				if dnsStatus != "PASS" && response.Error == "" {
+					response.Error = "one or more client DNS journeys failed"
+				}
+			}
+		}
+		if request.UseDHCP && dhcpPassed && fixture.zone.DHCPMode == clientservices.ScopeReservationsOnly && fixture.zone.UnknownClientMAC != "" {
+			if err := native(ctx, "netns", "exec", fixture.namespace, "ip", "link", "set", "dev", "eth0", "address", fixture.zone.UnknownClientMAC); err != nil {
+				response.Error = joinDetail(response.Error, fmt.Sprintf("set %s unknown DHCP client identity: %v", fixture.zone.Name, err))
+			} else {
+				_ = native(ctx, "netns", "exec", fixture.namespace, "ip", "-4", "addr", "flush", "dev", "eth0")
+				_ = native(ctx, "netns", "exec", fixture.namespace, "ip", "-4", "route", "del", "default")
+				unknown := runDHCPClient(ctx, fixture, request.Domain, workDir, true)
+				unknownPassed := unknown.code == 10
+				unknownStatus := "FAIL"
+				if unknownPassed {
+					unknownStatus = "PASS"
+				}
+				response.Results = append(response.Results, firewalltest.Result{Name: "dhcp/" + strings.ToLower(fixture.zone.Name) + "/unknown", Group: "DHCP reservation-only refusal", Source: fixture.zone.Name, Target: fixture.zone.Gateway, Protocol: "dhcpv4", Expected: "no offer", Observed: unknown.detail, Detail: unknown.detail, Status: unknownStatus})
+				if !unknownPassed && response.Error == "" {
+					response.Error = "one or more reservation-only DHCP refusals failed"
+				}
+				if unknown.leaseAcquired {
+					releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					runtime := dhcpRuntimePaths(workDir, fixture.zone.Name, true)
+					err := releaseDHCPLease(releaseCtx, fixture, runtime.pid, runtime.lease)
+					releaseCancel()
+					if err != nil {
+						response.Error = joinDetail(response.Error, fmt.Sprintf("release %s unknown DHCP lease: %v", fixture.zone.Name, err))
+					}
+				}
+			}
+		}
+		if request.UseDHCP && dhcpObservation.leaseAcquired {
+			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			runtime := dhcpRuntimePaths(workDir, fixture.zone.Name, false)
+			err := releaseDHCPLease(releaseCtx, fixture, runtime.pid, runtime.lease)
+			releaseCancel()
+			if err != nil {
+				response.Error = joinDetail(response.Error, fmt.Sprintf("release %s DHCP lease: %v", fixture.zone.Name, err))
+			}
+		}
+	}
+	response.OK = response.Error == ""
+	return response
+}
+
+func expectedDHCPOutcome(zone firewalltest.Zone) string {
+	if zone.DHCPMode == clientservices.ScopeReservationsOnly && zone.Address == "" {
+		return "deny"
+	}
+	return "lease"
 }
 
 // Kept as a tiny wrapper so the request boundary remains in one place and the
@@ -125,6 +274,20 @@ func handleChild(args []string) bool {
 		observation := runHTTPS(args[1], args[2])
 		fmt.Fprintln(os.Stdout, observation.detail)
 		os.Exit(observation.code)
+	case "--ntp":
+		if len(args) != 2 || !validAddress(args[1]) {
+			os.Exit(12)
+		}
+		observation := runNTP(args[1])
+		fmt.Fprintln(os.Stdout, observation.detail)
+		os.Exit(observation.code)
+	case "--dns":
+		if len(args) != 6 || !validAddress(args[1]) || !validHostname(args[2]) || (args[3] != "A" && args[3] != "PTR" && args[3] != "CNAME") || (args[5] != "0" && args[5] != "1") {
+			os.Exit(12)
+		}
+		observation := runDNSQuery(args[1], args[2], args[3], args[4], args[5] == "1")
+		fmt.Fprintln(os.Stdout, observation.detail)
+		os.Exit(observation.code)
 	default:
 		return false
 	}
@@ -144,7 +307,7 @@ func runSuite(request firewalltest.Request) (response firewalltest.Response) {
 	defer stopSignals()
 	ctx, cancel := context.WithTimeout(signalContext, 8*time.Minute)
 	defer cancel()
-	fixtures, err := prepareFixtures(ctx, request.Zones)
+	fixtures, err := prepareFixtures(ctx, request.Zones, true)
 	if err != nil {
 		response.Error = err.Error()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -257,7 +420,7 @@ type fixtureInfo struct {
 	namespace string
 }
 
-func prepareFixtures(ctx context.Context, zones []firewalltest.Zone) ([]ownedFixture, error) {
+func prepareFixtures(ctx context.Context, zones []firewalltest.Zone, assignStatic bool) ([]ownedFixture, error) {
 	for _, zone := range zones {
 		namespace := firewalltest.NamespaceName(zone.Name)
 		hostVeth := firewalltest.FixtureName(zone.Name) + "-h"
@@ -289,16 +452,18 @@ func prepareFixtures(ctx context.Context, zones []firewalltest.Zone) ([]ownedFix
 		if err := native(ctx, "netns", "exec", fixture.namespace, "ip", "link", "set", "eth0", "up"); err != nil {
 			return fixtures, fmt.Errorf("enable %s namespace link: %w", zone.Name, err)
 		}
-		address, err := chooseAddress(ctx, fixture.namespace, zone)
-		if err != nil {
-			return fixtures, err
-		}
-		fixtures[len(fixtures)-1].zone.Address = address
-		if err := native(ctx, "netns", "exec", fixture.namespace, "ip", "address", "add", address+"/24", "dev", "eth0"); err != nil {
-			return fixtures, fmt.Errorf("assign %s test address: %w", zone.Name, err)
-		}
-		if err := native(ctx, "netns", "exec", fixture.namespace, "ip", "route", "replace", "default", "via", zone.Gateway, "dev", "eth0"); err != nil {
-			return fixtures, fmt.Errorf("set %s test route: %w", zone.Name, err)
+		if assignStatic {
+			address, err := chooseAddress(ctx, fixture.namespace, zone)
+			if err != nil {
+				return fixtures, err
+			}
+			fixtures[len(fixtures)-1].zone.Address = address
+			if err := native(ctx, "netns", "exec", fixture.namespace, "ip", "address", "add", address+"/24", "dev", "eth0"); err != nil {
+				return fixtures, fmt.Errorf("assign %s test address: %w", zone.Name, err)
+			}
+			if err := native(ctx, "netns", "exec", fixture.namespace, "ip", "route", "replace", "default", "via", zone.Gateway, "dev", "eth0"); err != nil {
+				return fixtures, fmt.Errorf("set %s test route: %w", zone.Name, err)
+			}
 		}
 	}
 	return fixtures, nil
@@ -569,6 +734,442 @@ func runHTTPS(address, hostname string) probeObservation {
 	return probeObservation{code: 0, detail: fmt.Sprintf("HTTPS returned HTTP %s", response.Status)}
 }
 
+func runNTP(address string) probeObservation {
+	connection, err := net.DialTimeout("udp4", net.JoinHostPort(address, "123"), 2*time.Second)
+	if err != nil {
+		return probeObservation{code: 10, detail: "NTP request could not be sent: " + err.Error()}
+	}
+	defer connection.Close()
+	_ = connection.SetDeadline(time.Now().Add(2 * time.Second))
+	request := make([]byte, 48)
+	request[0] = 0x23
+	if _, err := connection.Write(request); err != nil {
+		return probeObservation{code: 10, detail: "NTP request failed: " + err.Error()}
+	}
+	response := make([]byte, 48)
+	if _, err := io.ReadFull(connection, response); err != nil {
+		return probeObservation{code: 10, detail: "NTP reply was not received: " + err.Error()}
+	}
+	if err := validateNTPResponse(response); err != nil {
+		return probeObservation{code: 11, detail: err.Error()}
+	}
+	return probeObservation{code: 0, detail: fmt.Sprintf("NTP synchronised reply received (mode=4 stratum=%d)", response[1])}
+}
+
+func validateNTPResponse(response []byte) error {
+	if len(response) < 48 || response[0]&0x7 != 4 || response[0]>>6 == 3 || response[1] == 0 || response[1] > 15 {
+		return errors.New("NTP reply was malformed or unsynchronised")
+	}
+	if allZero(response[32:40]) || allZero(response[40:48]) || binary.BigEndian.Uint32(response[32:36]) < 2208988800 || binary.BigEndian.Uint32(response[40:44]) < 2208988800 {
+		return errors.New("NTP reply did not contain meaningful receive and transmit timestamps")
+	}
+	return nil
+}
+
+func allZero(data []byte) bool {
+	for _, value := range data {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func runDNSQuery(server, hostname, queryType, expected string, expectNoAnswer bool) probeObservation {
+	if expectNoAnswer {
+		command := exec.Command(nativeTool("dig"), "+time=2", "+tries=1", "+noall", "+comments", "+answer", "@"+server, hostname, queryType)
+		output, err := command.CombinedOutput()
+		text := string(output)
+		if err != nil {
+			return probeObservation{code: 10, detail: fmt.Sprintf("DNS %s negative query failed: %v", queryType, err)}
+		}
+		if strings.Contains(text, "ANSWER SECTION") || strings.Contains(text, "\tIN\t") {
+			return probeObservation{code: 11, detail: fmt.Sprintf("DNS %s negative query returned an answer", queryType)}
+		}
+		if !strings.Contains(text, "status: NXDOMAIN") && !strings.Contains(text, "status: NOERROR") {
+			return probeObservation{code: 11, detail: "DNS negative query did not return a valid local negative status"}
+		}
+		return probeObservation{code: 0, detail: fmt.Sprintf("DNS %s local negative answer verified", queryType)}
+	}
+	command := exec.Command(nativeTool("dig"), "+time=2", "+tries=1", "+short", "@"+server, hostname, queryType)
+	output, err := command.CombinedOutput()
+	answer := strings.TrimSpace(string(output))
+	if err != nil || answer == "" {
+		return probeObservation{code: 10, detail: fmt.Sprintf("DNS %s query did not return an answer", queryType)}
+	}
+	if expected != "" {
+		matched := false
+		for _, line := range strings.Split(answer, "\n") {
+			if strings.TrimSpace(line) == expected || strings.TrimSpace(strings.TrimSuffix(line, ".")) == strings.TrimSuffix(expected, ".") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return probeObservation{code: 11, detail: fmt.Sprintf("DNS %s answer did not contain expected value %q (got %q)", queryType, expected, answer)}
+		}
+	}
+	return probeObservation{code: 0, detail: fmt.Sprintf("DNS %s answer verified by the client-facing resolver", queryType)}
+}
+
+func createClientWorkDir() (string, error) {
+	if info, err := os.Lstat(clientWorkRoot); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0700 {
+			return "", errors.New("client-test work root is not an owned directory")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect bounded client-test root: %w", err)
+	}
+	if err := os.MkdirAll(clientWorkRoot, 0700); err != nil {
+		return "", fmt.Errorf("create bounded client-test root: %w", err)
+	}
+	if info, err := os.Lstat(clientWorkRoot); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0700 {
+		return "", errors.New("client-test work root is not an owned directory")
+	}
+	directory, err := os.MkdirTemp(clientWorkRoot, "run-")
+	if err != nil {
+		return "", fmt.Errorf("create secure client-test directory: %w", err)
+	}
+	marker := filepath.Join(directory, ".owner")
+	file, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		_ = os.RemoveAll(directory)
+		return "", fmt.Errorf("create client-test ownership marker: %w", err)
+	}
+	if _, err := file.WriteString(clientWorkMarker + "\n"); err != nil {
+		_ = file.Close()
+		_ = os.RemoveAll(directory)
+		return "", fmt.Errorf("write client-test ownership marker: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.RemoveAll(directory)
+		return "", fmt.Errorf("close client-test ownership marker: %w", err)
+	}
+	return directory, nil
+}
+
+func cleanupClientWorkDir(directory string) error {
+	if directory == "" {
+		return nil
+	}
+	if err := verifyClientWorkDir(directory); err != nil {
+		return err
+	}
+	if err := stopDHCPClientsInWorkDir(directory); err != nil {
+		return err
+	}
+	if err := removeDHCPRuntimeFiles(directory); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(directory); err != nil {
+		return fmt.Errorf("remove client-test directory: %w", err)
+	}
+	return nil
+}
+
+func dhcpRuntimeFiles(directory string) []string {
+	paths := make([]string, 0, len(firewalltest.ZoneOrder)*4)
+	for _, zone := range firewalltest.ZoneOrder {
+		for _, unknown := range []bool{false, true} {
+			runtime := dhcpRuntimePaths(directory, zone, unknown)
+			paths = append(paths, runtime.lease, runtime.pid)
+		}
+	}
+	return paths
+}
+
+type dhcpRuntimePath struct {
+	lease string
+	pid   string
+}
+
+func dhcpRuntimePaths(directory, zone string, unknown bool) dhcpRuntimePath {
+	runID := filepath.Base(directory)
+	short := strings.ToLower(zone)
+	suffix := ""
+	if unknown {
+		suffix = "-unknown"
+	}
+	return dhcpRuntimePath{
+		lease: filepath.Join("/run", "dhclient-boetticher-"+runID+"-"+short+suffix+".lease"),
+		pid:   filepath.Join("/run", "dhclient-boetticher-"+runID+"-"+short+suffix+".pid"),
+	}
+}
+
+func removeDHCPRuntimeFiles(directory string) error {
+	for _, path := range dhcpRuntimeFiles(directory) {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect DHCP runtime file %s: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("DHCP runtime file ownership is ambiguous: %s", path)
+		}
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove DHCP runtime file %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func verifyClientWorkDir(directory string) error {
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("client-test work directory is not an owned directory")
+	}
+	marker, err := os.ReadFile(filepath.Join(directory, ".owner"))
+	if err != nil || strings.TrimSpace(string(marker)) != clientWorkMarker {
+		return errors.New("client-test work directory ownership is ambiguous")
+	}
+	return nil
+}
+
+func stopDHCPClientsInWorkDir(directory string) error {
+	for _, pid := range numericProcEntries() {
+		data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+		if err != nil {
+			continue
+		}
+		parts := strings.Split(string(data), "\x00")
+		if len(parts) < 2 || !commandReferencesDirectory(parts, directory) || !containsCommand(parts, "dhclient") {
+			continue
+		}
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		alive := false
+		for _, pid := range numericProcEntries() {
+			data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+			if err == nil && commandReferencesDirectory(strings.Split(string(data), "\x00"), directory) && containsCommand(strings.Split(string(data), "\x00"), "dhclient") {
+				alive = true
+			}
+		}
+		if !alive {
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	for _, pid := range numericProcEntries() {
+		data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+		if err == nil && commandReferencesDirectory(strings.Split(string(data), "\x00"), directory) && containsCommand(strings.Split(string(data), "\x00"), "dhclient") {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	for _, pid := range numericProcEntries() {
+		data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+		if err == nil && commandReferencesDirectory(strings.Split(string(data), "\x00"), directory) && containsCommand(strings.Split(string(data), "\x00"), "dhclient") {
+			return fmt.Errorf("owned DHCP client process %d did not exit", pid)
+		}
+	}
+	return nil
+}
+
+func containsCommand(parts []string, command string) bool {
+	for _, part := range parts {
+		if filepath.Base(part) == command {
+			return true
+		}
+	}
+	return false
+}
+
+func commandReferencesDirectory(parts []string, directory string) bool {
+	directory = filepath.Clean(directory)
+	prefix := directory + string(os.PathSeparator)
+	for _, part := range parts {
+		clean := filepath.Clean(part)
+		if clean == directory || strings.HasPrefix(clean, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func validHostname(value string) bool {
+	if value == "" || len(value) > 253 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func runDHCPClient(ctx context.Context, fixture ownedFixture, domain, workDir string, unknown bool) probeObservation {
+	base := filepath.Join(workDir, strings.ToLower(fixture.zone.Name))
+	scriptPath, configPath, observationPath := filepath.Join(workDir, "dhclient-script"), filepath.Join(workDir, "dhclient.conf"), base+".observation"
+	runtime := dhcpRuntimePaths(workDir, fixture.zone.Name, unknown)
+	leasePath, pidPath := runtime.lease, runtime.pid
+	wrapperPath := base + ".run"
+	cleanup := func() {
+		for _, path := range []string{scriptPath, configPath, observationPath, wrapperPath} {
+			_ = os.Remove(path)
+		}
+	}
+	defer cleanup()
+	script := "#!/bin/sh\nset -eu\ncase \"${reason:-}\" in\nBOUND|REBOOT|RENEW|REBIND)\n  /usr/sbin/ip -4 addr replace \"${new_ip_address}/24\" dev eth0\n  if [ -n \"${new_routers:-}\" ]; then /usr/sbin/ip -4 route replace default via \"${new_routers%% *}\" dev eth0; fi\n  printf '%s|%s|%s|%s|%s|%s\\n' \"${new_ip_address:-}\" \"${new_routers:-}\" \"${new_domain_name_servers:-}\" \"${new_domain_name:-}\" \"${new_ntp_servers:-}\" \"${new_host_name:-}\" > \"" + observationPath + "\"\n;;\nesac\nexit 0\n"
+	file, err := os.OpenFile(scriptPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0700)
+	if err != nil {
+		return probeObservation{code: 12, detail: "create bounded DHCP hook: " + err.Error()}
+	}
+	if _, err := file.WriteString(script); err != nil {
+		_ = file.Close()
+		return probeObservation{code: 12, detail: "write bounded DHCP hook: " + err.Error()}
+	}
+	if err := file.Close(); err != nil {
+		return probeObservation{code: 12, detail: "write bounded DHCP hook: " + err.Error()}
+	}
+	configFile, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return probeObservation{code: 12, detail: "create isolated DHCP client configuration: " + err.Error()}
+	}
+	if _, err := configFile.WriteString("# Boetticher-owned isolated DHCP client configuration\ntimeout 12;\nretry 1;\nselect-timeout 0;\nrequest subnet-mask, broadcast-address, routers, domain-name, domain-name-servers, host-name, ntp-servers;\n"); err != nil {
+		_ = configFile.Close()
+		return probeObservation{code: 12, detail: "write isolated DHCP client configuration: " + err.Error()}
+	}
+	if err := configFile.Close(); err != nil {
+		return probeObservation{code: 12, detail: "close isolated DHCP client configuration: " + err.Error()}
+	}
+	wrapper := "#!/bin/sh\nset -eu\n" + "mount --bind " + shellQuote(workDir) + " /etc/dhcp\n" + "exec /usr/sbin/dhclient -4 -1 -v -cf /etc/dhcp/dhclient.conf -pf " + shellQuote(pidPath) + " -lf " + shellQuote(leasePath) + " -sf /etc/dhcp/dhclient-script -e " + shellQuote("BOETTICHER_TEST_DIR="+workDir) + " eth0\n"
+	wrapperFile, err := os.OpenFile(wrapperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0700)
+	if err != nil {
+		return probeObservation{code: 12, detail: "create isolated DHCP launcher: " + err.Error()}
+	}
+	if _, err := wrapperFile.WriteString(wrapper); err != nil {
+		_ = wrapperFile.Close()
+		return probeObservation{code: 12, detail: "write isolated DHCP launcher: " + err.Error()}
+	}
+	if err := wrapperFile.Close(); err != nil {
+		return probeObservation{code: 12, detail: "close isolated DHCP launcher: " + err.Error()}
+	}
+	attemptCtx, attemptCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer attemptCancel()
+	command := exec.CommandContext(attemptCtx, nativeTool("ip"), "netns", "exec", fixture.namespace, nativeTool("unshare"), "--mount", "--propagation", "private", "--", nativeTool("sh"), wrapperPath)
+	output, err := runForeground(attemptCtx, command)
+	if err != nil {
+		dhcpOutput := strings.ToLower(string(output))
+		compactDHCPOutput := strings.ReplaceAll(dhcpOutput, " ", "")
+		if unknown && ((strings.Contains(dhcpOutput, "no dhcp") && strings.Contains(dhcpOutput, "offer")) || strings.Contains(compactDHCPOutput, "nodhcpoffers")) {
+			return probeObservation{code: 10, detail: "reservation-only scope refused unknown client"}
+		}
+		return probeObservation{code: 12, detail: "DHCP client execution failed: " + strings.TrimSpace(string(output))}
+	}
+	data, err := os.ReadFile(observationPath)
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if len(detail) > 2048 {
+			detail = detail[len(detail)-2048:]
+		}
+		return acquiredDHCPObservation(12, "DHCP client produced no lease observation: "+detail)
+	}
+	fields := strings.Split(strings.TrimSpace(string(data)), "|")
+	if len(fields) < 6 || fields[0] == "" || !exactDHCPOption(fields[1], fixture.zone.Gateway) || !exactDHCPOption(fields[2], fixture.zone.Gateway) || fields[3] != domain || !exactDHCPOption(fields[4], fixture.zone.Gateway) {
+		if len(fields) < 6 {
+			return acquiredDHCPObservation(12, "DHCP hook observation was malformed")
+		}
+		return acquiredDHCPObservation(11, fmt.Sprintf("DHCP options did not exactly match expected router=%s dns=%s domain=%s ntp=%s; observed router=%q dns=%q domain=%q ntp=%q", fixture.zone.Gateway, fixture.zone.Gateway, domain, fixture.zone.Gateway, fields[1], fields[2], fields[3], fields[4]))
+	}
+	route, routeErr := nativeResult(ctx, "netns", "exec", fixture.namespace, "ip", "route", "show", "default")
+	if routeErr != nil || !hasExactDefaultRoute(route.output, fixture.zone.Gateway) {
+		return acquiredDHCPObservation(11, "DHCP did not install the intended gateway route")
+	}
+	address, err := netip.ParseAddr(fields[0])
+	prefix, prefixErr := netip.ParsePrefix(fixture.zone.Subnet)
+	if err != nil || prefixErr != nil || address.String() != fields[0] || !prefix.Contains(address) || (fixture.zone.Address != "" && fields[0] != fixture.zone.Address) || !addressInExpectedPool(address, fixture.zone) {
+		return acquiredDHCPObservation(11, "DHCP lease address did not match the intended zone or reservation")
+	}
+	return acquiredDHCPObservation(0, "DHCP lease and exact router, DNS, domain, and NTP options verified")
+}
+
+func acquiredDHCPObservation(code int, detail string) probeObservation {
+	return probeObservation{code: code, detail: detail, leaseAcquired: true}
+}
+
+func hasExactDefaultRoute(output, gateway string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for index := 0; index+4 < len(fields); index++ {
+			if fields[index] == "default" && fields[index+1] == "via" && fields[index+2] == gateway && fields[index+3] == "dev" && fields[index+4] == "eth0" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func releaseDHCPLease(ctx context.Context, fixture ownedFixture, pidPath, leasePath string) error {
+	command := exec.Command(nativeTool("ip"), "netns", "exec", fixture.namespace, nativeTool("dhclient"), "-4", "-r", "-pf", pidPath, "-lf", leasePath, "eth0")
+	output, err := runForeground(ctx, command)
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func exactDHCPOption(value, expected string) bool {
+	values := strings.Fields(value)
+	return len(values) == 1 && values[0] == expected
+}
+
+func addressInExpectedPool(address netip.Addr, zone firewalltest.Zone) bool {
+	if zone.Address != "" {
+		return address.String() == zone.Address
+	}
+	if zone.PoolStart == "" || zone.PoolEnd == "" {
+		return false
+	}
+	start, startErr := netip.ParseAddr(zone.PoolStart)
+	end, endErr := netip.ParseAddr(zone.PoolEnd)
+	return startErr == nil && endErr == nil && address.Compare(start) >= 0 && address.Compare(end) <= 0
+}
+
+func runForeground(ctx context.Context, command *exec.Cmd) ([]byte, error) {
+	var output strings.Builder
+	command.Stdout = &output
+	command.Stderr = &output
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := command.Start(); err != nil {
+		return []byte(output.String()), err
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- command.Wait() }()
+	select {
+	case err := <-finished:
+		return []byte(output.String()), err
+	case <-ctx.Done():
+		terminateProcessGroup(command.Process.Pid)
+		select {
+		case err := <-finished:
+			return []byte(output.String()), errors.Join(ctx.Err(), err)
+		case <-time.After(2 * time.Second):
+			killProcessGroup(command.Process.Pid)
+			<-finished
+			return []byte(output.String()), ctx.Err()
+		}
+	}
+}
+
+func terminateProcessGroup(pid int) {
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+}
+
+func killProcessGroup(pid int) {
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
 func cleanupOnly() firewalltest.Response {
 	response := firewalltest.Response{Version: firewalltest.ProtocolVersion, OK: true}
 	lock, err := acquireLock()
@@ -581,6 +1182,10 @@ func cleanupOnly() firewalltest.Response {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	report, err := cleanupOwnedAfterCrash(ctx)
+	workReport, workErr := cleanupOwnedWorkDirs()
+	report.Found = report.Found || workReport.Found
+	report.Removed = report.Removed || workReport.Removed
+	err = errors.Join(err, workErr)
 	response.CleanupFound = report.Found
 	response.CleanupRemoved = report.Removed
 	if err != nil {
@@ -592,9 +1197,40 @@ func cleanupOnly() firewalltest.Response {
 	return response
 }
 
-func cleanupCreated(ctx context.Context, fixtures []ownedFixture) error {
-	stopOwnedListeners(fixtures)
+func cleanupOwnedWorkDirs() (cleanupReport, error) {
+	report := cleanupReport{}
+	if info, err := os.Lstat(clientWorkRoot); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return report, errors.New("client-test work root is a symlink")
+	}
+	entries, err := os.ReadDir(clientWorkRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return report, nil
+	}
+	if err != nil {
+		return report, fmt.Errorf("inspect client-test work root: %w", err)
+	}
 	var cleanupErr error
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "run-") {
+			continue
+		}
+		directory := filepath.Join(clientWorkRoot, entry.Name())
+		report.Found = true
+		if err := verifyClientWorkDir(directory); err != nil {
+			cleanupErr = errors.Join(cleanupErr, err)
+			continue
+		}
+		if err := cleanupClientWorkDir(directory); err != nil {
+			cleanupErr = errors.Join(cleanupErr, err)
+			continue
+		}
+		report.Removed = true
+	}
+	return report, cleanupErr
+}
+
+func cleanupCreated(ctx context.Context, fixtures []ownedFixture) error {
+	cleanupErr := stopOwnedListeners(fixtures)
 	for index := len(fixtures) - 1; index >= 0; index-- {
 		fixture := fixtures[index]
 		if fixture.createdNS && resourcePresent(fixture.namespace) {
@@ -634,7 +1270,7 @@ func cleanupOwnedAfterCrash(ctx context.Context) (cleanupReport, error) {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("ownership of reserved resource %s or %s is ambiguous", namespace, hostVeth))
 			continue
 		}
-		zoneIntent := firewalltest.Zone{Name: zone, VLAN: fixedZoneVLAN(zone)}
+		zoneIntent := firewalltest.Zone{Name: zone, VLAN: fixedZoneVLAN(zone), Subnet: fixedZoneSubnet(zone)}
 		owned, err := verifyOwnership(ctx, namespace, hostVeth, zoneIntent)
 		if err != nil {
 			cleanupErr = errors.Join(cleanupErr, err)
@@ -644,7 +1280,9 @@ func cleanupOwnedAfterCrash(ctx context.Context) (cleanupReport, error) {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("ownership of reserved resource %s or %s is ambiguous", namespace, hostVeth))
 			continue
 		}
-		stopListenersInNamespace(namespace)
+		if err := stopListenersInNamespace(namespace); err != nil {
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
 		if err := native(ctx, "netns", "del", namespace); err != nil {
 			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove %s namespace: %w", namespace, err))
 		}
@@ -678,14 +1316,37 @@ func verifyOwnership(ctx context.Context, namespace, hostVeth string, zone firew
 		return false, nil
 	}
 	result, err = nativeResult(ctx, "netns", "exec", namespace, "ip", "-4", "address", "show", "dev", "eth0")
-	if err != nil || !strings.Contains(result.output, ".25") && !strings.Contains(result.output, ".251") && !strings.Contains(result.output, ".252") && !strings.Contains(result.output, ".253") && !strings.Contains(result.output, ".254") {
+	if err != nil {
+		return false, nil
+	}
+	if strings.Contains(result.output, "inet ") && !addressOutputInSubnet(result.output, zone.Subnet) {
 		return false, nil
 	}
 	result, err = nativeResult(ctx, "netns", "exec", namespace, "ip", "route", "show", "default")
-	if err != nil || !strings.Contains(result.output, "default via") {
+	if err != nil {
+		return false, nil
+	}
+	if strings.TrimSpace(result.output) != "" && !strings.Contains(result.output, "default via") {
 		return false, nil
 	}
 	return true, nil
+}
+
+func addressOutputInSubnet(output, subnet string) bool {
+	prefix, err := netip.ParsePrefix(subnet)
+	if err != nil {
+		return false
+	}
+	for _, field := range strings.Fields(output) {
+		if !strings.Contains(field, "/") {
+			continue
+		}
+		address, err := netip.ParsePrefix(field)
+		if err == nil && prefix.Contains(address.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 func vlanOutputMatches(output string, vlan int) bool {
@@ -704,18 +1365,24 @@ func fixedZoneVLAN(name string) int {
 	return map[string]int{"TRANSIT": 5, "INFRA": 10, "SERVERS": 20, "TRUSTED": 30, "SANDBOX": 40, "MGMT": 99}[name]
 }
 
-func stopOwnedListeners(fixtures []ownedFixture) {
-	for _, fixture := range fixtures {
-		stopListenersInNamespace(fixture.namespace)
-	}
+func fixedZoneSubnet(name string) string {
+	return map[string]string{"TRANSIT": "10.10.5.0/24", "INFRA": "10.10.10.0/24", "SERVERS": "10.10.20.0/24", "TRUSTED": "10.10.30.0/24", "SANDBOX": "10.10.40.0/24", "MGMT": "10.10.99.0/24"}[name]
 }
 
-func stopListenersInNamespace(namespace string) {
+func stopOwnedListeners(fixtures []ownedFixture) error {
+	var cleanupErr error
+	for _, fixture := range fixtures {
+		cleanupErr = errors.Join(cleanupErr, stopListenersInNamespace(fixture.namespace))
+	}
+	return cleanupErr
+}
+
+func stopListenersInNamespace(namespace string) error {
 	// The command line and network namespace are both checked before a signal
 	// is sent. This is deliberately narrower than killing by process name.
 	nsLink, err := os.Readlink("/run/netns/" + namespace)
 	if err != nil {
-		return
+		return nil
 	}
 	pids := []int{}
 	for _, entry := range numericProcEntries() {
@@ -744,6 +1411,12 @@ func stopListenersInNamespace(namespace string) {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	}
+	for _, pid := range pids {
+		if processPresent(pid) {
+			return fmt.Errorf("owned listener process %d did not exit", pid)
+		}
+	}
+	return nil
 }
 
 func processPresent(pid int) bool {
@@ -871,4 +1544,8 @@ func joinDetail(left, right string) string {
 		return right
 	}
 	return left + "; " + right
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

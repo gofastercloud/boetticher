@@ -14,6 +14,18 @@ type workerTestDeck struct {
 	closed  chan struct{}
 }
 
+type indexedWorkerTestDeck struct {
+	indices []int
+}
+
+func (d *indexedWorkerTestDeck) SetKey(_ context.Context, index int, _ KeyImage) error {
+	d.indices = append(d.indices, index)
+	return nil
+}
+func (d *indexedWorkerTestDeck) Clear(context.Context) error { return nil }
+func (d *indexedWorkerTestDeck) Events() <-chan KeyEvent     { return nil }
+func (d *indexedWorkerTestDeck) Close() error                { return nil }
+
 func newWorkerTestDeck() *workerTestDeck {
 	return &workerTestDeck{
 		frames:  make(chan []KeyImage, 1),
@@ -117,5 +129,22 @@ func TestStreamDeckWorkerTreatsAbsentDeviceAsRetryable(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("absent StreamDeck worker did not stop")
+	}
+}
+
+func TestWriteStreamDeckFrameOnlyWritesChangedKeys(t *testing.T) {
+	deck := &indexedWorkerTestDeck{}
+	frame := []KeyImage{{Title: "PVE", Value: "node"}, {Title: "VM280", Value: "host"}, {Title: "FW", Value: "OK"}}
+	if err := writeStreamDeckFrame(context.Background(), deck, frame, nil); err != nil {
+		t.Fatalf("initial frame write failed: %v", err)
+	}
+	deck.indices = nil
+	updated := append([]KeyImage(nil), frame...)
+	updated[1].Value = "ost"
+	if err := writeStreamDeckFrame(context.Background(), deck, updated, frame); err != nil {
+		t.Fatalf("changed frame write failed: %v", err)
+	}
+	if len(deck.indices) != 1 || deck.indices[0] != 1 {
+		t.Fatalf("changed frame wrote indices %v, want [1]", deck.indices)
 	}
 }

@@ -7,9 +7,10 @@ description: Disposable OpenWrt provider qualification spike and decision record
 
 # OpenWrt provider qualification spike
 
-Status: **CONDITIONAL GO for a narrowed IPv4 provider; NO-GO for the current
-Boetticher DHCP/DNS contract.** Production Module implementation remains
-**HOLD**.
+Status: historical spike record. Its original conditional/hold decision is
+preserved below; the current supported client-services contract is documented
+in [Client services](client-services.md) and is not established by this
+disposable spike.
 
 This was a disposable qualification spike, not a production provider or Module
 implementation. The run evaluated whether OpenWrt can be provisioned and

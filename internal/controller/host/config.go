@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
+	"github.com/gofastercloud/boetticher/internal/model"
 	"gopkg.in/yaml.v3"
 
 	"github.com/gofastercloud/boetticher/internal/pathguard"
@@ -26,10 +28,11 @@ type StorageConfig struct {
 }
 
 type LabConfig struct {
-	Name    string         `yaml:"name"`
-	Proxmox ProxmoxConfig  `yaml:"proxmox"`
-	Storage *StorageConfig `yaml:"storage,omitempty"`
-	Network *NetworkConfig `yaml:"network,omitempty"`
+	Name    string                 `yaml:"name"`
+	Proxmox ProxmoxConfig          `yaml:"proxmox"`
+	Storage *StorageConfig         `yaml:"storage,omitempty"`
+	Network *NetworkConfig         `yaml:"network,omitempty"`
+	Modules clientservices.Modules `yaml:"modules,omitempty"`
 }
 
 func LoadConfig() (LabConfig, error) {
@@ -38,7 +41,9 @@ func LoadConfig() (LabConfig, error) {
 		return LabConfig{}, fmt.Errorf("read %s: %w", LabConfigPath, err)
 	}
 	var config LabConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil {
 		return LabConfig{}, fmt.Errorf("decode %s: %w", LabConfigPath, err)
 	}
 	if err := ValidateConfig(config); err != nil {
@@ -72,6 +77,13 @@ func ValidateConfig(config LabConfig) error {
 		if err := ValidateNetworkConfig(*config.Network); err != nil {
 			return err
 		}
+	}
+	intentSite := model.NewSite(config.Name, "controller-local", model.GatewayModeManaged)
+	if config.Network != nil && config.Network.Domain != "" {
+		intentSite.Network.Domain = config.Network.Domain
+	}
+	if err := clientservices.Validate(config.Modules, intentSite); err != nil {
+		return fmt.Errorf("validate client services intent: %w", err)
 	}
 	return nil
 }

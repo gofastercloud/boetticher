@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -62,6 +63,10 @@ type DesiredState struct {
 }
 
 func DesiredFromSite(site model.Site) (DesiredState, error) {
+	return DesiredFromSiteWithServices(site, clientservices.Modules{})
+}
+
+func DesiredFromSiteWithServices(site model.Site, services clientservices.Modules) (DesiredState, error) {
 	management := site.Gateway.ManagementAddress
 	if management == "" {
 		management = model.GatewayManagementAddress
@@ -137,6 +142,11 @@ func DesiredFromSite(site model.Site) (DesiredState, error) {
 	state := DesiredState{ManagementAddress: management, ManagementNetwork: managementNetwork, ManagementNetmask: managementNetmask, ManagementGateway: managementGateway, ControllerAddress: controllerAddress, Zones: zones}
 	state.Network = networkSections(zones, management, managementNetmask, managementGateway)
 	state.Firewall = firewallSections(zones, managementNetwork, controllerAddress)
+	serviceState, err := ServiceStateFromModules(site, services)
+	if err != nil {
+		return DesiredState{}, err
+	}
+	state.Firewall = append(state.Firewall, serviceState.Firewall...)
 	return state, nil
 }
 
