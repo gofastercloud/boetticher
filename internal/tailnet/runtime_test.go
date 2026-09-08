@@ -2,6 +2,7 @@ package tailnet
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -17,6 +18,45 @@ func TestTransportFailureIsNeverGuestAbsence(t *testing.T) {
 	if _, err := InspectGuest(context.Background(), f); err == nil {
 		t.Fatal("SSH failure was treated as a missing guest")
 	}
+}
+
+func TestRuntimeReadyStateAllowsRepairAfterGuestProbeFailure(t *testing.T) {
+	ready, err := RuntimeReadyState(context.Background(), fixedRunner{
+		result: controllerhost.Result{ExitCode: 1},
+		err:    errors.New("guest runtime probe failed"),
+	})
+	if err != nil {
+		t.Fatalf("guest probe failure became transport error: %v", err)
+	}
+	if ready {
+		t.Fatal("failed guest runtime probe was reported ready")
+	}
+}
+
+func TestRuntimeReadyStatePreservesHostTransportFailure(t *testing.T) {
+	_, err := RuntimeReadyState(context.Background(), fixedRunner{
+		result: controllerhost.Result{ExitCode: 255},
+		err:    errors.New("SSH connection failed"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "inspect Tailnet runtime") {
+		t.Fatalf("transport failure = %v, want preserved inspection error", err)
+	}
+}
+
+func TestRuntimeReadyStateReportsHealthyGuest(t *testing.T) {
+	ready, err := RuntimeReadyState(context.Background(), fixedRunner{})
+	if err != nil || !ready {
+		t.Fatalf("healthy guest probe = ready %v, err %v", ready, err)
+	}
+}
+
+type fixedRunner struct {
+	result controllerhost.Result
+	err    error
+}
+
+func (r fixedRunner) Run(context.Context, string) (controllerhost.Result, error) {
+	return r.result, r.err
 }
 
 func TestBootstrapShellQuoteRoundTrip(t *testing.T) {
@@ -74,6 +114,19 @@ func TestConfigurePrettyStoppedBackendUsesIdentityPreservingUp(t *testing.T) {
 	}
 	if strings.Contains(f.calls[len(f.calls)-1], "tailscale set") {
 		t.Fatalf("stopped backend used preference-only set: %q", f.calls[len(f.calls)-1])
+	}
+}
+
+func TestConfigureDisconnectedBackendUsesIdentityPreservingUp(t *testing.T) {
+	f := &fakeRunner{outputs: map[string]controllerhost.Result{
+		"pct config 200": {Stdout: ownedConfig()},
+		GuestCommand("tailscale status --json --peers=false"): {Stdout: []byte(`{"BackendState":"Running","Self":{"Online":false}}`)},
+	}}
+	if err := Configure(context.Background(), f, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) == 0 || !strings.Contains(f.calls[len(f.calls)-1], "tailscale up --timeout=45s") {
+		t.Fatalf("disconnected backend did not use identity-preserving up: %#v", f.calls)
 	}
 }
 

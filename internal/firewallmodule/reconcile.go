@@ -64,6 +64,9 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 }
 
 func managedStaleSection(name string, section openwrt.UCISection) bool {
+	if managedVPNFirewallSection(name, section) {
+		return true
+	}
 	if name == "airvpn" && section.Type == "interface" {
 		return true
 	}
@@ -246,6 +249,9 @@ func ReconcileOwned(ctx context.Context, client uciWriter, packageName string, c
 func StageOwned(ctx context.Context, client uciWriter, packageName string, current map[string]openwrt.UCISection, desired []Section) (int, error) {
 	if client == nil {
 		return 0, errors.New("provider UCI client is required")
+	}
+	if packageName == "firewall" {
+		current = FirewallScope(current, desired)
 	}
 	mutations, err := DiffOwned(current, desired)
 	if err != nil {

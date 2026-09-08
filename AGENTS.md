@@ -40,6 +40,8 @@ verification requirements remain controlling.
   error; do not silently orphan live work. Keep required receipts on disk and
   provide one compact checkpoint; do not create unsolicited evidence bundles or
   status documents.
+- Preserve command exit codes and resumable session IDs when a tool yields;
+  empty output is not completion, especially for live deployment commands.
 - At meaningful boundaries, check for oversized briefs, duplicate investigation
   or tests, idle wakes, and rework. Record corrective actions only when found.
 - Report usage separately as cached input, uncached input, and output. Do not

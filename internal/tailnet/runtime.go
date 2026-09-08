@@ -165,6 +165,14 @@ cat >"$key"
 tailscale up --timeout=45s --auth-key=file:"$key"` + preferenceArgs + ` >/dev/null 2>&1`
 
 func RuntimeReady(ctx context.Context, r Runner) bool {
+	ready, _ := RuntimeReadyState(ctx, r)
+	return ready
+}
+
+// RuntimeReadyState distinguishes a failed guest readiness probe from a
+// failed Host transport. An owned guest may need runtime repair before native
+// Tailnet status can be read, but transport failures must remain fatal.
+func RuntimeReadyState(ctx context.Context, r Runner) (bool, error) {
 	files := RuntimeFiles()
 	keys := make([]string, 0, len(files))
 	for k := range files {
@@ -179,8 +187,14 @@ func RuntimeReady(ctx context.Context, r Runner) bool {
 	b.WriteString("test \"$(sysctl -n net.ipv4.ip_forward)\" = 1\nsystemctl is-active --quiet tailscaled\nsystemctl is-enabled --quiet tailscaled\nsystemctl is-active --quiet boetticher-tailnet-policy\n")
 	b.WriteString("test -s /run/boetticher-tailnet-policy.sha256\ntest \"$(nft --stateless list table inet boetticher_tailnet | sha256sum | cut -d ' ' -f 1)\" = \"$(cat /run/boetticher-tailnet-policy.sha256)\"\n")
 	fmt.Fprintf(&b, "test \"$(dpkg-query -W -f='${Version}' tailscale)\" = %s\n", shellQuote(Version))
-	_, err := r.Run(ctx, GuestCommand(b.String()))
-	return err == nil
+	result, err := r.Run(ctx, GuestCommand(b.String()))
+	if err == nil {
+		return true, nil
+	}
+	if result.ExitCode == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("inspect Tailnet runtime: %w", err)
 }
 func ReadStatus(ctx context.Context, r Runner) (Report, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -300,8 +314,18 @@ func Configure(ctx context.Context, r StdinRunner, key []byte) error {
 	command := "systemctl start tailscaled; tailscale set" + preferenceArgs
 	var native struct {
 		BackendState string
+		Self         *struct {
+			Online *bool
+		}
 	}
-	if statusErr == nil && json.Unmarshal(status.Stdout, &native) == nil && native.BackendState == "Stopped" {
+	reconnect := false
+	if statusErr == nil && json.Unmarshal(status.Stdout, &native) == nil {
+		reconnect = native.BackendState == "Stopped"
+		if native.Self != nil && native.Self.Online != nil && !*native.Self.Online {
+			reconnect = true
+		}
+	}
+	if reconnect {
 		// tailscale up without an auth key reuses the persisted node identity.
 		// It brings a deliberately stopped backend back without re-enrollment.
 		command = "systemctl start tailscaled; tailscale up --timeout=45s" + preferenceArgs

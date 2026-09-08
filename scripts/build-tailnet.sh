@@ -33,7 +33,7 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-ti
 printf '%s  %s\n' "$digest" "$work/tailscale.deb" | sha256sum -c -
 mmdebstrap --variant=minbase --architectures=amd64 \
  --aptopt=Acquire::Check-Valid-Until=false --aptopt=Acquire::Retries=3 \
- --include=systemd,systemd-sysv,dbus,ca-certificates,iproute2,iptables,ifupdown,dhcpcd-base,nftables,bind9-dnsutils \
+ --include=systemd,systemd-sysv,dbus,ca-certificates,iproute2,iptables,ifupdown,dhcpcd-base,nftables,bind9-dnsutils,procps \
  trixie "$work/rootfs" https://snapshot.debian.org/archive/debian/20260825T000000Z/
 printf '#!/bin/sh\nexit 101\n' > "$work/rootfs/usr/sbin/policy-rc.d"
 chmod 0755 "$work/rootfs/usr/sbin/policy-rc.d"

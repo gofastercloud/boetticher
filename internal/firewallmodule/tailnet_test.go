@@ -41,3 +41,15 @@ func TestDiffFirewallIgnoresForeignSafetyIPSet(t *testing.T) {
 		}
 	}
 }
+
+func TestTailnetTransportAllowsControlFallbackPorts(t *testing.T) {
+	for _, section := range tailnetFirewallSections("192.168.4.0/22") {
+		if section.Name == "boetticher_tailnet_transport_tcp" {
+			if got := section.Options["dest_port"]; got != "80 443" {
+				t.Fatalf("Tailnet TCP transport ports = %q, want 80 443", got)
+			}
+			return
+		}
+	}
+	t.Fatal("Tailnet TCP transport rule missing")
+}

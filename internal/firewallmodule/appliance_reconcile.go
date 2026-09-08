@@ -58,7 +58,12 @@ func ReconcileAppliance(ctx context.Context, provider ApplianceProvider, composi
 				return 0, err
 			}
 		}
-		mutations, err := DiffOwned(observed, item.desired)
+		var mutations []Mutation
+		if item.name == "firewall" {
+			mutations, err = DiffFirewall(observed, item.desired)
+		} else {
+			mutations, err = DiffOwned(observed, item.desired)
+		}
 		if err != nil {
 			return 0, fmt.Errorf("prepare provider UCI %s: %w", item.name, err)
 		}

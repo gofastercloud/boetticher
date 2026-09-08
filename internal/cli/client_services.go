@@ -275,7 +275,7 @@ func verifyComposedFirewall(ctx context.Context, provider *openwrt.Client, desir
 	if err != nil {
 		return err
 	}
-	changes, err := firewallmodule.DiffOwned(current, desired)
+	changes, err := firewallmodule.DiffFirewall(current, desired)
 	if err != nil {
 		return err
 	}
@@ -488,7 +488,7 @@ func runClientServicePlan(ctx context.Context, capability string, serviceContext
 	if err != nil {
 		return err
 	}
-	composed, err := firewallmodule.DesiredFromSiteWithServices(serviceContext.Site, modules)
+	composed, err := composeClientAppliance(serviceContext, modules)
 	if err != nil {
 		return err
 	}
@@ -510,7 +510,13 @@ func runClientServicePlan(ctx context.Context, capability string, serviceContext
 		if err != nil {
 			return err
 		}
-		packageChanges, diffErr := firewallmodule.DiffOwned(current, item.sections)
+		var packageChanges []firewallmodule.Mutation
+		var diffErr error
+		if item.packageName == "firewall" {
+			packageChanges, diffErr = firewallmodule.DiffFirewall(current, item.sections)
+		} else {
+			packageChanges, diffErr = firewallmodule.DiffOwned(current, item.sections)
+		}
 		if diffErr != nil {
 			return diffErr
 		}

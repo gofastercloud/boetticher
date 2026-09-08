@@ -292,19 +292,30 @@ func runTailnetApply(a []string, in io.Reader, out, errOut io.Writer) error {
 	enrollmentNeeded := needsBuild
 	runtimeHealthy := false
 	if guest.Exists {
-		report, statusErr := tailnet.ReadStatus(ctx, sc.Host)
-		if statusErr != nil {
-			return statusErr
+		// An existing guest can be stopped or missing its runtime assets. Probe
+		// those assets before native status so apply can repair that state before
+		// enrollment. InspectGuest already proved the exact owned VMID 200
+		// configuration; transport failures from the probe remain fatal.
+		runtimeReady, runtimeErr := tailnet.RuntimeReadyState(ctx, sc.Host)
+		if runtimeErr != nil {
+			return runtimeErr
 		}
-		runtimeHealthy = report.State == tailnet.Healthy
-		enrollmentNeeded = report.NeedsAuth
-		// Authentication attention does not imply an image/package upgrade.
-		// RuntimeReady is the package and persistent-asset check used to decide
-		// whether the Host builder must run.
-		needsBuild = !tailnet.RuntimeReady(ctx, sc.Host)
+		needsBuild = !runtimeReady
+		if runtimeReady {
+			report, statusErr := tailnet.ReadStatus(ctx, sc.Host)
+			if statusErr != nil {
+				return statusErr
+			}
+			runtimeHealthy = report.State == tailnet.Healthy
+			enrollmentNeeded = report.NeedsAuth
+		} else {
+			// Runtime repair may leave the node needing enrollment; require the
+			// bootstrap key rather than silently attempting preference-only setup.
+			enrollmentNeeded = true
+		}
 	}
 	intentChanged := sc.Config.Modules.Tailnet == nil || !sc.Config.Modules.Tailnet.Enabled || len(sc.Config.Modules.DHCP.Reservations) != len(n.Modules.DHCP.Reservations)
-	composed, e := firewallmodule.DesiredFromSiteWithServices(sc.Site, n.Modules)
+	composed, e := composeClientAppliance(sc, n.Modules)
 	if e != nil {
 		return e
 	}
@@ -346,7 +357,7 @@ func runTailnetApply(a []string, in io.Reader, out, errOut io.Writer) error {
 			return e
 		}
 	}
-	if _, _, e = reconcileClientServices(ctx, provider, sc.Site, n.Modules); e != nil {
+	if _, _, e = reconcileClientServices(ctx, provider, sc, n.Modules); e != nil {
 		return fmt.Errorf("reconcile DNS/DHCP prerequisites: %w", e)
 	}
 	if needsBuild {
@@ -538,7 +549,7 @@ func runTailnetTeardown(a []string, in io.Reader, out io.Writer) error {
 	if e != nil {
 		return e
 	}
-	if _, _, e = reconcileClientServices(ctx, provider, sc.Site, proposed.Modules); e != nil {
+	if _, _, e = reconcileClientServices(ctx, provider, sc, proposed.Modules); e != nil {
 		return fmt.Errorf("Tailnet intent saved but provider reconciliation failed: %w", e)
 	}
 	if e = tailnet.Teardown(ctx, sc.Host); e != nil {

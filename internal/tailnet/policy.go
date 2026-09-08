@@ -47,7 +47,7 @@ table inet boetticher_tailnet {
   oifname "eth0" ip daddr 10.10.5.1 tcp dport 53 accept
   oifname "eth0" ip daddr 10.10.5.1 udp dport { 53, 123 } accept
   ip daddr { %s } drop
-  oifname "eth0" tcp dport 443 accept
+  oifname "eth0" tcp dport { 80, 443 } accept
   oifname "eth0" meta l4proto udp accept
  }
 }

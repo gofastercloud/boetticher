@@ -17,10 +17,19 @@ bounded to 16 KiB. The key is streamed to the guest for enrollment and is not
 stored in `lab.yml`, the Controller package, or logs. Existing enrollment is
 reused; a supplied key is ignored unless native status requires enrollment.
 
+Apply first verifies the exact owned guest configuration and its persistent
+runtime assets. If the guest exists but its policy or `tailscaled` runtime is
+stopped or incomplete, apply repairs that runtime before attempting
+enrollment. Host transport failures and ownership mismatches remain fatal.
+When native status reports `NeedsLogin`, apply requires a fresh authorized key;
+the key is never inferred from a failed runtime probe.
+
 The guest policy is fail-closed. It permits only the reference SERVERS and
 TRUSTED routed destinations and gateway DNS/NTP, while denying HOME, INFRA,
 MGMT, SANDBOX, TRANSIT neighbors, unallocated ranges, Internet destinations,
-and IPv6. Native status verifies the loaded policy, TUN, exact preferences,
+and IPv6. Tailscale coordination uses its encrypted TCP 80 transport with TCP
+443 fallback; both ports are scoped to the Tailnet guest's control egress.
+Native status verifies the loaded policy, TUN, exact preferences,
 route approval, package version, and persistent runtime files.
 
 This status is local evidence. It does not prove remote peer reachability,
