@@ -224,7 +224,7 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Se
 		if err != nil {
 			continue
 		}
-		safe := nativeRecordSuffix(strings.TrimSuffix(name, "."))
+		safe := strings.TrimPrefix(nativeRecordSectionName(name), "boetticher_record_")
 		switch record.Type {
 		case "A":
 			sections = append(sections, Section{Name: "boetticher_record_" + safe, Type: "hostrecord", Options: map[string]string{"name": name, "ip": record.Value}, Lists: map[string][]string{}})
@@ -233,7 +233,7 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Se
 			if targetErr != nil {
 				continue
 			}
-			sections = append(sections, Section{Name: "boetticher_cname_" + safe, Type: "cname", Options: map[string]string{"cname": name, "target": target}, Lists: map[string][]string{}})
+			sections = append(sections, Section{Name: "boetticher_cname_" + nativeRecordSuffix(strings.TrimSuffix(name, ".")), Type: "cname", Options: map[string]string{"cname": name, "target": target}, Lists: map[string][]string{}})
 		}
 	}
 	return sections
@@ -270,7 +270,7 @@ func stubbySections(upstreams []clientservices.DNSUpstream) []Section {
 		"idle_timeout":                "10000",
 	}, Lists: map[string][]string{"listen_address": {"127.0.0.1@5453"}, "dns_transport": {"GETDNS_TRANSPORT_TLS"}}}}
 	for _, upstream := range upstreams {
-		safe := strings.ReplaceAll(upstream.Address, ".", "_")
+		safe := strings.TrimPrefix(nativeResolverSectionName(upstream.Address), "boetticher_resolver_")
 		sections = append(sections, Section{Name: "boetticher_resolver_" + safe, Type: "resolver", Options: map[string]string{
 			"address":       upstream.Address,
 			"tls_auth_name": upstream.TLSName,

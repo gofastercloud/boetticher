@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -8,7 +9,66 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gofastercloud/boetticher/internal/clientservices"
+	"gopkg.in/yaml.v3"
 )
+
+func TestPrepareProtectedRangeChangeGatesAdoptionAndRetention(t *testing.T) {
+	want := &ProtectedRanges{"10.10.10.224/28", "10.10.20.224/28", "10.10.30.224/28", "10.10.40.224/28"}
+	for _, values := range []struct {
+		name string
+		obs  ProtectedRangeObservations
+	}{
+		{"reservation", ProtectedRangeObservations{Reservations: []string{"10.10.10.225"}}},
+		{"lease", ProtectedRangeObservations{Leases: []string{"10.10.20.239"}}},
+		{"managed", ProtectedRangeObservations{ManagedAttachments: []string{"10.10.40.224"}}},
+	} {
+		if err := PrepareProtectedRangeChange(nil, want, values.obs); err == nil {
+			t.Errorf("occupied %s adoption accepted", values.name)
+		}
+	}
+	if err := PrepareProtectedRangeChange(want, nil, ProtectedRangeObservations{}); err == nil {
+		t.Fatal("release accepted")
+	}
+	changed := *want
+	changed.Trusted = "10.10.30.240/28"
+	if err := PrepareProtectedRangeChange(want, &changed, ProtectedRangeObservations{}); err == nil {
+		t.Fatal("change accepted")
+	}
+	if err := PrepareProtectedRangeChange(want, want, ProtectedRangeObservations{Leases: []string{"10.10.20.225"}}); err != nil {
+		t.Fatalf("unchanged adopted range rejected: %v", err)
+	}
+	for _, bad := range []string{"10.10.10.225/32", "2001:db8::1", "10.10.10.01"} {
+		if err := PrepareProtectedRangeChange(nil, want, ProtectedRangeObservations{Reservations: []string{bad}}); err == nil {
+			t.Errorf("malformed/occupied observation %q accepted", bad)
+		}
+	}
+}
+
+func TestLabYAMLStrictRoundTripPreservesVPNAndProtectedRanges(t *testing.T) {
+	b := false
+	want := LabConfig{Name: "lab", Proxmox: ProxmoxConfig{Address: "192.0.2.10", User: "root", Repository: "no-subscription"}, Network: &NetworkConfig{InternalBridge: "vmbr1", VLANs: VLANConfig{Transit: 5, Infra: 10, Servers: 20, Trusted: 30, Sandbox: 40, Mgmt: 99}, ProtectedRanges: &ProtectedRanges{"10.10.10.224/28", "10.10.20.224/28", "10.10.30.224/28", "10.10.40.224/28"}}, Modules: clientservices.Modules{DHCP: &clientservices.DHCPConfig{Reservations: []clientservices.Reservation{{Name: "peer", Zone: "TRUSTED", MAC: "02:00:00:00:30:61", Address: "10.10.30.225"}}}, VPN: &clientservices.VPNConfig{Enabled: &b, Clients: []string{"peer"}}}}
+	data, err := yaml.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got LabConfig
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Network.ProtectedRanges == nil || got.Network.ProtectedRanges.Trusted != want.Network.ProtectedRanges.Trusted || got.Modules.VPN == nil || got.Modules.VPN.Clients[0] != "peer" {
+		t.Fatalf("round trip lost intent: %#v", got)
+	}
+	var bad LabConfig
+	decoder = yaml.NewDecoder(bytes.NewReader(append(data, []byte("unknown: true\n")...)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&bad); err == nil {
+		t.Fatal("unknown YAML field accepted")
+	}
+}
 
 const compatibleBridge = "auto vmbr1\niface vmbr1 inet manual\n bridge-ports none\n bridge-stp off\n bridge-fd 0\n bridge-vlan-aware yes\n bridge-vids 2-4094\niface vmbr1 inet6 manual\n"
 

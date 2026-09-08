@@ -256,6 +256,30 @@ func (c *Client) UCIApply(ctx context.Context, timeout int) error {
 	return nil
 }
 
+var commitPackages = map[string]struct{}{"network": {}, "firewall": {}, "dhcp": {}, "stubby": {}, "system": {}}
+
+// UCICommit stages a single supported package durably without reloading any service.
+func (c *Client) UCICommit(ctx context.Context, config string) error {
+	if _, ok := commitPackages[config]; !ok {
+		return errors.New("unsupported UCI config package")
+	}
+	if _, err := c.callWithSession(ctx, "uci", "commit", map[string]any{"config": config}); err != nil {
+		return fmt.Errorf("commit provider UCI %s: %w", config, err)
+	}
+	return nil
+}
+
+// ServiceConfigChange asks procd to reload one supported service configuration.
+func (c *Client) ServiceConfigChange(ctx context.Context, service string) error {
+	if _, ok := commitPackages[service]; !ok {
+		return errors.New("unsupported service configuration")
+	}
+	if _, err := c.callWithSession(ctx, "service", "event", map[string]any{"type": "config.change", "data": map[string]any{"package": service}}); err != nil {
+		return fmt.Errorf("reload provider service configuration %s: %w", service, err)
+	}
+	return nil
+}
+
 // InterfaceDump returns native runtime interface state for the cheap status
 // view. The shape intentionally remains opaque to avoid a broad SDK.
 func (c *Client) InterfaceDump(ctx context.Context) (json.RawMessage, error) {

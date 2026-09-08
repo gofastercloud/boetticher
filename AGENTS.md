@@ -3,13 +3,51 @@
 Agent instructions only. Human explanations, command examples, configuration,
 and acceptance records belong in README.md and docs/.
 
+## Priority: efficient agent operation
+
+This section has project priority over conflicting guidance later in this file,
+while user, system, and developer authority, correctness, security, and
+verification requirements remain controlling.
+
+- Minimise aggregate consumption across agents; accept slower work when it
+  reduces tokens without weakening correctness or verification.
+- Use the lowest suitable model and effort. Use `gpt-5.6-luna` for routine
+  research, coding, testing, and browser work; use `gpt-5.6-terra` only for a
+  justified deeper review. Do not default to High effort.
+- Reserve `gpt-6-astra` for orchestration. Consider a manually verified
+  handover to `gpt-5.6-sol` for a sustained, settled, bounded backlog. Never
+  run Astra and Sol concurrently, and never claim an automatic model switch.
+- Use `fork_turns: none`, with a small self-contained objective, exact paths,
+  constraints, and acceptance criteria; do not copy history. Reuse one agent
+  for related work through acceptance; start a fresh agent for each unrelated
+  work package. Child agents are prohibited.
+- Work sequentially by default. Use concurrency only when it demonstrably
+  reduces total work or rework, or when an explicit deadline requires it.
+- Reuse verified authority and evidence within each workstream; refresh it when
+  state or gates change. Use one independent review for consequential changes;
+  repeat checks only for changed code, a failure, an unresolved concern, or
+  required fresh evidence.
+- Search narrowly, read relevant lines, and keep tool results compact; do not
+  retain or emit transcripts. Avoid frequent polling, timers, unchanged status,
+  and administrative busywork.
+- Progress is normally one sentence and the final is short. Keep required
+  receipts on disk and provide one compact checkpoint; do not create
+  unsolicited evidence bundles or status documents.
+- At meaningful boundaries, check for oversized briefs, duplicate investigation
+  or tests, idle wakes, and rework. Record corrective actions only when found.
+- Report usage separately as cached input, uncached input, and output. Do not
+  report a raw total as an allowance charge or make fixed savings claims.
+- Prefer lightweight memory lookup, reuse skill reads, batched independent
+  operations, small outputs, and stop checks once gates pass.
+
 ## Coordinate efficiently
 
 - Act as coordinator and product owner: own scope, priorities, integration,
   verification, and the final outcome. Delegate implementation to
-  `gpt-5.6-luna` and planning/design analysis to `gpt-5.6-terra`.
-  Use subagents whenever bounded independent work saves time or tokens;
-  keep trivial, tightly coupled, or urgent integration work local.
+  `gpt-5.6-luna`; use `gpt-5.6-terra` only for justified deeper review.
+  Use subagents only when bounded independent work demonstrably reduces total
+  work or rework; keep trivial, tightly coupled, or urgent integration work
+  local.
 - Use `gpt-5.6-luna` subagents for all Git-related work, including read-only
   inspection, branching, staging, commits, pushes, pull requests, reviews,
   merges, and cleanup. The coordinator retains scope, authorization, and final

@@ -17,6 +17,13 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 	if len(state.Zones) != 6 || len(state.Network) != 14 {
 		t.Fatalf("desired network shape = zones:%d sections:%d", len(state.Zones), len(state.Network))
 	}
+	for _, section := range state.Network {
+		if section.Type == "interface" || section.Type == "device" {
+			if section.Options["ipv6"] != "0" {
+				t.Fatalf("%s does not disable IPv6: %#v", section.Name, section.Options)
+			}
+		}
+	}
 	if len(state.Firewall) < 6*2 {
 		t.Fatalf("desired firewall policy is unexpectedly small: %d", len(state.Firewall))
 	}
@@ -80,15 +87,18 @@ func TestDesiredFromSiteRejectsNetworkConflicts(t *testing.T) {
 	}
 }
 
-func TestDiffOwnedPreservesUnrelatedAndRemovesStaleOwnedSections(t *testing.T) {
+func TestDiffOwnedPreservesUnrelatedAndUnownedPrefixedSections(t *testing.T) {
 	current := map[string]openwrt.UCISection{
 		"boetticher_keep":  {Type: "rule", Options: map[string]string{"target": "ACCEPT"}, Lists: map[string][]string{}},
 		"boetticher_stale": {Type: "rule", Options: map[string]string{}, Lists: map[string][]string{}},
 		"operator_rule":    {Type: "rule", Options: map[string]string{"target": "DROP"}, Lists: map[string][]string{}},
 	}
 	desired := []Section{{Name: "boetticher_keep", Type: "rule", Options: map[string]string{"target": "ACCEPT"}, Lists: map[string][]string{}}, {Name: "boetticher_new", Type: "rule", Options: map[string]string{"target": "ACCEPT"}, Lists: map[string][]string{}}}
-	mutations := DiffOwned(current, desired)
-	if len(mutations) != 2 || mutations[0].Kind != MutationCreate || mutations[1].Kind != MutationDelete || mutations[1].Section.Name != "boetticher_stale" {
+	mutations, err := DiffOwned(current, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mutations) != 1 || mutations[0].Kind != MutationCreate {
 		t.Fatalf("mutations = %#v", mutations)
 	}
 }
@@ -127,5 +137,41 @@ func TestReconcileOwnedIsNoOpWhenOwnedStateMatches(t *testing.T) {
 	}, []Section{section})
 	if err != nil || changed != 0 || len(writer.operations) != 0 {
 		t.Fatalf("no-op reconcile = changed:%d err:%v operations:%v", changed, err, writer.operations)
+	}
+}
+
+func TestDiffOwnedRemovesManagedStaleReservationButPreservesUnknownPrefix(t *testing.T) {
+	current := map[string]openwrt.UCISection{
+		"boetticher_host_peer": {Type: "host", Options: map[string]string{"name": "peer", "ip": "10.10.30.225"}, Lists: map[string][]string{}},
+		"boetticher_stale":     {Type: "rule", Options: map[string]string{}, Lists: map[string][]string{}},
+	}
+	mutations, err := DiffOwned(current, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mutations) != 1 || mutations[0].Kind != MutationDelete || mutations[0].Section.Name != "boetticher_host_peer" {
+		t.Fatalf("managed stale mutations = %#v", mutations)
+	}
+}
+
+func TestReconcileOwnedRefusesConflictingDesiredType(t *testing.T) {
+	_, err := ReconcileOwned(context.Background(), &fakeWriter{}, "network", map[string]openwrt.UCISection{
+		"boetticher_iface_trusted": {Type: "rule", Options: map[string]string{}, Lists: map[string][]string{}},
+	}, []Section{{Name: "boetticher_iface_trusted", Type: "interface", Options: map[string]string{}, Lists: map[string][]string{}}})
+	if err == nil || !strings.Contains(err.Error(), "conflicting type") {
+		t.Fatalf("type conflict was accepted: %v", err)
+	}
+}
+
+func TestStageOwnedDoesNotActivate(t *testing.T) {
+	writer := &fakeWriter{}
+	changed, err := StageOwned(context.Background(), writer, "network", nil, []Section{{Name: "boetticher_stage", Type: "interface", Options: map[string]string{"proto": "static"}, Lists: map[string][]string{}}})
+	if err != nil || changed != 1 {
+		t.Fatalf("stage = %d, %v", changed, err)
+	}
+	for _, operation := range writer.operations {
+		if strings.HasPrefix(operation, "apply:") {
+			t.Fatalf("stage activated UCI: %v", writer.operations)
+		}
 	}
 }

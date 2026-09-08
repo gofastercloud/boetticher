@@ -31,6 +31,23 @@ const (
 type Modules struct {
 	DNS  *DNSConfig  `yaml:"dns,omitempty" json:"dns,omitempty"`
 	DHCP *DHCPConfig `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
+	VPN  *VPNConfig  `yaml:"vpn,omitempty" json:"vpn,omitempty"`
+}
+
+// VPNConfig is provider-neutral inbound VPN intent. Clients are references
+// to DHCP reservations; this block never creates or copies client identity.
+type VPNConfig struct {
+	Enabled  *bool        `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Location string       `yaml:"location,omitempty" json:"location,omitempty"`
+	Clients  []string     `yaml:"clients,omitempty" json:"clients,omitempty"`
+	Forwards []VPNForward `yaml:"forwards,omitempty" json:"forwards,omitempty"`
+}
+
+type VPNForward struct {
+	Name        string   `yaml:"name" json:"name"`
+	Reservation string   `yaml:"reservation" json:"reservation"`
+	Protocols   []string `yaml:"protocols" json:"protocols"`
+	Port        int      `yaml:"port" json:"port"`
 }
 
 type DNSConfig struct {
@@ -109,10 +126,28 @@ func boolPtr(value bool) *bool { return &value }
 
 func Enabled(pointer *bool) bool { return pointer != nil && *pointer }
 
+// ResolveReservation returns a canonical DHCP reservation without creating a copy.
+func ResolveReservation(modules Modules, name string) (Reservation, bool) {
+	if modules.DHCP == nil {
+		return Reservation{}, false
+	}
+	want := strings.ToLower(strings.TrimSpace(name))
+	for _, reservation := range modules.DHCP.Reservations {
+		if strings.ToLower(strings.TrimSpace(reservation.Name)) == want {
+			return reservation, true
+		}
+	}
+	return Reservation{}, false
+}
+
 func (m Modules) Normalize() Modules {
 	result := m
 	if result.DNS != nil {
 		copyDNS := *result.DNS
+		if result.DNS.Enabled != nil {
+			v := *result.DNS.Enabled
+			copyDNS.Enabled = &v
+		}
 		copyDNS.Upstreams = append([]DNSUpstream(nil), result.DNS.Upstreams...)
 		copyDNS.Records = append([]DNSRecord(nil), result.DNS.Records...)
 		if Enabled(copyDNS.Enabled) && len(copyDNS.Upstreams) == 0 {
@@ -122,6 +157,10 @@ func (m Modules) Normalize() Modules {
 	}
 	if result.DHCP != nil {
 		copyDHCP := *result.DHCP
+		if result.DHCP.Enabled != nil {
+			v := *result.DHCP.Enabled
+			copyDHCP.Enabled = &v
+		}
 		copyDHCP.Scopes = append([]DHCPScope(nil), result.DHCP.Scopes...)
 		copyDHCP.Reservations = append([]Reservation(nil), result.DHCP.Reservations...)
 		copyDHCP.Time.Upstreams = append([]string(nil), result.DHCP.Time.Upstreams...)
@@ -141,6 +180,19 @@ func (m Modules) Normalize() Modules {
 		}
 		result.DHCP = &copyDHCP
 	}
+	if result.VPN != nil {
+		copyVPN := *result.VPN
+		if result.VPN.Enabled != nil {
+			v := *result.VPN.Enabled
+			copyVPN.Enabled = &v
+		}
+		copyVPN.Clients = append([]string(nil), result.VPN.Clients...)
+		copyVPN.Forwards = append([]VPNForward(nil), result.VPN.Forwards...)
+		for i := range copyVPN.Forwards {
+			copyVPN.Forwards[i].Protocols = append([]string(nil), result.VPN.Forwards[i].Protocols...)
+		}
+		result.VPN = &copyVPN
+	}
 	return result
 }
 
@@ -148,16 +200,37 @@ func (m Modules) Clone() Modules {
 	result := Modules{}
 	if m.DNS != nil {
 		copyDNS := *m.DNS
+		if m.DNS.Enabled != nil {
+			v := *m.DNS.Enabled
+			copyDNS.Enabled = &v
+		}
 		copyDNS.Upstreams = append([]DNSUpstream(nil), m.DNS.Upstreams...)
 		copyDNS.Records = append([]DNSRecord(nil), m.DNS.Records...)
 		result.DNS = &copyDNS
 	}
 	if m.DHCP != nil {
 		copyDHCP := *m.DHCP
+		if m.DHCP.Enabled != nil {
+			v := *m.DHCP.Enabled
+			copyDHCP.Enabled = &v
+		}
 		copyDHCP.Scopes = append([]DHCPScope(nil), m.DHCP.Scopes...)
 		copyDHCP.Reservations = append([]Reservation(nil), m.DHCP.Reservations...)
 		copyDHCP.Time.Upstreams = append([]string(nil), m.DHCP.Time.Upstreams...)
 		result.DHCP = &copyDHCP
+	}
+	if m.VPN != nil {
+		copyVPN := *m.VPN
+		if m.VPN.Enabled != nil {
+			v := *m.VPN.Enabled
+			copyVPN.Enabled = &v
+		}
+		copyVPN.Clients = append([]string(nil), m.VPN.Clients...)
+		copyVPN.Forwards = append([]VPNForward(nil), m.VPN.Forwards...)
+		for i := range copyVPN.Forwards {
+			copyVPN.Forwards[i].Protocols = append([]string(nil), m.VPN.Forwards[i].Protocols...)
+		}
+		result.VPN = &copyVPN
 	}
 	return result
 }
@@ -177,6 +250,11 @@ func Validate(modules Modules, site model.Site) error {
 			return err
 		}
 	}
+	if normalized.VPN != nil {
+		if err := validateVPN(normalized.VPN, normalized.DHCP); err != nil {
+			return err
+		}
+	}
 	if normalized.DNS != nil && (normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
 		if err := validateSharedNames(normalized.DNS, &DHCPConfig{}, site); err != nil {
 			return err
@@ -185,6 +263,97 @@ func Validate(modules Modules, site model.Site) error {
 	if normalized.DNS != nil && normalized.DHCP != nil && Enabled(normalized.DNS.Enabled) && Enabled(normalized.DHCP.Enabled) {
 		if err := validateSharedNames(normalized.DNS, normalized.DHCP, site); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validateVPN(config *VPNConfig, dhcp *DHCPConfig) error {
+	if Enabled(config.Enabled) && strings.TrimSpace(config.Location) == "" {
+		return errors.New("modules.vpn.location is required when VPN is enabled")
+	}
+	if dhcp == nil && (len(config.Clients) > 0 || len(config.Forwards) > 0) {
+		return errors.New("VPN references require DHCP reservations")
+	}
+	reservations := map[string]Reservation{}
+	if dhcp != nil {
+		for _, r := range dhcp.Reservations {
+			reservations[strings.ToLower(strings.TrimSpace(r.Name))] = r
+		}
+	}
+	clients := map[string]struct{}{}
+	for _, ref := range config.Clients {
+		name := strings.ToLower(strings.TrimSpace(ref))
+		if name == "" {
+			return fmt.Errorf("modules.vpn client reference %q is empty", ref)
+		}
+		if _, ok := clients[name]; ok {
+			return fmt.Errorf("modules.vpn.clients contains duplicate reservation %q", ref)
+		}
+		if !model.IsDNSLabel(name) {
+			return fmt.Errorf("modules.vpn client %q is not a valid reservation name", ref)
+		}
+		if ref != name {
+			return fmt.Errorf("modules.vpn client %q is not canonical", ref)
+		}
+		r, ok := reservations[name]
+		if !ok {
+			return fmt.Errorf("modules.vpn client %q does not reference a DHCP reservation", ref)
+		}
+		zone := strings.ToUpper(r.Zone)
+		if zone != "SERVERS" && zone != "TRUSTED" && zone != "SANDBOX" {
+			return fmt.Errorf("modules.vpn client %q uses unsupported zone %q", ref, r.Zone)
+		}
+		address, err := netip.ParseAddr(r.Address)
+		if err != nil || !address.Is4() || address.String() != r.Address {
+			return fmt.Errorf("modules.vpn client %q uses a non-canonical IPv4 address", ref)
+		}
+		subnet := map[string]string{"SERVERS": "10.10.20.0/24", "TRUSTED": "10.10.30.0/24", "SANDBOX": "10.10.40.0/24"}[zone]
+		prefix, _ := netip.ParsePrefix(subnet)
+		if !prefix.Contains(address) || address.As4()[3] < 224 || address.As4()[3] > 239 {
+			return fmt.Errorf("modules.vpn client %q must be inside the %s .224-.239 range", ref, zone)
+		}
+		clients[name] = struct{}{}
+	}
+	seen := map[string]struct{}{}
+	seenNames := map[string]struct{}{}
+	for _, f := range config.Forwards {
+		name := strings.ToLower(strings.TrimSpace(f.Name))
+		reservation := strings.ToLower(strings.TrimSpace(f.Reservation))
+		if name == "" || reservation == "" {
+			return errors.New("modules.vpn forwards require name and reservation")
+		}
+		if !model.IsDNSLabel(name) {
+			return fmt.Errorf("modules.vpn forward %q has invalid name", f.Name)
+		}
+		if f.Name != name || f.Reservation != reservation {
+			return fmt.Errorf("modules.vpn forward %q has non-canonical name or reservation", f.Name)
+		}
+		if _, ok := seenNames[name]; ok {
+			return fmt.Errorf("modules.vpn contains duplicate forward name %q", f.Name)
+		}
+		seenNames[name] = struct{}{}
+		if _, ok := clients[reservation]; !ok {
+			return fmt.Errorf("modules.vpn forward %q references a non-VPN client %q", f.Name, f.Reservation)
+		}
+		if f.Port < 1 || f.Port > 65535 {
+			return fmt.Errorf("modules.vpn forward %q has invalid port %d", f.Name, f.Port)
+		}
+		if len(f.Protocols) == 0 {
+			return fmt.Errorf("modules.vpn forward %q requires at least one protocol", f.Name)
+		}
+		for _, protocol := range f.Protocols {
+			if protocol != strings.ToLower(strings.TrimSpace(protocol)) {
+				return fmt.Errorf("modules.vpn forward %q has non-canonical protocol %q", f.Name, protocol)
+			}
+			if protocol != "tcp" && protocol != "udp" {
+				return fmt.Errorf("modules.vpn forward %q has unsupported protocol %q", f.Name, protocol)
+			}
+			key := fmt.Sprintf("%s/%d", protocol, f.Port)
+			if _, ok := seen[key]; ok {
+				return fmt.Errorf("modules.vpn contains duplicate %s forward", key)
+			}
+			seen[key] = struct{}{}
 		}
 	}
 	return nil
@@ -324,6 +493,10 @@ func validateDHCP(config *DHCPConfig, site model.Site) error {
 		if !model.IsDNSLabel(name) {
 			return fmt.Errorf("DHCP reservation name %q is not a valid DNS label", reservation.Name)
 		}
+		if _, ok := seenNames[name]; ok {
+			return fmt.Errorf("duplicate DHCP reservation name %q", name)
+		}
+		seenNames[name] = struct{}{}
 		zone, ok := zones[strings.ToUpper(reservation.Zone)]
 		if !ok {
 			return fmt.Errorf("DHCP reservation %s uses unknown zone %q", name, reservation.Zone)
@@ -338,9 +511,6 @@ func validateDHCP(config *DHCPConfig, site model.Site) error {
 		mac, err := canonicalMAC(reservation.MAC)
 		if err != nil {
 			return fmt.Errorf("DHCP reservation %s: %w", name, err)
-		}
-		if _, exists := seenNames[name]; exists {
-			return fmt.Errorf("duplicate DHCP reservation name %q", name)
 		}
 		if _, exists := seenMACs[mac]; exists {
 			return fmt.Errorf("duplicate DHCP reservation MAC %s", mac)

@@ -21,13 +21,13 @@ const (
 	OpenWrtImageBuilderURL   = "https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-imagebuilder-25.12.5-x86-64.Linux-x86_64.tar.zst"
 	OpenWrtImageProfile      = "generic"
 	OpenWrtImageArchitecture = "x86/64"
-	OpenWrtImageContract     = "v7"
+	OpenWrtImageContract     = "v8"
 	ProviderTLSName          = "boetticher-firewall"
 )
 
 var OpenWrtPackages = []string{
 	"uhttpd", "uhttpd-mod-ubus", "rpcd", "rpcd-mod-file", "rpcd-mod-iwinfo",
-	"px5g-mbedtls", "ca-bundle", "firewall4", "nftables", "dnsmasq", "stubby", "qemu-ga",
+	"px5g-mbedtls", "ca-bundle", "firewall4", "nftables", "dnsmasq", "stubby", "qemu-ga", "wireguard-tools", "kmod-wireguard", "ip-full", "flock",
 }
 
 type Image struct {

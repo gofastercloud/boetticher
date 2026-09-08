@@ -242,7 +242,11 @@ func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, cur
 		if err := firewallmodule.ValidateServicePackage(item.packageName, observed, item.desired); err != nil {
 			return 0, err
 		}
-		changes += len(firewallmodule.DiffOwned(observed, item.desired))
+		itemChanges, diffErr := firewallmodule.DiffOwned(observed, item.desired)
+		if diffErr != nil {
+			return 0, diffErr
+		}
+		changes += len(itemChanges)
 	}
 	firewallDesired, err := firewallmodule.DesiredFromSiteWithServices(current, modules)
 	if err != nil {
@@ -252,7 +256,11 @@ func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, cur
 	if err != nil {
 		return 0, err
 	}
-	return changes + len(firewallmodule.DiffOwned(observed, firewallDesired.Firewall)), nil
+	itemChanges, diffErr := firewallmodule.DiffOwned(observed, firewallDesired.Firewall)
+	if diffErr != nil {
+		return 0, diffErr
+	}
+	return changes + len(itemChanges), nil
 }
 
 func verifyClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState, capability string) error {
@@ -271,7 +279,11 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 		if err := firewallmodule.ValidateServicePackage(item.packageName, observed, item.desired); err != nil {
 			return err
 		}
-		if changes := firewallmodule.DiffOwned(observed, item.desired); len(changes) > 0 {
+		changes, diffErr := firewallmodule.DiffOwned(observed, item.desired)
+		if diffErr != nil {
+			return diffErr
+		}
+		if len(changes) > 0 {
 			return fmt.Errorf("provider %s configuration is not at the desired state", item.packageName)
 		}
 	}
@@ -315,7 +327,11 @@ func verifyDisabledClientServices(ctx context.Context, provider *openwrt.Client,
 		if err := firewallmodule.ValidateServicePackage(item.packageName, observed, item.desired); err != nil {
 			return err
 		}
-		if changes := firewallmodule.DiffOwned(observed, item.desired); len(changes) > 0 {
+		changes, diffErr := firewallmodule.DiffOwned(observed, item.desired)
+		if diffErr != nil {
+			return diffErr
+		}
+		if len(changes) > 0 {
 			return fmt.Errorf("provider %s disabled-state configuration is incomplete", item.packageName)
 		}
 	}
@@ -398,7 +414,10 @@ func runClientServicePlan(ctx context.Context, capability string, serviceContext
 		if err != nil {
 			return err
 		}
-		packageChanges := firewallmodule.DiffOwned(current, item.sections)
+		packageChanges, diffErr := firewallmodule.DiffOwned(current, item.sections)
+		if diffErr != nil {
+			return diffErr
+		}
 		changes += len(packageChanges)
 		for _, change := range packageChanges {
 			fmt.Fprintf(out, "  %s %s.%s\n", change.Kind, item.packageName, change.Section.Name)

@@ -1,6 +1,7 @@
 package clientservices
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -84,5 +85,77 @@ func TestValidateRejectsDanglingAndCyclicAliases(t *testing.T) {
 		if err := Validate(modules, testSite()); err == nil {
 			t.Fatalf("invalid alias graph was accepted: %#v", records)
 		}
+	}
+}
+
+func TestVPNRetainedReferencesAndCloneIsolation(t *testing.T) {
+	b := true
+	m := Modules{DHCP: &DHCPConfig{Reservations: []Reservation{{Name: "peer", Zone: "TRUSTED", MAC: "02:00:00:00:30:61", Address: "10.10.30.225"}}}, VPN: &VPNConfig{Enabled: &b, Location: "europe", Clients: []string{"peer"}, Forwards: []VPNForward{{Name: "web", Reservation: "peer", Protocols: []string{"tcp"}, Port: 443}}}}
+	c := m.Clone()
+	*c.VPN.Enabled = false
+	c.VPN.Clients[0] = "gone"
+	if *m.VPN.Enabled == false || m.VPN.Clients[0] != "peer" {
+		t.Fatal("clone aliases VPN state")
+	}
+	c.VPN.Clients[0] = "gone"
+	if err := Validate(c, testSite()); err == nil {
+		t.Fatal("retained dangling VPN reference accepted")
+	}
+}
+
+func TestVPNAllowsEnabledLocationWithNoClients(t *testing.T) {
+	b := true
+	if err := Validate(Modules{VPN: &VPNConfig{Enabled: &b, Location: "europe"}}, testSite()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVPNClientProtectedRangeBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		last     byte
+		accepted bool
+	}{
+		{224, true}, {225, true}, {239, true}, {223, false}, {240, false}, {250, false}, {100, false},
+	} {
+		b := true
+		m := Modules{DHCP: &DHCPConfig{Reservations: []Reservation{{Name: "peer", Zone: "TRUSTED", MAC: "02:00:00:00:30:61", Address: fmt.Sprintf("10.10.30.%d", tc.last)}}}, VPN: &VPNConfig{Enabled: &b, Location: "europe", Clients: []string{"peer"}}}
+		if err := Validate(m, testSite()); (err == nil) != tc.accepted {
+			t.Errorf("address .%d validation error=%v, want accepted=%v", tc.last, err, tc.accepted)
+		}
+	}
+}
+
+func TestVPNForwardValidationAndRetainedReferences(t *testing.T) {
+	b := false
+	base := func() Modules {
+		return Modules{DHCP: &DHCPConfig{Reservations: []Reservation{{Name: "peer", Zone: "TRUSTED", MAC: "02:00:00:00:30:61", Address: "10.10.30.225"}}}, VPN: &VPNConfig{Enabled: &b, Clients: []string{"peer"}, Forwards: []VPNForward{{Name: "web", Reservation: "peer", Protocols: []string{"tcp", "udp"}, Port: 443}}}}
+	}
+	if err := Validate(base(), testSite()); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*Modules){
+		func(m *Modules) { m.DHCP.Reservations = nil },
+		func(m *Modules) { m.VPN.Forwards[0].Name = "bad name" },
+		func(m *Modules) { m.VPN.Forwards[0].Protocols = []string{"tcp", "tcp"} },
+		func(m *Modules) { m.VPN.Forwards[0].Port = 0 },
+		func(m *Modules) { m.VPN.Forwards[0].Reservation = "missing" },
+	} {
+		m := base()
+		mutate(&m)
+		if err := Validate(m, testSite()); err == nil {
+			t.Fatal("invalid retained VPN intent accepted")
+		}
+	}
+}
+
+func TestVPNNormalizeDeepCopiesNestedState(t *testing.T) {
+	b := true
+	m := Modules{VPN: &VPNConfig{Enabled: &b, Clients: []string{"peer"}, Forwards: []VPNForward{{Protocols: []string{"tcp"}}}}}
+	n := m.Normalize()
+	*n.VPN.Enabled = false
+	n.VPN.Clients[0] = "other"
+	n.VPN.Forwards[0].Protocols[0] = "udp"
+	if !*m.VPN.Enabled || m.VPN.Clients[0] != "peer" || m.VPN.Forwards[0].Protocols[0] != "tcp" {
+		t.Fatal("Normalize aliases VPN state")
 	}
 }

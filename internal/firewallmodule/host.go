@@ -16,6 +16,36 @@ import (
 
 const hostImagePath = "/var/tmp/boetticher-firewall-280.img"
 
+const firewallSafetyStatusMarker = "BOETTICHER_SAFETY_OK"
+
+// FirewallSafetyStatusViaHost executes the appliance's read-only safety gate
+// through the Host guest agent. The command is fixed to the owned provider VM
+// and succeeds only when the complete marker is returned with exitcode zero.
+func FirewallSafetyStatusViaHost(ctx context.Context, host HostClient) (bool, error) {
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /sbin/fw4 safety-status")
+	if err != nil {
+		return false, fmt.Errorf("read provider firewall safety status through Host guest agent: %w", err)
+	}
+	return parseFirewallSafetyStatus(result.Stdout)
+}
+
+func parseFirewallSafetyStatus(data []byte) (bool, error) {
+	var output struct {
+		ExitCode *int   `json:"exitcode"`
+		Data     string `json:"out-data"`
+	}
+	if err := json.Unmarshal(data, &output); err != nil || output.ExitCode == nil {
+		return false, errors.New("provider guest agent returned malformed firewall safety status")
+	}
+	if *output.ExitCode != 0 {
+		return false, nil
+	}
+	if strings.TrimSpace(output.Data) != firewallSafetyStatusMarker {
+		return false, errors.New("provider firewall safety status omitted success marker")
+	}
+	return true, nil
+}
+
 // ClientServicesImageReady verifies that the running appliance was created by
 // the current client-services image contract. It is a read-only guest-agent
 // check used before DNS/DHCP mutation so an older cached appliance cannot

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
@@ -25,7 +26,7 @@ type Mutation struct {
 // DiffOwned computes the minimal mutations for one UCI package. Only named
 // boetticher sections are considered; unrelated provider-native sections are
 // deliberately absent from the result.
-func DiffOwned(current map[string]openwrt.UCISection, desired []Section) []Mutation {
+func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Mutation, error) {
 	wanted := make(map[string]Section, len(desired))
 	for _, section := range desired {
 		wanted[section.Name] = section
@@ -38,23 +39,113 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) []Mutat
 			mutations = append(mutations, Mutation{Kind: MutationCreate, Section: section})
 			continue
 		}
+		if observed.Type != section.Type {
+			return nil, fmt.Errorf("provider section %s has conflicting type %q, expected %q", name, observed.Type, section.Type)
+		}
+		if !compatibleIdentity(name, observed, section) {
+			return nil, fmt.Errorf("provider section %s has conflicting managed identity", name)
+		}
 		if !sameSection(observed, section) {
 			mutations = append(mutations, Mutation{Kind: MutationUpdate, Section: section})
 		}
 	}
 	stale := make([]string, 0)
 	for name := range current {
-		if len(name) >= len("boetticher_") && name[:len("boetticher_")] == "boetticher_" {
-			if _, exists := wanted[name]; !exists {
-				stale = append(stale, name)
-			}
+		if _, exists := wanted[name]; !exists && managedStaleSection(name, current[name]) {
+			stale = append(stale, name)
 		}
 	}
 	sort.Strings(stale)
 	for _, name := range stale {
 		mutations = append(mutations, Mutation{Kind: MutationDelete, Section: Section{Name: name}})
 	}
-	return mutations
+	return mutations, nil
+}
+
+func managedStaleSection(name string, section openwrt.UCISection) bool {
+	if section.Type == "host" {
+		return nativeHostSectionName(section.Options["name"]) == name && section.Options["name"] != ""
+	}
+	if section.Type == "dhcp" && strings.HasPrefix(name, "boetticher_dhcp_") {
+		for _, zone := range []string{"transit", "infrastructure", "servers", "trusted", "sandbox", "management", "mgmt"} {
+			if name == "boetticher_dhcp_"+zone {
+				return true
+			}
+		}
+	}
+	if section.Type == "resolver" && strings.HasPrefix(name, "boetticher_resolver_") {
+		return nativeResolverSectionName(section.Options["address"]) == name && section.Options["address"] != ""
+	}
+	if section.Type == "hostrecord" && strings.HasPrefix(name, "boetticher_record_") {
+		return nativeRecordSectionName(section.Options["name"]) == name && section.Options["name"] != ""
+	}
+	if section.Type == "cname" && strings.HasPrefix(name, "boetticher_cname_") {
+		return "boetticher_cname_"+nativeRecordSuffix(strings.TrimSuffix(section.Options["cname"], ".")) == name && section.Options["cname"] != ""
+	}
+	if section.Type == "rule" {
+		return managedRuleIdentity(name, section.Options)
+	}
+	if section.Type == "forwarding" && strings.HasPrefix(name, "boetticher_forward_") {
+		pairs := map[string][2]string{"boetticher_forward_trusted_servers": {"trusted", "servers"}}
+		for _, zone := range []string{"transit", "infra", "servers", "trusted", "sandbox", "mgmt"} {
+			pairs["boetticher_forward_"+zone+"_home_wan"] = [2]string{zone, "home_wan"}
+		}
+		if pair, ok := pairs[name]; ok {
+			return section.Options["src"] == pair[0] && section.Options["dest"] == pair[1] && section.Options["family"] == "ipv4"
+		}
+	}
+	return false
+}
+
+func managedRuleIdentity(name string, options map[string]string) bool {
+	zones := map[string]string{"transit": "TRANSIT", "infra": "INFRA", "servers": "SERVERS", "trusted": "TRUSTED", "sandbox": "SANDBOX", "mgmt": "MGMT"}
+	for zone, label := range zones {
+		checks := map[string][3]string{
+			"boetticher_allow_" + zone + "_ping":         {"Boetticher " + label + " gateway ping", zone, "icmp"},
+			"boetticher_allow_" + zone + "_dhcp":         {"Boetticher " + label + " DHCP", zone, "udp"},
+			"boetticher_deny_" + zone + "_external_dhcp": {"Boetticher " + label + " deny external DHCP", zone, "udp"},
+			"boetticher_allow_" + zone + "_ntp":          {"Boetticher " + label + " NTP", zone, "udp"},
+			"boetticher_deny_" + zone + "_external_ntp":  {"Boetticher " + label + " deny external NTP", zone, "udp"},
+		}
+		for _, protocol := range []string{"tcp", "udp"} {
+			checks["boetticher_allow_"+zone+"_dns_"+protocol] = [3]string{"Boetticher " + label + " DNS " + protocol, zone, protocol}
+		}
+		for _, item := range []struct{ suffix, proto, port string }{{"dns_udp", "udp", "53"}, {"dns_tcp", "tcp", "53"}, {"dot_tcp", "tcp", "853"}} {
+			checks["boetticher_deny_"+zone+"_external_"+item.suffix] = [3]string{"Boetticher " + label + " deny external " + item.suffix, zone, item.proto}
+		}
+		if expected, ok := checks[name]; ok {
+			return options["name"] == expected[0] && options["src"] == expected[1] && options["proto"] == expected[2] && options["family"] == "ipv4"
+		}
+	}
+	return name == "boetticher_allow_home_api" && options["name"] == "Boetticher Controller management API" && options["src"] == "home_wan" && options["proto"] == "tcp" && options["family"] == "ipv4"
+}
+
+func compatibleIdentity(name string, observed openwrt.UCISection, desired Section) bool {
+	if observed.Type == "host" {
+		return observed.Options["name"] == desired.Options["name"]
+	}
+	if observed.Type == "hostrecord" || observed.Type == "cname" || observed.Type == "resolver" {
+		key := "name"
+		if observed.Type == "cname" {
+			key = "cname"
+		}
+		return observed.Options[key] == desired.Options[key]
+	}
+	if observed.Type == "rule" || observed.Type == "forwarding" {
+		if !managedStaleSection(name, observed) {
+			return true
+		}
+		return managedStaleSection(name, observed)
+	}
+	return true
+}
+
+func nativeResolverSectionName(address string) string {
+	return "boetticher_resolver_" + strings.ReplaceAll(address, ".", "_")
+}
+
+func nativeRecordSectionName(name string) string {
+	return "boetticher_record_" + nativeRecordSuffix(strings.TrimSuffix(name, "."))
 }
 
 func sameSection(observed openwrt.UCISection, desired Section) bool {
@@ -93,7 +184,29 @@ func ReconcileOwned(ctx context.Context, client uciWriter, packageName string, c
 	if client == nil {
 		return 0, errors.New("provider UCI client is required")
 	}
-	mutations := DiffOwned(current, desired)
+	_, err := DiffOwned(current, desired)
+	if err != nil {
+		return 0, err
+	}
+	changed, err := StageOwned(ctx, client, packageName, current, desired)
+	if err != nil || changed == 0 {
+		return changed, err
+	}
+	if err := client.UCIApply(ctx, 30); err != nil {
+		return 0, err
+	}
+	return changed, nil
+}
+
+// StageOwned writes UCI changes without activation.
+func StageOwned(ctx context.Context, client uciWriter, packageName string, current map[string]openwrt.UCISection, desired []Section) (int, error) {
+	if client == nil {
+		return 0, errors.New("provider UCI client is required")
+	}
+	mutations, err := DiffOwned(current, desired)
+	if err != nil {
+		return 0, err
+	}
 	for _, mutation := range mutations {
 		section := mutation.Section
 		switch mutation.Kind {
@@ -120,12 +233,6 @@ func ReconcileOwned(ctx context.Context, client uciWriter, packageName string, c
 		default:
 			return 0, fmt.Errorf("unsupported provider mutation %q", mutation.Kind)
 		}
-	}
-	if len(mutations) == 0 {
-		return 0, nil
-	}
-	if err := client.UCIApply(ctx, 30); err != nil {
-		return 0, err
 	}
 	return len(mutations), nil
 }
