@@ -29,6 +29,7 @@ boetticher module firewall plan|apply|status|reboot|test|teardown [flags]
 boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [flags]
 boetticher module dhcp plan|apply|status|teardown|test|add-reservation|remove-reservation|list-reservations|list-leases [flags]
 boetticher module vpn plan|apply|status|teardown|add-client|remove-client [flags]
+boetticher module tailnet plan|apply|status|test|teardown [flags]
 ```
 
 ## Advanced command menu

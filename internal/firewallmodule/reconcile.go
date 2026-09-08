@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/openwrt"
+	"github.com/gofastercloud/boetticher/internal/tailnet"
 )
 
 type MutationKind string
@@ -63,6 +64,9 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 }
 
 func managedStaleSection(name string, section openwrt.UCISection) bool {
+	if managedVPNFirewallSection(name, section) {
+		return true
+	}
 	if name == "airvpn" && section.Type == "interface" {
 		return true
 	}
@@ -107,6 +111,20 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 }
 
 func managedRuleIdentity(name string, options map[string]string) bool {
+	if strings.HasPrefix(name, "boetticher_tailnet_") {
+		id := strings.TrimPrefix(name, "boetticher_tailnet_")
+		expectedName, ok := map[string]string{
+			"deny_home":      "Boetticher Tailnet deny_home",
+			"deny_nonpublic": "Boetticher Tailnet deny_nonpublic",
+			"transport_tcp":  "Boetticher Tailnet transport_tcp",
+			"transport_udp":  "Boetticher Tailnet transport_udp",
+			"dns":            "Boetticher Tailnet dns",
+			"ntp":            "Boetticher Tailnet ntp",
+			"trusted":        "Boetticher Tailnet trusted",
+			"servers":        "Boetticher Tailnet servers",
+		}[id]
+		return ok && options["name"] == expectedName && options["src"] == "transit" && options["src_ip"] == tailnet.GuestAddress+"/32" && options["src_mac"] == tailnet.GuestMAC && options["family"] == "ipv4"
+	}
 	zones := map[string]string{"transit": "TRANSIT", "infra": "INFRA", "servers": "SERVERS", "trusted": "TRUSTED", "sandbox": "SANDBOX", "mgmt": "MGMT"}
 	for zone, label := range zones {
 		checks := map[string][3]string{
@@ -146,6 +164,9 @@ func compatibleIdentity(name string, observed openwrt.UCISection, desired Sectio
 		return observed.Options[key] == desired.Options[key]
 	}
 	if observed.Type == "rule" || observed.Type == "forwarding" {
+		if observed.Type == "rule" && strings.HasPrefix(name, "boetticher_tailnet_") {
+			return managedRuleIdentity(name, observed.Options)
+		}
 		if !managedStaleSection(name, observed) {
 			return true
 		}
@@ -204,6 +225,9 @@ type uciWriter interface {
 // ReconcileOwned applies one package's named sections and returns the number
 // of semantic changes. It does not touch any unowned section.
 func ReconcileOwned(ctx context.Context, client uciWriter, packageName string, current map[string]openwrt.UCISection, desired []Section) (int, error) {
+	if packageName == "firewall" {
+		current = FirewallScope(current, desired)
+	}
 	if client == nil {
 		return 0, errors.New("provider UCI client is required")
 	}
@@ -225,6 +249,9 @@ func ReconcileOwned(ctx context.Context, client uciWriter, packageName string, c
 func StageOwned(ctx context.Context, client uciWriter, packageName string, current map[string]openwrt.UCISection, desired []Section) (int, error) {
 	if client == nil {
 		return 0, errors.New("provider UCI client is required")
+	}
+	if packageName == "firewall" {
+		current = FirewallScope(current, desired)
 	}
 	mutations, err := DiffOwned(current, desired)
 	if err != nil {

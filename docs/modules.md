@@ -28,6 +28,8 @@ boetticher module dhcp status
 boetticher module dhcp add-reservation
 boetticher module dns status
 boetticher module dns add-record
+boetticher module tailnet status
+boetticher module tailnet apply --auth-key-file /secure/path/key --yes
 boetticher module vpn status
 boetticher module monitoring status
 boetticher module statuspage add-check
@@ -37,6 +39,26 @@ boetticher module printer status
 DHCP-derived DNS and client-facing NTP are supporting behaviour of the peer
 `dhcp` and `dns` capabilities, not standalone capabilities. VPN remains a
 future capability.
+
+## Phase 4D Tailnet capability
+
+`module tailnet` owns the single fixed subnet-router guest `lab-tailnet-01`
+(VMID 200) and its exact TRANSIT reservation (`10.10.5.10`, MAC
+`02:00:00:00:05:10`). Apply requires enabled DNS and DHCP, the exact Host
+substrate, and the pinned Host-native image builder. An auth key is read only
+after approval from the private regular file supplied with `--auth-key-file`;
+it is streamed to the guest and never saved in intent or logs. Repeating apply
+after native runtime, provider, and intent agreement is a no-op.
+
+The guest advertises `10.10.0.0/16` with SNAT enabled, disables exit-node,
+accept-routes, accept-DNS, and SSH, and applies a fail-closed nftables policy.
+Native status verifies TUN, backend state, exact preferences, route approval,
+package version, persistent assets, and the loaded policy. Tailnet status is
+local runtime evidence; remote peer reachability, split-DNS grants, packet
+journeys, and physical isolation require separate acceptance. Key expiry or
+machine approval attention is recoverable by rerunning apply with a current
+operator-approved key. Phase 4D remains a rebase point for 4E integration and
+recovery; it is not a qualified full-lab rollout.
 
 ## Phase 4A firewall capability
 
@@ -90,7 +112,7 @@ and does not claim PASS.
 Phase 4B adds `module dns` and `module dhcp` as peer capabilities sharing this
 appliance. DHCP-derived DNS and client-facing NTP are supporting behaviour,
 not standalone modules. The status monitor consumes their bounded native
-status facts in the existing `DHCP/NTP` and `DNS` slots; unconfigured is off,
+status facts in the existing `DHCP/NTP` and `Tailnet` slots; unconfigured is off,
 configured-but-unavailable is failed, and no status database or scheduler is
 introduced.
 

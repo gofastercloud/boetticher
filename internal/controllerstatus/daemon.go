@@ -274,7 +274,7 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 		case "modules":
 			d.snapshot.Firewall = debouncedModuleComponent(d.firewall, result.modules.Firewall)
 			d.snapshot.DHCPNTP = moduleComponent(result.modules.DHCPNTP)
-			d.snapshot.DNS = moduleComponent(result.modules.DNS)
+			d.snapshot.Tailnet = moduleComponent(result.modules.Tailnet)
 		}
 	}
 	if !runConnectivity {
@@ -580,7 +580,7 @@ func (d *Daemon) logTransitions() {
 		{"HOST", d.previous.Host.State, d.snapshot.Host.State},
 		{"FW", d.previous.Firewall.State, d.snapshot.Firewall.State},
 		{"DHCP/NTP", d.previous.DHCPNTP.State, d.snapshot.DHCPNTP.State},
-		{"DNS", d.previous.DNS.State, d.snapshot.DNS.State},
+		{"Tailnet", d.previous.Tailnet.State, d.snapshot.Tailnet.State},
 		{"NET", d.previous.Internet.State, d.snapshot.Internet.State},
 		{"CTRL-UPDATES", d.previous.ControllerUpdates.State, d.snapshot.ControllerUpdates.State},
 		{"HOST-UPDATES", d.previous.HostUpdates.State, d.snapshot.HostUpdates.State},

@@ -29,7 +29,7 @@ func TestRendererMapsFixedStatesToColours(t *testing.T) {
 	snapshot.Host = Component{State: Failed}
 	snapshot.Firewall = Component{State: Off}
 	snapshot.DHCPNTP = Component{State: Checking}
-	snapshot.DNS = Component{State: Attention}
+	snapshot.Tailnet = Component{State: Attention}
 	snapshot.Internet.Component = Component{State: Healthy}
 	snapshot.ControllerUpdates = Component{State: Attention}
 	snapshot.HostUpdates = Component{State: Checking}
@@ -50,7 +50,7 @@ func TestRendererMapsFixedStatesToColours(t *testing.T) {
 		t.Fatalf("checking DHCP/NTP pixel = %#v", frame[3])
 	}
 	if frame[4].R == 0 || frame[4].G == 0 || frame[4].B != 0 {
-		t.Fatalf("attention DNS pixel = %#v", frame[4])
+		t.Fatalf("attention Tailnet pixel = %#v", frame[4])
 	}
 	if frame[5].G == 0 || frame[5].B != 35 {
 		t.Fatalf("healthy Internet pixel = %#v", frame[5])
@@ -128,7 +128,7 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 	snapshot.HostUpdates = Component{State: Attention, Detail: "Proxmox Host updates available"}
 	snapshot.Firewall = Component{State: Healthy, Detail: "firewall provider is running"}
 	snapshot.DHCPNTP = Component{State: Failed, Detail: "DHCP/NTP capability is unavailable"}
-	snapshot.DNS = Component{State: Failed, Detail: "DNS capability is unavailable"}
+	snapshot.Tailnet = Component{State: Failed, Detail: "Tailnet capability is unavailable"}
 	telemetry := ProxmoxSnapshot{
 		Host:      ProxmoxHostStats{Node: "lab-proxmox-01", Version: "pve-manager/9.2.2", CPUPercent: 18, MemoryUsed: 4 << 30, MemoryTotal: 8 << 30, Uptime: 25 * time.Hour},
 		Storage:   []StorageStats{{Name: "boetticher-data", Used: 45 << 30, Total: 100 << 30, Percent: 45}},
@@ -136,7 +136,7 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 		FetchedAt: time.Now(),
 	}
 	home := renderer.Render(snapshot, telemetry, nil, StreamDeckHome, 0, -1)
-	for index, want := range []string{"PVE", "CPU", "RAM", "DATA", "NET", "CT201", "", "", "", "", "FW", "VPN", "DNS", "SCROLL", "REFRESH"} {
+	for index, want := range []string{"PVE", "CPU", "RAM", "DATA", "NET", "CT201", "", "", "", "", "FW", "VPN", "TAILNET", "SCROLL", "REFRESH"} {
 		if home[index].Title != want {
 			t.Fatalf("home key %d title = %q, want %q", index, home[index].Title, want)
 		}
@@ -145,7 +145,7 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 		t.Fatalf("home status keys = %#v %#v %#v %#v %#v %#v", home[0], home[3], home[4], home[5], home[10], home[12])
 	}
 	host := renderer.Render(snapshot, telemetry, nil, StreamDeckHostDetail, 0, -1)
-	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].State != Failed || host[13].Title != "BACK" {
+	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].Title != "TAILNET" || host[10].State != Failed || host[13].Title != "BACK" {
 		t.Fatalf("host detail keys = %#v", host)
 	}
 	guest := renderer.Render(snapshot, telemetry, nil, StreamDeckGuestDetail, 0, 0)
@@ -243,7 +243,7 @@ func TestDaemonDisablesFailedDriverWithoutReturningHardwareError(t *testing.T) {
 
 func TestNewSnapshotLeavesUnconfiguredCapabilitiesOff(t *testing.T) {
 	snapshot := NewSnapshot(false)
-	for _, component := range []Component{snapshot.Firewall, snapshot.DNS, snapshot.DHCPNTP, snapshot.Host} {
+	for _, component := range []Component{snapshot.Firewall, snapshot.Tailnet, snapshot.DHCPNTP, snapshot.Host} {
 		if component.State != Off {
 			t.Fatalf("unconfigured component = %#v, want off", component)
 		}

@@ -6,10 +6,42 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"gopkg.in/yaml.v3"
 )
 
 func testSite() model.Site {
 	return model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+}
+
+func TestModulesRoundTripPreservesTailnetAndVPNIntent(t *testing.T) {
+	enabled := true
+	modules := Modules{
+		Tailnet: &TailnetConfig{Enabled: true},
+		DNS:     &DNSConfig{Enabled: &enabled},
+		DHCP:    &DHCPConfig{Enabled: &enabled, Reservations: []Reservation{{Name: "peer", Zone: "TRUSTED", MAC: "02:00:00:00:30:61", Address: "10.10.30.225"}}},
+		VPN:     &VPNConfig{Enabled: &enabled, Location: "europe", Clients: []string{"peer"}, Forwards: []VPNForward{{Name: "web", Reservation: "peer", Protocols: []string{"tcp"}, Port: 443}}},
+	}
+	data, err := yaml.Marshal(modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Modules
+	if err := yaml.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Tailnet == nil || !roundTrip.Tailnet.Enabled || roundTrip.VPN == nil || roundTrip.VPN.Location != "europe" || len(roundTrip.VPN.Forwards) != 1 || roundTrip.VPN.Forwards[0].Reservation != "peer" {
+		t.Fatalf("round-trip lost module intent: %#v", roundTrip)
+	}
+	if err := Validate(roundTrip, testSite()); err != nil {
+		t.Fatal(err)
+	}
+	clone := roundTrip.Clone()
+	clone.Tailnet.Enabled = false
+	clone.VPN.Clients[0] = "changed"
+	clone.VPN.Forwards[0].Protocols[0] = "udp"
+	if !roundTrip.Tailnet.Enabled || roundTrip.VPN.Clients[0] != "peer" || roundTrip.VPN.Forwards[0].Protocols[0] != "tcp" {
+		t.Fatal("Clone aliases Tailnet or VPN intent")
+	}
 }
 
 func TestNormalizeMaterializesReferenceDefaultsOnlyInMemory(t *testing.T) {

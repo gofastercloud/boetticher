@@ -25,8 +25,9 @@ const (
 )
 
 type Component struct {
-	State  State
-	Detail string
+	State      State
+	Detail     string
+	ObservedAt time.Time
 }
 
 type InternetStatus struct {
@@ -41,7 +42,7 @@ type StatusSnapshot struct {
 	Controller        Component
 	Host              Component
 	Firewall          Component
-	DNS               Component
+	Tailnet           Component
 	DHCPNTP           Component
 	Internet          InternetStatus
 	HostUpdates       Component
@@ -57,7 +58,7 @@ func NewSnapshot(hostConfigured bool) StatusSnapshot {
 		Controller:        Component{State: Checking, Detail: "Establishing Controller state"},
 		Host:              host,
 		Firewall:          Component{State: Off, Detail: "Firewall capability not configured"},
-		DNS:               Component{State: Off, Detail: "DNS capability not configured"},
+		Tailnet:           Component{State: Off, Detail: "Tailnet capability not configured"},
 		DHCPNTP:           Component{State: Off, Detail: "DHCP/NTP capabilities not configured"},
 		Internet:          InternetStatus{Component: Component{State: Checking, Detail: "Checking Internet connectivity"}},
 		HostUpdates:       Component{State: Checking, Detail: "Checking Host update state"},

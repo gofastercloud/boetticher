@@ -168,7 +168,7 @@ func firewallPlanChanges(ctx context.Context, current model.Site, desired firewa
 	if err != nil {
 		return nil, err
 	}
-	firewallChanges, err := firewallmodule.DiffOwned(firewallCurrent, desired.Firewall)
+	firewallChanges, err := firewallmodule.DiffFirewall(firewallCurrent, desired.Firewall)
 	if err != nil {
 		return nil, err
 	}

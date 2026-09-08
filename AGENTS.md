@@ -28,6 +28,10 @@ verification requirements remain controlling.
   state or gates change. Use one independent review for consequential changes;
   repeat checks only for changed code, a failure, an unresolved concern, or
   required fresh evidence.
+- Settle the bounded end-to-end scope and interfaces first, then keep one
+  integrator through acceptance. A scaffold, helper, or compile milestone is
+  not a working public journey; after an inadequate pass, raise effort or
+  refresh the handoff instead of redispatching the same brief.
 - Search narrowly, read relevant lines, and keep tool results compact; do not
   retain or emit transcripts. Avoid frequent polling, timers, unchanged status,
   and administrative busywork.
@@ -36,6 +40,8 @@ verification requirements remain controlling.
   error; do not silently orphan live work. Keep required receipts on disk and
   provide one compact checkpoint; do not create unsolicited evidence bundles or
   status documents.
+- Preserve command exit codes and resumable session IDs when a tool yields;
+  empty output is not completion, especially for live deployment commands.
 - At meaningful boundaries, check for oversized briefs, duplicate investigation
   or tests, idle wakes, and rework. Record corrective actions only when found.
 - Report usage separately as cached input, uncached input, and output. Do not
@@ -82,7 +88,25 @@ verification requirements remain controlling.
   follow the skill-creator guidance, and keep new skills concise and grounded in
   demonstrated needs. Skill creation does not expand authority for the actions
   those skills perform.
-
+- Send one-sentence updates and a short final with full receipts on disk when
+  needed. Use one compact checkpoint; do not create status-document clutter.
+- At meaningful boundaries, check for oversized assignments, duplicate work,
+  repeated tests, idle wakes, and rework; record only corrective actions.
+  Distinguish cached from uncached input and output tokens; totals are not
+  charges, and do not claim fixed savings.
+- The coordinator owns scope, priorities, integration, and final verification.
+  Git-related work, including read-only inspection, belongs to one
+  `gpt-5.6-luna` Git owner; keep one owner for live systems and Git delivery.
+  Delegation grants no new authority. Preserve existing authorization limits,
+  concurrent changes, and no-reset constraint. Review delegate changes and
+  return changed paths, checks, findings, and blockers. Use focused reusable
+  skills when needed under their standing authorization; skills do not expand
+  action authority. If a requested model is unavailable, disclose the fallback.
+- Never restore files to HEAD to undo an agent mistake: revert only your own
+  exact edit, preserve concurrent work, and report uncertain overlap.
+- Creating focused reusable skills is authorized when demonstrated repository
+  needs justify it. Reuse existing skills first and follow skill-creator guidance;
+  this grants no authority for the actions those skills describe.
 ## Scope and authority
 
 - Inspect root, branch, status, worktrees, and applicable instructions before
@@ -127,8 +151,9 @@ verification requirements remain controlling.
   Use --plan, not another --dry-run spelling; preserve exact disk/adoption approvals.
 - Keep hardware/addresses in reference bindings. Pass Host configuration
   explicitly; no premature multi-Host selectors, placement, or provider registry.
-  Roadmap: 4A firewall, 4B client services, 4C VPN, 4D integration/recovery,
-  Phase 5 additional capabilities. Future plans do not authorize implementation.
+  Roadmap: 4A firewall, 4B client services, 4C VPN dependency, 4D Tailnet,
+  4E integration/recovery, Phase 5 additional capabilities. Future plans do
+  not authorize implementation.
 
 ## Intent and shared ownership
 
@@ -142,6 +167,11 @@ verification requirements remain controlling.
   reconcile, verify. Plan/apply share pure preparation. Defaults initialize only
   approved changes. No-op requires desired, provider, and runtime agreement.
   Identical adds must not conceal pending application failure.
+- Compose the complete desired state for plan, apply, and no-op, including
+  enabled peers and VPN material. Separate healthy existing prerequisites from
+  owned pending deltas; verify provider drift and native runtime state, not only
+  guest health. Reviewed diffs and staged mutations must use the same explicit
+  ownership scope, and teardown must retain peer and foreign objects.
 - Saved intent survives failed application: report the partial result and normal
   apply recovery. No rollback journal or duplicate configuration/lease database.
 - Coordinate shared dnsmasq settings, time, and capability firewall rules through
@@ -182,6 +212,15 @@ verification requirements remain controlling.
   test there, backport it to source, and perform one coherent final package and
   deploy after fixes settle. Never leave source and runtime divergent or weaken
   safety, SSH, TLS, integrity, or ownership checks.
+- Namespace, sysctl, and readiness commands can return zero while the operation
+  failed; read back the actual value and preserve the first failing boundary.
+  Establish packet positive controls before counting denials. Prefer isolated,
+  least-privilege profiles with explicit container-scoped sysctls and veth peers
+  over SYS_ADMIN or disabled security profiles; never bake task-specific images
+  or addresses into general contracts.
+ - Model retained-state failures separately: a stopped backend and a stopped
+   daemon require different native operations. Preserve identity and repair the
+   owning service; do not rebuild or reuse keys for an authentication-only issue.
 - API acceptance does not prove daemon consumption, init enablement, persistent
   storage permissions, or reboot recovery. Use pinned native contracts and real
   response shapes; narrow permissions to required methods/packages.
@@ -212,6 +251,17 @@ verification requirements remain controlling.
   candidate's absolute path, build ID, compiler, and checksum rather than a
   preserved dist/ filename. Run make ci before runtime handoff; execute
   Linux-only tests on Linux, not merely a cross-build.
+- Test the selected public command's dispatch and arguments so positionals cannot
+  be swallowed by generic parsers or legacy fallthrough. Exercise native JSON
+  response shapes, whitespace, missing fields, and error-return API changes;
+  use a fake PATH to prove shell argv, stdin, quoting, and cleanup rather than
+  string matching or minified-only fixtures.
+ - Add focused behavioral regressions for real defects. Run the actual formatter
+  and make ci before runtime handoff; execute Linux-only tests on Linux, not
+  merely a cross-build. Freeze the candidate before the required closing gate;
+  distinguish a failing target from warnings or tool restrictions, keep a concise
+  receipt on disk, and do not repeat kernel or aggregate ceremonies for
+   format/docs-only changes when qualified behavior is unchanged.
   Docs-only edits need structure/link/diff checks. After fixes settle, run the
   required closing journey once; don't repeat qualified Host teardown/reboots
   or full ceremonies for wording/display changes.
@@ -240,6 +290,10 @@ verification requirements remain controlling.
   selected-path requirement. Verify exact owned resources before claiming cleanup.
 - Use direct argv or safe shell quoting. Pass multiline GitHub text through
   temporary body files; backticks and dollar substitutions execute shell code.
+- Before rebasing or merging, protect dirty tracked, untracked, and ignored
+  outputs and preserve both capabilities' new contracts and signatures. Use
+  exact refs or SHAs for backup and cleanup; an explicit user discard decision
+  may bypass redundant preservation analysis.
 
 Read as needed: README.md/docs/start.md (operator flow), docs/modules.md
 (ownership), docs/controller.md/docs/lab.md (bindings), and

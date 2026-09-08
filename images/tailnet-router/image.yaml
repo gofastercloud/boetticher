@@ -6,7 +6,7 @@ base_version: 0.1.0
 architecture: amd64
 tailscale:
   package: tailscale
-  version: 1.76.6
+  version: 1.102.3
   repository: https://pkgs.tailscale.com/stable/debian
   signing_key: https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
   signing_key_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39

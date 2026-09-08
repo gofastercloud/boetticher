@@ -34,6 +34,9 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 	if capability == "vpn" {
 		return runVPNCapability(action, remaining, input, out, errOut)
 	}
+	if capability == "tailnet" {
+		return runTailnetCapability(action, remaining, input, out, errOut)
+	}
 	switch action {
 	case "status":
 		return runModuleStatus(capability, remaining, out)

@@ -3,11 +3,36 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/firewalltest"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
+
+func TestTailnetLeaseConflictTable(t *testing.T) {
+	reservation := clientservices.Reservation{Name: "lab-tailnet-01", MAC: "02:00:00:00:05:10", Address: "10.10.5.10"}
+	now := time.Now().Unix()
+	for _, test := range []struct {
+		name  string
+		lease nativeDHCPLease
+		want  bool
+	}{
+		{name: "same identity is safe", lease: nativeDHCPLease{Expiry: now + 300, MAC: reservation.MAC, Address: reservation.Address, Hostname: reservation.Name}},
+		{name: "expired address is reusable", lease: nativeDHCPLease{Expiry: now - 1, MAC: "02:00:00:00:05:11", Address: reservation.Address, Hostname: "other"}},
+		{name: "address held by other mac", lease: nativeDHCPLease{Expiry: now + 300, MAC: "02:00:00:00:05:11", Address: reservation.Address, Hostname: "other"}, want: true},
+		{name: "mac held at other address", lease: nativeDHCPLease{Expiry: now + 300, MAC: reservation.MAC, Address: "10.10.5.11", Hostname: reservation.Name}, want: true},
+		{name: "hostname held by other identity", lease: nativeDHCPLease{Expiry: now + 300, MAC: "02:00:00:00:05:11", Address: "10.10.5.11", Hostname: reservation.Name}, want: true},
+		{name: "zero expiry is active", lease: nativeDHCPLease{MAC: "02:00:00:00:05:11", Address: reservation.Address, Hostname: "other"}, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := tailnetLeaseConflict(reservation, []nativeDHCPLease{test.lease}, now)
+			if (err != nil) != test.want {
+				t.Fatalf("conflict=%v, want %v", err, test.want)
+			}
+		})
+	}
+}
 
 func TestParseClientServiceTestOptionsRejectsContradictoryForms(t *testing.T) {
 	for _, args := range [][]string{

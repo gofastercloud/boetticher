@@ -47,7 +47,7 @@ func (r Renderer) Frame(snapshot StatusSnapshot, now time.Time) []Pixel {
 		snapshot.Host,
 		snapshot.Firewall,
 		snapshot.DHCPNTP,
-		snapshot.DNS,
+		snapshot.Tailnet,
 		snapshot.Internet.Component,
 		snapshot.ControllerUpdates,
 		snapshot.HostUpdates,
