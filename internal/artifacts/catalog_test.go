@@ -775,7 +775,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	for _, required := range []string{
 		"name: boetticher-tailnet-router",
 		"version: 1.0.0",
-		"version: 1.76.6",
+		"version: 1.102.3",
 		"signing_key_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39",
 		"advertise_routes: 10.10.0.0/16",
 		"advertise_exit_node: false",

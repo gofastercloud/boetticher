@@ -147,6 +147,9 @@ func DesiredFromSiteWithServices(site model.Site, services clientservices.Module
 		return DesiredState{}, err
 	}
 	state.Firewall = append(state.Firewall, serviceState.Firewall...)
+	if services.Tailnet != nil && services.Tailnet.Enabled {
+		state.Firewall = append(state.Firewall, tailnetFirewallSections(managementNetwork)...)
+	}
 	return state, nil
 }
 
@@ -190,7 +193,10 @@ func firewallSections(zones []Zone, managementNetwork, controllerAddress string)
 			sections = append(sections, Section{Name: "boetticher_forward_" + name + "_home_wan", Type: "forwarding", Options: map[string]string{"src": name, "dest": "home_wan", "family": "ipv4"}, Lists: map[string][]string{}})
 		}
 		if zone.Type == model.ZoneTypeTrusted {
-			sections = append(sections, Section{Name: "boetticher_forward_trusted_servers", Type: "forwarding", Options: map[string]string{"src": name, "dest": "servers", "family": "ipv4"}, Lists: map[string][]string{}})
+			for _, target := range model.TrustedRoutedDestinations() {
+				destination := strings.ToLower(target.Zone)
+				sections = append(sections, Section{Name: "boetticher_forward_trusted_" + destination, Type: "forwarding", Options: map[string]string{"src": name, "dest": destination, "family": "ipv4"}, Lists: map[string][]string{}})
+			}
 		}
 		if zone.Type == model.ZoneTypeManagement {
 			for _, target := range zones {

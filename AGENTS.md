@@ -72,7 +72,25 @@ verification requirements remain controlling.
   follow the skill-creator guidance, and keep new skills concise and grounded in
   demonstrated needs. Skill creation does not expand authority for the actions
   those skills perform.
-
+- Send one-sentence updates and a short final with full receipts on disk when
+  needed. Use one compact checkpoint; do not create status-document clutter.
+- At meaningful boundaries, check for oversized assignments, duplicate work,
+  repeated tests, idle wakes, and rework; record only corrective actions.
+  Distinguish cached from uncached input and output tokens; totals are not
+  charges, and do not claim fixed savings.
+- The coordinator owns scope, priorities, integration, and final verification.
+  Git-related work, including read-only inspection, belongs to one
+  `gpt-5.6-luna` Git owner; keep one owner for live systems and Git delivery.
+  Delegation grants no new authority. Preserve existing authorization limits,
+  concurrent changes, and no-reset constraint. Review delegate changes and
+  return changed paths, checks, findings, and blockers. Use focused reusable
+  skills when needed under their standing authorization; skills do not expand
+  action authority. If a requested model is unavailable, disclose the fallback.
+- Never restore files to HEAD to undo an agent mistake: revert only your own
+  exact edit, preserve concurrent work, and report uncertain overlap.
+- Creating focused reusable skills is authorized when demonstrated repository
+  needs justify it. Reuse existing skills first and follow skill-creator guidance;
+  this grants no authority for the actions those skills describe.
 ## Scope and authority
 
 - Inspect root, branch, status, worktrees, and applicable instructions before
@@ -112,8 +130,9 @@ verification requirements remain controlling.
   Use --plan, not another --dry-run spelling; preserve exact disk/adoption approvals.
 - Keep hardware/addresses in reference bindings. Pass Host configuration
   explicitly; no premature multi-Host selectors, placement, or provider registry.
-  Roadmap: 4A firewall, 4B client services, 4C VPN, 4D integration/recovery,
-  Phase 5 additional capabilities. Future plans do not authorize implementation.
+  Roadmap: 4A firewall, 4B client services, 4C VPN dependency, 4D Tailnet,
+  4E integration/recovery, Phase 5 additional capabilities. Future plans do
+  not authorize implementation.
 
 ## Intent and shared ownership
 

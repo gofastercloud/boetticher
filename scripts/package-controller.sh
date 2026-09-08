@@ -22,6 +22,8 @@ main() {
   cp -R controller "$stage/controller"
   mkdir -p "$stage/controller/proxmox/libexec"
   cp scripts/build-openwrt-firewall.sh "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
+  cp scripts/build-tailnet.sh "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
+  chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
 	GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 	  go build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-host-speedtest" ./cmd/boetticher-host-speedtest

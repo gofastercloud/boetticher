@@ -1,5 +1,16 @@
 package model
 
+// TrustedRoutedDestination is the current installed firewall's inter-zone
+// permission. Tailnet consumes the same destinations without WAN privileges.
+type TrustedRoutedDestination struct {
+	Zone   string
+	Subnet string
+}
+
+func TrustedRoutedDestinations() []TrustedRoutedDestination {
+	return []TrustedRoutedDestination{{Zone: "SERVERS", Subnet: "10.10.20.0/24"}}
+}
+
 // TrustedLabService is the existing TRUSTED inter-zone service boundary.
 // Tailnet reuses this list but never inherits TRUSTED Internet egress.
 type TrustedLabService struct {

@@ -256,14 +256,18 @@ func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, cur
 	if err != nil {
 		return 0, err
 	}
-	itemChanges, diffErr := firewallmodule.DiffOwned(observed, firewallDesired.Firewall)
+	itemChanges, diffErr := firewallmodule.DiffFirewall(observed, firewallDesired.Firewall)
 	if diffErr != nil {
 		return 0, diffErr
 	}
 	return changes + len(itemChanges), nil
 }
 
-func verifyClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState, capability string) error {
+func verifyClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState, capability string, ignoredDHCPSections ...map[string]struct{}) error {
+	ignored := map[string]struct{}{}
+	if len(ignoredDHCPSections) > 0 {
+		ignored = ignoredDHCPSections[0]
+	}
 	for _, item := range []struct {
 		packageName string
 		desired     []firewallmodule.Section
@@ -279,12 +283,35 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 		if err := firewallmodule.ValidateServicePackage(item.packageName, observed, item.desired); err != nil {
 			return err
 		}
+		if item.packageName == "dhcp" {
+			for _, desired := range item.desired {
+				if _, ok := ignored[desired.Name]; !ok {
+					continue
+				}
+				if _, exists := observed[desired.Name]; !exists {
+					continue
+				}
+				// An ignored section is only the exact not-yet-created delta.
+				delete(ignored, desired.Name)
+			}
+		}
 		changes, diffErr := firewallmodule.DiffOwned(observed, item.desired)
 		if diffErr != nil {
 			return diffErr
 		}
 		if len(changes) > 0 {
-			return fmt.Errorf("provider %s configuration is not at the desired state", item.packageName)
+			remaining := changes[:0]
+			for _, change := range changes {
+				if item.packageName == "dhcp" {
+					if _, ok := ignored[change.Section.Name]; ok && change.Kind == firewallmodule.MutationCreate {
+						continue
+					}
+				}
+				remaining = append(remaining, change)
+			}
+			if len(remaining) > 0 {
+				return fmt.Errorf("provider %s configuration is not at the desired state", item.packageName)
+			}
 		}
 	}
 	services, err := provider.ServiceList(ctx)
@@ -295,12 +322,12 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 	if err != nil {
 		return err
 	}
-	if capability == "dns" || capability == "dhcp" {
+	if capability == "dns" || capability == "dhcp" || capability == "tailnet" {
 		if service, ok := observedServices["dnsmasq"]; !ok || !service.Present || !service.Running || service.Instances == 0 {
 			return errors.New("provider dnsmasq service is unavailable")
 		}
 	}
-	if capability == "dns" {
+	if capability == "dns" || capability == "tailnet" {
 		if service, ok := observedServices["stubby"]; !ok || !service.Present || !service.Running || service.Instances == 0 {
 			return errors.New("provider Stubby encrypted resolver is unavailable")
 		}
@@ -550,6 +577,9 @@ func runClientServiceApply(ctx context.Context, capability string, serviceContex
 }
 
 func runClientServiceTeardown(ctx context.Context, capability string, serviceContext clientServiceContext, provider *openwrt.Client, options clientServiceOptions, input io.Reader, out io.Writer) error {
+	if serviceContext.Config.Modules.Tailnet != nil && serviceContext.Config.Modules.Tailnet.Enabled && (capability == "dns" || capability == "dhcp") {
+		return errors.New("client-service teardown refused while Tailnet is enabled; run module tailnet teardown first")
+	}
 	if capability == "dns" && serviceContext.Config.Modules.DHCP != nil && clientservices.Enabled(serviceContext.Config.Modules.DHCP.Enabled) {
 		return errors.New("DNS teardown refused while DHCP is enabled; run module dhcp teardown first")
 	}
@@ -898,6 +928,28 @@ type nativeDHCPLease struct {
 	Address  string
 	Hostname string
 	ClientID string
+}
+
+func tailnetLeaseConflict(reservation clientservices.Reservation, leases []nativeDHCPLease, now int64) error {
+	wantMAC := strings.ToLower(strings.TrimSpace(reservation.MAC))
+	wantName := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(reservation.Name), "."))
+	for _, lease := range leases {
+		if lease.Expiry != 0 && lease.Expiry <= now {
+			continue
+		}
+		leaseMAC := strings.ToLower(strings.TrimSpace(lease.MAC))
+		leaseName := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(lease.Hostname), "."))
+		if lease.Address == reservation.Address && leaseMAC != wantMAC {
+			return fmt.Errorf("active DHCP lease holds Tailnet address %s for MAC %s", reservation.Address, lease.MAC)
+		}
+		if leaseMAC == wantMAC && lease.Address != reservation.Address {
+			return fmt.Errorf("Tailnet MAC %s has an active DHCP lease at %s", reservation.MAC, lease.Address)
+		}
+		if leaseName != "" && leaseName == wantName && (leaseMAC != wantMAC || lease.Address != reservation.Address) {
+			return fmt.Errorf("Tailnet hostname %s has an active DHCP lease for another identity", reservation.Name)
+		}
+	}
+	return nil
 }
 
 var errLeaseFileAbsent = errors.New("native DHCP lease file is absent")
@@ -1279,6 +1331,13 @@ func runDHCPRemoveReservation(args []string, input io.Reader, out io.Writer) err
 	}
 	if index < 0 {
 		return fmt.Errorf("no DHCP reservation named %s", name)
+	}
+	if serviceContext.Config.Modules.Tailnet != nil && serviceContext.Config.Modules.Tailnet.Enabled {
+		for _, reservation := range serviceContext.Config.Modules.DHCP.Reservations {
+			if strings.EqualFold(reservation.Name, name) && reservation == tailnetReservation() {
+				return errors.New("Tailnet reservation cannot be removed while Tailnet is enabled; run module tailnet teardown first")
+			}
+		}
 	}
 	serviceContext.Config.Modules.DHCP.Reservations = append(serviceContext.Config.Modules.DHCP.Reservations[:index], serviceContext.Config.Modules.DHCP.Reservations[index+1:]...)
 	return applyClientResourceMutation(serviceContext, "remove DHCP reservation "+name, "dhcp", *yes, input, out, true)

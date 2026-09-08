@@ -29,9 +29,10 @@ const (
 // deliberately different from a disabled block: read-only commands report
 // nil as not configured and approved apply operations may materialise defaults.
 type Modules struct {
-	DNS  *DNSConfig  `yaml:"dns,omitempty" json:"dns,omitempty"`
-	DHCP *DHCPConfig `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
-	VPN  *VPNConfig  `yaml:"vpn,omitempty" json:"vpn,omitempty"`
+	Tailnet *TailnetConfig `yaml:"tailnet,omitempty" json:"tailnet,omitempty"`
+	DNS     *DNSConfig     `yaml:"dns,omitempty" json:"dns,omitempty"`
+	DHCP    *DHCPConfig    `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
+	VPN     *VPNConfig     `yaml:"vpn,omitempty" json:"vpn,omitempty"`
 }
 
 // VPNConfig is provider-neutral inbound VPN intent. Clients are references
@@ -48,6 +49,11 @@ type VPNForward struct {
 	Reservation string   `yaml:"reservation" json:"reservation"`
 	Protocols   []string `yaml:"protocols" json:"protocols"`
 	Port        int      `yaml:"port" json:"port"`
+}
+
+// TailnetConfig contains only desired capability state, never credentials.
+type TailnetConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 type DNSConfig struct {
@@ -198,6 +204,10 @@ func (m Modules) Normalize() Modules {
 
 func (m Modules) Clone() Modules {
 	result := Modules{}
+	if m.Tailnet != nil {
+		copyTailnet := *m.Tailnet
+		result.Tailnet = &copyTailnet
+	}
 	if m.DNS != nil {
 		copyDNS := *m.DNS
 		if m.DNS.Enabled != nil {
@@ -237,6 +247,9 @@ func (m Modules) Clone() Modules {
 
 func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
+	if normalized.Tailnet != nil && normalized.Tailnet.Enabled && (normalized.DNS == nil || !Enabled(normalized.DNS.Enabled) || normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
+		return errors.New("enabled Tailnet requires enabled DNS and DHCP; teardown Tailnet first")
+	}
 	if normalized.DNS != nil {
 		if err := validateDNS(normalized.DNS, site); err != nil {
 			return err

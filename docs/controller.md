@@ -100,7 +100,7 @@ Host speedtest helper; it does not depend on Blinkt or StreamDeck hardware.
 The fixed physical layout, viewed from the operator side, is:
 
 ```text
-CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES
+CTL HOST FW DHCP/NTP TAILNET NET CTRL-UPDATES HOST-UPDATES
 ```
 
 | Display | Meaning |
@@ -121,8 +121,10 @@ before Standard status resumes. Display notifications remain best-effort and
 never affect the command result.
 
 `CTL` is local Controller health and `HOST` is the enrolled Proxmox Host.
-`FW` is the firewall capability's native status result; `DHCP/NTP` and `DNS`
-are red error placeholders until those capabilities exist. Amber means action
+`FW` is the firewall capability's native status result; `DHCP/NTP` is the
+shared client-service native status result. `Tailnet` is the fixed
+subnet-router's native local status; it does not represent remote packet
+qualification. Amber means action
 required, blue means configuration staged or an operation is in progress, and
 green means healthy. These are operational display states, not packet
 qualification evidence.
@@ -186,10 +188,10 @@ Host and guest detail views provide BACK and REFRESH only; StreamDeck input
 cannot start, stop, reboot, deploy, or run shell commands. The old standalone
 Controller StreamDeck service is removed during Controller bootstrap.
 
-The Host detail view also shows `FW`, `DHCP`, and `DNS` using the same coarse
+The Host detail view also shows `FW`, `DHCP`, and `TAILNET` using the same coarse
 component states as Blinkt. `FW` consumes the native `module firewall status`
-result; the Phase 4B client-service slots consume the native `module dhcp
-status` and `module dns status` results. Unconfigured is off, while a
+result; the client-service slot consumes `module dhcp status`, and TAILNET
+consumes `module tailnet status`. Unconfigured is off, while a
 configured-but-unavailable service is failed.
 
 ## Installed paths and maintenance

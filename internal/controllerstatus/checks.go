@@ -23,9 +23,10 @@ type CheckResult struct {
 	// State is an optional direct display state for capability checks. It is
 	// used for explicit action-required/config-staged states; zero preserves
 	// the existing debounced healthy/failed check behavior.
-	State  State
-	Update Component
-	Detail string
+	State      State
+	Update     Component
+	Detail     string
+	ObservedAt time.Time
 }
 
 type CommandRunner func(context.Context, string, ...string) ([]byte, error)

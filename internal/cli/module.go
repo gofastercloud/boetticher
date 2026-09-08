@@ -31,6 +31,12 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 	if capability == "dns" || capability == "dhcp" {
 		return runClientServiceCapability(capability, action, remaining, input, out, errOut)
 	}
+	if capability == "tailnet" {
+		return runTailnetCapability(action, remaining, input, out, errOut)
+	}
+	if capability == "tailnet" {
+		return runTailnetCapability(action, remaining, input, out, errOut)
+	}
 	switch action {
 	case "status":
 		return runModuleStatus(capability, remaining, out)
