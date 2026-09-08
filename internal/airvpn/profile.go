@@ -329,6 +329,7 @@ func (c Client) generateProfile(ctx context.Context, baseURL, apiKey, servers, d
 	query.Set("device", device)
 	query.Set("resolve", "on")
 	query.Set("iplayer_entry", "ipv4")
+	query.Set("iplayer_exit", "ipv4")
 	parsed.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
