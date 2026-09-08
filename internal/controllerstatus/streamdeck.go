@@ -11,12 +11,16 @@ import (
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/font/gofont/goregular"
+	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 )
 
 const (
-	StreamDeckKeyCount  = 15
-	StreamDeckImageSize = 72
+	StreamDeckKeyCount        = 15
+	StreamDeckImageSize       = 72
+	streamDeckTextWidth       = StreamDeckImageSize - 8
+	streamDeckMarqueeInterval = 750 * time.Millisecond
 )
 
 type KeyEvent struct {
@@ -31,6 +35,9 @@ type KeyImage struct {
 	Value  string
 	Footer string
 	State  State
+	// ImageKey captures time-varying rendering such as a hostname marquee so
+	// the USB worker can skip unchanged tiles without suppressing animation.
+	ImageKey string
 }
 
 type StreamDeck interface {
@@ -52,22 +59,40 @@ const (
 
 type StreamDeckRenderer struct{}
 
+var streamDeckFont = loadStreamDeckFont()
+
+func loadStreamDeckFont() font.Face {
+	parsed, err := opentype.Parse(goregular.TTF)
+	if err != nil {
+		return basicfont.Face7x13
+	}
+	face, err := opentype.NewFace(parsed, &opentype.FaceOptions{Size: 8.5, DPI: 72, Hinting: font.HintingFull})
+	if err != nil {
+		return basicfont.Face7x13
+	}
+	return face
+}
+
 func (StreamDeckRenderer) Render(snapshot StatusSnapshot, telemetry ProxmoxSnapshot, operation *operationDisplay, view StreamDeckView, page, guestIndex int) []KeyImage {
+	return (StreamDeckRenderer{}).RenderAt(snapshot, telemetry, operation, view, page, guestIndex, time.Now())
+}
+
+func (StreamDeckRenderer) RenderAt(snapshot StatusSnapshot, telemetry ProxmoxSnapshot, operation *operationDisplay, view StreamDeckView, page, guestIndex int, now time.Time) []KeyImage {
 	keys := make([]KeyImage, StreamDeckKeyCount)
 	for index := range keys {
 		keys[index] = blankDeckKey()
 	}
 	switch view {
 	case StreamDeckHostDetail:
-		return renderHostDetail(keys, snapshot, telemetry)
+		return renderHostDetail(keys, snapshot, telemetry, now)
 	case StreamDeckGuestDetail:
-		return renderGuestDetail(keys, telemetry, guestIndex)
+		return renderGuestDetail(keys, telemetry, guestIndex, now)
 	default:
-		return renderHome(keys, snapshot, telemetry, operation, page)
+		return renderHome(keys, snapshot, telemetry, operation, page, now)
 	}
 }
 
-func renderHome(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnapshot, operation *operationDisplay, page int) []KeyImage {
+func renderHome(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnapshot, operation *operationDisplay, page int, now time.Time) []KeyImage {
 	hostValue := telemetry.Host.Node
 	if hostValue == "" {
 		hostValue = "—"
@@ -83,14 +108,14 @@ func renderHome(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnaps
 			hostState = Failed
 		}
 	}
-	keys[0] = renderDeckKey(hostTitle, hostValue, hostFooter, hostState)
+	keys[0] = renderDeckKeyAt(hostTitle, hostValue, hostFooter, hostState, now, true)
 	keys[1] = renderDeckKey("CPU", formatPercent(telemetry.Host.CPUPercent, telemetry.FetchedAt.IsZero()), "HOST", telemetryState(telemetry))
 	keys[2] = renderDeckKey("RAM", formatMemoryPair(telemetry.Host.MemoryUsed, telemetry.Host.MemoryTotal), telemetryAge(telemetry), telemetryState(telemetry))
 	storage := preferredStorage(telemetry.Storage)
 	if storage == nil {
-		keys[3] = renderDeckKey("DATA", "—", "NO DATA", Off)
+		keys[3] = renderDeckKey("DATA", "—", "NO DATA", telemetryState(telemetry))
 	} else {
-		keys[3] = renderDeckKey("DATA", formatMemoryPair(storage.Used, storage.Total), fmt.Sprintf("%.0f%%", storage.Percent), Off)
+		keys[3] = renderDeckKey("DATA", formatMemoryPair(storage.Used, storage.Total), fmt.Sprintf("%.0f%%", storage.Percent), telemetryState(telemetry))
 	}
 	netValue := "—"
 	if snapshot.Internet.ThroughputAt.IsZero() {
@@ -107,25 +132,28 @@ func renderHome(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnaps
 	if page >= pageCount {
 		page = 0
 	}
-	start := page * 8
-	for slot := 0; slot < 8 && start+slot < len(telemetry.Guests); slot++ {
+	start := page * 5
+	for slot := 0; slot < 5 && start+slot < len(telemetry.Guests); slot++ {
 		guest := telemetry.Guests[start+slot]
-		keys[5+slot] = renderGuestKey(guest)
+		keys[5+slot] = renderGuestKeyAt(guest, now)
 	}
-	keys[13] = renderDeckKey("PAGE", fmt.Sprintf("%d/%d", page+1, pageCount), "GUESTS", Off)
+	keys[10] = renderDeckKey("FW", stateLabel(snapshot.Firewall.State), "MODULE", snapshot.Firewall.State)
+	keys[11] = renderDeckKey("VPN", "OFF", "MODULE", Off)
+	keys[12] = renderDeckKey("DNS", stateLabel(snapshot.DNS.State), "MODULE", snapshot.DNS.State)
+	keys[13] = renderDeckKey("SCROLL", fmt.Sprintf("%d/%d", page+1, pageCount), "GUESTS", Off)
 	keys[14] = renderDeckKey("REFRESH", "READ", "STATUS", Off)
 	return keys
 }
 
-func renderHostDetail(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnapshot) []KeyImage {
-	keys[0] = renderDeckKey("NODE", telemetry.Host.Node, "HOST", snapshot.Host.State)
+func renderHostDetail(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnapshot, now time.Time) []KeyImage {
+	keys[0] = renderDeckKeyAt("NODE", telemetry.Host.Node, "HOST", snapshot.Host.State, now, true)
 	keys[1] = renderDeckKey("VERSION", shortVersion(telemetry.Host.Version), "PVE", Off)
 	keys[2] = renderDeckKey("UPTIME", formatDuration(telemetry.Host.Uptime), telemetryAge(telemetry), telemetryState(telemetry))
 	keys[3] = renderDeckKey("CPU", formatPercent(telemetry.Host.CPUPercent, telemetry.FetchedAt.IsZero()), "HOST", telemetryState(telemetry))
 	keys[4] = renderDeckKey("RAM", formatMemoryPair(telemetry.Host.MemoryUsed, telemetry.Host.MemoryTotal), telemetryAge(telemetry), telemetryState(telemetry))
 	storage := preferredStorage(telemetry.Storage)
 	if storage != nil {
-		keys[5] = renderDeckKey("DATA", formatMemoryPair(storage.Used, storage.Total), fmt.Sprintf("%.0f%%", storage.Percent), Off)
+		keys[5] = renderDeckKey("DATA", formatMemoryPair(storage.Used, storage.Total), fmt.Sprintf("%.0f%%", storage.Percent), telemetryState(telemetry))
 	}
 	keys[6] = renderDeckKey("UPDATES", stateLabel(snapshot.HostUpdates.State), "HOST", snapshot.HostUpdates.State)
 	keys[7] = renderDeckKey("REBOOT", rebootLabel(snapshot.HostUpdates), "HOST", snapshot.HostUpdates.State)
@@ -137,13 +165,13 @@ func renderHostDetail(keys []KeyImage, snapshot StatusSnapshot, telemetry Proxmo
 	return keys
 }
 
-func renderGuestDetail(keys []KeyImage, telemetry ProxmoxSnapshot, guestIndex int) []KeyImage {
+func renderGuestDetail(keys []KeyImage, telemetry ProxmoxSnapshot, guestIndex int, now time.Time) []KeyImage {
 	if guestIndex < 0 || guestIndex >= len(telemetry.Guests) {
 		keys[0] = renderDeckKey("GUEST", "UNKNOWN", telemetryAge(telemetry), Attention)
 	} else {
 		guest := telemetry.Guests[guestIndex]
 		state := guestState(guest)
-		keys[0] = renderDeckKey("VMID", fmt.Sprintf("%d", guest.VMID), guest.Kind, state)
+		keys[0] = renderDeckKeyAt(guestIdentity(guest), guest.Name, guestStatus(guest), state, now, true)
 		keys[1] = renderDeckKey("NAME", guest.Name, guestStatus(guest), state)
 		keys[2] = renderDeckKey("TYPE", strings.ToUpper(guest.Kind), guestStatus(guest), state)
 		keys[3] = renderDeckKey("CPU", formatPercent(guest.CPUPercent, telemetry.Stale), "GUEST", state)
@@ -155,8 +183,16 @@ func renderGuestDetail(keys []KeyImage, telemetry ProxmoxSnapshot, guestIndex in
 	return keys
 }
 
-func renderGuestKey(guest GuestStats) KeyImage {
-	return renderDeckKey(fmt.Sprintf("%d %s", guest.VMID, guest.Name), strings.ToUpper(guest.Kind), guestStatus(guest), guestState(guest))
+func renderGuestKeyAt(guest GuestStats, now time.Time) KeyImage {
+	return renderDeckKeyAt(guestIdentity(guest), guest.Name, guestStatus(guest), guestState(guest), now, true)
+}
+
+func guestIdentity(guest GuestStats) string {
+	kind := "VM"
+	if strings.EqualFold(strings.TrimSpace(guest.Kind), "lxc") || strings.EqualFold(strings.TrimSpace(guest.Kind), "container") {
+		kind = "CT"
+	}
+	return fmt.Sprintf("%s%d", kind, guest.VMID)
 }
 
 func guestState(guest GuestStats) State {
@@ -240,7 +276,7 @@ func guestPageCount(count int) int {
 	if count <= 0 {
 		return 1
 	}
-	return (count + 7) / 8
+	return (count + 4) / 5
 }
 
 func shortVersion(version string) string {
@@ -298,23 +334,31 @@ func formatDuration(value time.Duration) string {
 }
 
 func renderDeckKey(title, value, footer string, state State) KeyImage {
-	return KeyImage{Image: drawDeckImage(title, value, footer, state), Title: title, Value: value, Footer: footer, State: state}
+	return renderDeckKeyAt(title, value, footer, state, time.Now(), false)
+}
+
+func renderDeckKeyAt(title, value, footer string, state State, now time.Time, marqueeValue bool) KeyImage {
+	imageKey := value
+	if marqueeValue {
+		imageKey = marqueeDeckText(streamDeckFont, value, streamDeckTextWidth, now)
+	}
+	return KeyImage{Image: drawDeckImage(title, value, footer, state, now, marqueeValue), Title: title, Value: value, Footer: footer, State: state, ImageKey: imageKey}
 }
 
 func blankDeckKey() KeyImage {
 	return KeyImage{Image: image.NewRGBA(image.Rect(0, 0, StreamDeckImageSize, StreamDeckImageSize)), State: Off}
 }
 
-func drawDeckImage(title, value, footer string, state State) image.Image {
+func drawDeckImage(title, value, footer string, state State, now time.Time, marqueeValue bool) image.Image {
 	canvas := image.NewRGBA(image.Rect(0, 0, StreamDeckImageSize, StreamDeckImageSize))
 	background := color.RGBA{R: 18, G: 28, B: 38, A: 255}
 	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: background}, image.Point{}, draw.Src)
 	accent := deckStateColor(state)
 	draw.Draw(canvas, image.Rect(0, 0, StreamDeckImageSize, 4), &image.Uniform{C: accent}, image.Point{}, draw.Src)
-	face := basicfont.Face7x13
-	drawDeckText(canvas, face, truncateDeckText(strings.ToUpper(title), 10), 12)
-	drawDeckText(canvas, face, truncateDeckText(value, 10), 33)
-	drawDeckText(canvas, face, truncateDeckText(strings.ToUpper(footer), 10), 56)
+	face := streamDeckFont
+	drawDeckText(canvas, face, strings.ToUpper(title), 12, false, now)
+	drawDeckText(canvas, face, value, 33, marqueeValue, now)
+	drawDeckText(canvas, face, strings.ToUpper(footer), 56, false, now)
 	return canvas
 }
 
@@ -333,17 +377,65 @@ func deckStateColor(state State) color.Color {
 	}
 }
 
-func drawDeckText(dst *image.RGBA, face font.Face, text string, baseline int) {
+func drawDeckText(dst *image.RGBA, face font.Face, text string, baseline int, marquee bool, now time.Time) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	maxWidth := dst.Bounds().Dx() - 8
+	if marquee {
+		text = marqueeDeckText(face, text, maxWidth, now)
+	} else if font.MeasureString(face, text).Ceil() > maxWidth {
+		text = fitDeckText(face, text, maxWidth)
+	}
+	drawDeckTextAt(dst, face, text, baseline)
+}
+
+func fitDeckText(face font.Face, text string, maxWidth int) string {
+	text = strings.TrimSpace(text)
+	if font.MeasureString(face, text).Ceil() <= maxWidth {
+		return text
+	}
+	const ellipsis = "…"
+	runes := []rune(text)
+	for len(runes) > 0 {
+		candidate := string(runes) + ellipsis
+		if font.MeasureString(face, candidate).Ceil() <= maxWidth {
+			return candidate
+		}
+		runes = runes[:len(runes)-1]
+	}
+	return ellipsis
+}
+
+func needsDeckMarquee(text string) bool {
+	return font.MeasureString(streamDeckFont, strings.TrimSpace(text)).Ceil() > streamDeckTextWidth
+}
+
+func marqueeDeckText(face font.Face, text string, maxWidth int, now time.Time) string {
+	text = strings.TrimSpace(text)
+	if font.MeasureString(face, text).Ceil() <= maxWidth {
+		return text
+	}
+	base := []rune(text + "   " + text)
+	if len(base) == 0 {
+		return text
+	}
+	offset := int((now.UnixMilli() / 750) % int64(len(base)))
+	window := make([]rune, 0, len(base))
+	for index := 0; index < len(base); index++ {
+		candidate := append(window, base[(offset+index)%len(base)])
+		if font.MeasureString(face, string(candidate)).Ceil() > maxWidth {
+			break
+		}
+		window = candidate
+	}
+	return strings.TrimSpace(string(window))
+}
+
+func drawDeckTextAt(dst *image.RGBA, face font.Face, text string, baseline int) {
 	width := font.MeasureString(face, text).Ceil()
 	x := (dst.Bounds().Dx() - width) / 2
 	drawer := font.Drawer{Dst: dst, Src: image.NewUniform(color.White), Face: face, Dot: fixed.P(x, baseline)}
 	drawer.DrawString(text)
-}
-
-func truncateDeckText(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }

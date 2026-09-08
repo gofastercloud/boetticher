@@ -139,7 +139,11 @@ func runFirewallPlan(args []string, out io.Writer) error {
 		}
 	}
 	fmt.Fprintln(out, "\nPreserve:\n  Controller\n  Host enrollment and SSH trust\n  vmbr0\n  vmbr1\n  boetticher-data\n  physical networking")
-	fmt.Fprintln(out, "\nDHCP: not configured\nDNS: not configured")
+	hostConfig, err := controllerhost.LoadConfig()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\nDHCP: %s\nDNS: %s\n", clientCapabilityIntentLabel(hostConfig.Modules.DHCP), clientCapabilityIntentLabel(hostConfig.Modules.DNS))
 	return nil
 }
 
@@ -166,15 +170,15 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if err != nil {
 		return err
 	}
-	current, desired, host, err := loadFirewallContext()
-	if err != nil {
-		return err
-	}
 	lock, err := acquireClientServicesLock()
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
+	current, desired, host, err := loadFirewallContext()
+	if err != nil {
+		return err
+	}
 	display := controllerstatus.StartApply("firewall apply", 7)
 	defer func() {
 		display.End(err)
@@ -306,7 +310,7 @@ func waitProviderAPI(ctx context.Context, provider *openwrt.Client) error {
 		}
 		select {
 		case <-readinessCtx.Done():
-			return fmt.Errorf("%w (last check: %v)", readinessCtx.Err(), last)
+			return fmt.Errorf("firewall management did not become ready; last failure: %v", last)
 		case <-time.After(2 * time.Second):
 		}
 	}
@@ -359,6 +363,11 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 	if err != nil {
 		return err
 	}
+	lock, err := acquireClientServicesLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	current, _, host, err := loadFirewallContext()
 	if err != nil {
 		return err
@@ -373,11 +382,6 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 	if hostConfig.Modules.DHCP != nil && clientservices.Enabled(hostConfig.Modules.DHCP.Enabled) {
 		return errors.New("firewall teardown refused while DHCP is enabled; run module dhcp teardown first")
 	}
-	lock, err := acquireClientServicesLock()
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	status, err := firewallmodule.InspectHostProvider(ctx, host)
@@ -463,15 +467,15 @@ func runFirewallReboot(args []string, input io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, _, host, err := loadFirewallContext()
-	if err != nil {
-		return err
-	}
 	lock, err := acquireClientServicesLock()
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
+	_, _, host, err := loadFirewallContext()
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {

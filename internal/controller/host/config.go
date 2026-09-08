@@ -78,7 +78,11 @@ func ValidateConfig(config LabConfig) error {
 			return err
 		}
 	}
-	if err := clientservices.Validate(config.Modules, model.NewSite(config.Name, "controller-local", model.GatewayModeManaged)); err != nil {
+	intentSite := model.NewSite(config.Name, "controller-local", model.GatewayModeManaged)
+	if config.Network != nil && config.Network.Domain != "" {
+		intentSite.Network.Domain = config.Network.Domain
+	}
+	if err := clientservices.Validate(config.Modules, intentSite); err != nil {
 		return fmt.Errorf("validate client services intent: %w", err)
 	}
 	return nil

@@ -8,11 +8,12 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
 
 const (
 	serviceDNSMasqSection = "boetticher_dnsmasq"
-	serviceStubbyGlobal   = "boetticher_global"
+	serviceStubbyGlobal   = "global"
 	serviceNTPSection     = "ntp"
 )
 
@@ -26,6 +27,47 @@ type ServiceState struct {
 	Firewall []Section
 }
 
+// ValidateServicePackage rejects an active native instance outside the exact
+// settings composed by this capability. UCI names alone are not ownership
+// proof for global/factory sections, so conflicting instances are held for
+// explicit operator resolution.
+func ValidateServicePackage(packageName string, current map[string]openwrt.UCISection, desired []Section) error {
+	wanted := make(map[string]Section, len(desired))
+	for _, section := range desired {
+		wanted[section.Name] = section
+	}
+	for name, section := range current {
+		switch packageName {
+		case "dhcp":
+			if section.Type == "dnsmasq" && name != serviceDNSMasqSection {
+				return fmt.Errorf("provider has an unowned dnsmasq instance %s", name)
+			}
+			if section.Type == "dhcp" && name != "boetticher_home" && !strings.HasPrefix(name, "boetticher_dhcp_") {
+				if section.Options["ignore"] != "1" {
+					return fmt.Errorf("provider has an active unowned DHCP scope %s", name)
+				}
+			}
+		case "stubby":
+			if section.Type == "resolver" {
+				if _, ok := wanted[name]; !ok {
+					return fmt.Errorf("provider has an unowned Stubby resolver %s", name)
+				}
+				if len(section.Lists["spki"]) > 0 {
+					return fmt.Errorf("provider Stubby resolver %s contains an unsupported leaf certificate pin", name)
+				}
+			}
+			if section.Type == "stubby" && name != serviceStubbyGlobal {
+				return fmt.Errorf("provider has an unowned Stubby global section %s", name)
+			}
+		case "system":
+			if section.Type == "timeserver" && name != serviceNTPSection && section.Options["enabled"] != "0" {
+				return fmt.Errorf("provider has an active unowned time source %s", name)
+			}
+		}
+	}
+	return nil
+}
+
 func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (ServiceState, error) {
 	normalized := modules.Normalize()
 	if err := clientservices.Validate(normalized, site); err != nil {
@@ -35,9 +77,13 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	dhcpEnabled := normalized.DHCP != nil && clientservices.Enabled(normalized.DHCP.Enabled)
 	state := ServiceState{}
 	state.DHCP = append(state.DHCP, dnsmasqSections(site, normalized)...)
-	if dnsEnabled {
+	if normalized.DNS != nil {
+		upstreams := normalized.DNS.Upstreams
+		if len(upstreams) == 0 {
+			upstreams = clientservices.DefaultDNSUpstreams()
+		}
 		state.DHCP = append(state.DHCP, dnsRecordSections(site, normalized.DNS.Records)...)
-		state.Stubby = stubbySections(normalized.DNS.Upstreams)
+		state.Stubby = stubbySections(upstreams)
 	}
 	// Appliance upstream time is independent of client-facing DHCP/NTP. Once
 	// the service contract is applied, retain the exact native time settings.
@@ -51,7 +97,7 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 			ntpServe = &falseValue
 		}
 	}
-	state.System = append(state.System, ntpSections(ntpUpstreams, ntpServe)...)
+	state.System = append(state.System, ntpSections(site, ntpUpstreams, ntpServe)...)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled)
 	return state, nil
 }
@@ -60,6 +106,8 @@ func dnsmasqSections(site model.Site, modules clientservices.Modules) []Section 
 	dnsEnabled := modules.DNS != nil && clientservices.Enabled(modules.DNS.Enabled)
 	dhcpEnabled := modules.DHCP != nil && clientservices.Enabled(modules.DHCP.Enabled)
 	options := map[string]string{
+		"disabled":          "1",
+		"port":              "0",
 		"domainneeded":      "1",
 		"boguspriv":         "1",
 		"noresolv":          "1",
@@ -70,19 +118,29 @@ func dnsmasqSections(site model.Site, modules clientservices.Modules) []Section 
 	}
 	lists := map[string][]string{}
 	if dnsEnabled {
+		options["disabled"] = "0"
 		options["local"] = "/" + site.Network.Domain + "/"
 		lists["server"] = []string{clientservices.StubbyListenAddress}
+		options["port"] = "53"
+		for _, zone := range site.Network.Zones {
+			lists["interface"] = append(lists["interface"], "boetticher_iface_"+strings.ToLower(zone.Name))
+		}
+		if dhcpEnabled {
+			options["extraconftext"] = "dhcp-ignore-names=tag:boetticher_sandbox"
+		}
 	}
-	sections := []Section{
-		{Name: serviceDNSMasqSection, Type: "dnsmasq", Options: options, Lists: lists},
-		{Name: "boetticher_home", Type: "dhcp", Options: map[string]string{
-			"interface": "boetticher_home",
-			"ignore":    "1",
-			"ra":        "disabled",
-			"dhcpv6":    "disabled",
-			"ndp":       "disabled",
-		}, Lists: map[string][]string{}},
+	if dhcpEnabled {
+		options["disabled"] = "0"
+		options["port"] = "53"
 	}
+	sections := []Section{{Name: serviceDNSMasqSection, Type: "dnsmasq", Options: options, Lists: lists}}
+	sections = append(sections, Section{Name: "boetticher_home", Type: "dhcp", Options: map[string]string{
+		"interface": "boetticher_home",
+		"ignore":    "1",
+		"ra":        "disabled",
+		"dhcpv6":    "disabled",
+		"ndp":       "disabled",
+	}, Lists: map[string][]string{}})
 	if !dhcpEnabled {
 		return sections
 	}
@@ -93,10 +151,12 @@ func dnsmasqSections(site model.Site, modules clientservices.Modules) []Section 
 		}
 		name := strings.ToLower(zone.Name)
 		options := map[string]string{
-			"interface":   "boetticher_iface_" + name,
-			"leasetime":   modules.DHCP.LeaseDuration,
-			"start":       "0",
-			"limit":       "0",
+			"interface": "boetticher_iface_" + name,
+			"leasetime": modules.DHCP.LeaseDuration,
+			// A static-only dnsmasq range still needs a valid subnet range;
+			// dynamicdhcp=0 prevents unreserved clients from receiving leases.
+			"start":       "2",
+			"limit":       "253",
 			"dynamicdhcp": "0",
 			"force":       "1",
 		}
@@ -118,15 +178,43 @@ func dnsmasqSections(site model.Site, modules clientservices.Modules) []Section 
 			}
 		}
 		if scope.PublishNames != nil && !*scope.PublishNames {
-			options["dhcp_ignore_names"] = "1"
+			if zone.Type == model.ZoneTypeSandbox {
+				// networkid emits set:<tag> on the range; tag:<tag> would
+				// select only already-tagged packets and leave the range
+				// unavailable to ordinary sandbox clients.
+				options["networkid"] = "boetticher_sandbox"
+			}
 		}
 		sections = append(sections, Section{Name: "boetticher_dhcp_" + name, Type: "dhcp", Options: options, Lists: lists})
 	}
 	for _, reservation := range modules.DHCP.Reservations {
 		name := strings.ToLower(reservation.Name)
-		sections = append(sections, Section{Name: "boetticher_host_" + name, Type: "host", Options: map[string]string{"name": name, "mac": reservation.MAC, "ip": reservation.Address}, Lists: map[string][]string{}})
+		sections = append(sections, Section{Name: nativeHostSectionName(name), Type: "host", Options: map[string]string{"name": name, "mac": reservation.MAC, "ip": reservation.Address, "dns": "1"}, Lists: map[string][]string{}})
 	}
 	return sections
+}
+
+func nativeHostSectionName(name string) string {
+	return "boetticher_host_" + nativeIdentifier(name)
+}
+
+func nativeIdentifier(name string) string {
+	var result strings.Builder
+	for _, character := range name {
+		switch {
+		case character >= 'a' && character <= 'z', character >= 'A' && character <= 'Z', character >= '0' && character <= '9':
+			result.WriteRune(character)
+		case character == '_':
+			result.WriteString("_u")
+		case character == '-':
+			result.WriteString("_h")
+		case character == '.':
+			result.WriteString("_d")
+		default:
+			result.WriteString("_x")
+		}
+	}
+	return result.String()
 }
 
 func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Section {
@@ -136,7 +224,7 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Se
 		if err != nil {
 			continue
 		}
-		safe := strings.NewReplacer(".", "_", "-", "_").Replace(strings.TrimSuffix(name, "."))
+		safe := nativeRecordSuffix(strings.TrimSuffix(name, "."))
 		switch record.Type {
 		case "A":
 			sections = append(sections, Section{Name: "boetticher_record_" + safe, Type: "hostrecord", Options: map[string]string{"name": name, "ip": record.Value}, Lists: map[string][]string{}})
@@ -151,31 +239,54 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Se
 	return sections
 }
 
+func nativeRecordSuffix(name string) string {
+	var result strings.Builder
+	result.WriteString("n")
+	for _, character := range name {
+		switch {
+		case character >= 'a' && character <= 'z', character >= '0' && character <= '9':
+			result.WriteRune(character)
+		case character == '-':
+			result.WriteString("_h")
+		case character == '.':
+			result.WriteString("_d")
+		default:
+			result.WriteString("_x")
+		}
+	}
+	return result.String()
+}
+
 func stubbySections(upstreams []clientservices.DNSUpstream) []Section {
 	sections := []Section{{Name: serviceStubbyGlobal, Type: "stubby", Options: map[string]string{
-		"trigger":                    "none",
-		"tls_min_version":            "1.2",
-		"edns_client_subnet_private": "1",
-		"round_robin_upstreams":      "1",
-	}, Lists: map[string][]string{"listen_address": {"127.0.0.1@5453"}}}}
+		"manual":                      "0",
+		"trigger":                     "boetticher_home",
+		"tls_authentication":          "1",
+		"tls_min_version":             "1.2",
+		"edns_client_subnet_private":  "1",
+		"round_robin_upstreams":       "1",
+		"appdata_dir":                 "/var/lib/stubby",
+		"tls_query_padding_blocksize": "128",
+		"idle_timeout":                "10000",
+	}, Lists: map[string][]string{"listen_address": {"127.0.0.1@5453"}, "dns_transport": {"GETDNS_TRANSPORT_TLS"}}}}
 	for _, upstream := range upstreams {
 		safe := strings.ReplaceAll(upstream.Address, ".", "_")
 		sections = append(sections, Section{Name: "boetticher_resolver_" + safe, Type: "resolver", Options: map[string]string{
-			"address":            upstream.Address,
-			"tls_auth_name":      upstream.TLSName,
-			"tls_port":           strconv.Itoa(upstream.Port),
-			"tls_authentication": "1",
+			"address":       upstream.Address,
+			"tls_auth_name": upstream.TLSName,
+			"tls_port":      strconv.Itoa(upstream.Port),
 		}, Lists: map[string][]string{}})
 	}
 	return sections
 }
 
-func ntpSections(upstreams []string, serve *bool) []Section {
+func ntpSections(site model.Site, upstreams []string, serve *bool) []Section {
 	enableServer := "0"
 	if serve != nil && *serve {
 		enableServer = "1"
 	}
-	return []Section{{Name: serviceNTPSection, Type: "timeserver", Options: map[string]string{"enable_server": enableServer}, Lists: map[string][]string{"server": append([]string(nil), upstreams...)}}}
+	_ = site // BusyBox sysntpd does not consume an interface UCI option; firewall input scopes the server.
+	return []Section{{Name: serviceNTPSection, Type: "timeserver", Options: map[string]string{"enabled": "1", "use_dhcp": "0", "enable_server": enableServer}, Lists: map[string][]string{"server": append([]string(nil), upstreams...)}}}
 }
 
 func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled bool) []Section {

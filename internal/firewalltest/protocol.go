@@ -8,6 +8,7 @@ package firewalltest
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
 	"strings"
@@ -15,7 +16,7 @@ import (
 
 const (
 	ProtocolVersion = 1
-	HelperVersion   = "boetticher-firewall-test-host/v6"
+	HelperVersion   = "boetticher-firewall-test-host/v17"
 	HelperPath      = "/usr/local/libexec/boetticher-firewall-test-host"
 	HelperCommand   = HelperPath
 	LockPath        = "/run/boetticher/firewall-test.lock"
@@ -31,28 +32,40 @@ const (
 var ZoneOrder = []string{"TRANSIT", "INFRA", "SERVERS", "TRUSTED", "SANDBOX", "MGMT"}
 
 type Zone struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	VLAN         int    `json:"vlan"`
-	Subnet       string `json:"subnet"`
-	Gateway      string `json:"gateway"`
-	Address      string `json:"address,omitempty"`
-	DHCPMode     string `json:"dhcp_mode,omitempty"`
-	ClientMAC    string `json:"client_mac,omitempty"`
-	ExpectedName string `json:"expected_name,omitempty"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	VLAN             int    `json:"vlan"`
+	Subnet           string `json:"subnet"`
+	Gateway          string `json:"gateway"`
+	Address          string `json:"address,omitempty"`
+	DHCPMode         string `json:"dhcp_mode,omitempty"`
+	ClientMAC        string `json:"client_mac,omitempty"`
+	UnknownClientMAC string `json:"unknown_client_mac,omitempty"`
+	ExpectedName     string `json:"expected_name,omitempty"`
+	PoolStart        string `json:"pool_start,omitempty"`
+	PoolEnd          string `json:"pool_end,omitempty"`
+}
+
+type DNSQuery struct {
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	Expected       string `json:"expected,omitempty"`
+	ExpectNoAnswer bool   `json:"expect_no_answer,omitempty"`
 }
 
 type Request struct {
-	Version        int    `json:"version"`
-	Action         string `json:"action"`
-	Zones          []Zone `json:"zones,omitempty"`
-	PublicAddress  string `json:"public_address,omitempty"`
-	PublicHost     string `json:"public_host,omitempty"`
-	HomeProxmox    string `json:"home_proxmox,omitempty"`
-	HomeController string `json:"home_controller,omitempty"`
-	ProviderHome   string `json:"provider_home,omitempty"`
-	Service        string `json:"service,omitempty"`
-	DNSHost        string `json:"dns_host,omitempty"`
+	Version        int        `json:"version"`
+	Action         string     `json:"action"`
+	Zones          []Zone     `json:"zones,omitempty"`
+	PublicAddress  string     `json:"public_address,omitempty"`
+	PublicHost     string     `json:"public_host,omitempty"`
+	HomeProxmox    string     `json:"home_proxmox,omitempty"`
+	HomeController string     `json:"home_controller,omitempty"`
+	ProviderHome   string     `json:"provider_home,omitempty"`
+	Service        string     `json:"service,omitempty"`
+	Domain         string     `json:"domain,omitempty"`
+	UseDHCP        bool       `json:"use_dhcp,omitempty"`
+	DNSQueries     []DNSQuery `json:"dns_queries,omitempty"`
 }
 
 type Result struct {
@@ -141,6 +154,25 @@ func ValidateRequest(request Request) error {
 		if request.Service != "dhcp" && request.Service != "dns" {
 			return errors.New("client-services request requires DHCP or DNS service")
 		}
+		if request.Domain == "" || strings.ContainsAny(request.Domain, " \t\r\n") {
+			return errors.New("client-services request requires a valid local domain")
+		}
+		if len(request.DNSQueries) == 0 {
+			return errors.New("client-services request requires bounded DNS queries")
+		}
+		for _, query := range request.DNSQueries {
+			if query.Name == "" || !strings.Contains(query.Name, ".") || strings.ContainsAny(query.Name, " \t\r\n") {
+				return errors.New("client-services request contains an invalid DNS query name")
+			}
+			switch query.Type {
+			case "A", "PTR", "CNAME":
+			default:
+				return fmt.Errorf("client-services request contains unsupported DNS query type %q", query.Type)
+			}
+			if query.ExpectNoAnswer && query.Expected != "" {
+				return errors.New("client-services negative DNS queries must not contain an expected value")
+			}
+		}
 		if len(request.Zones) != len(ZoneOrder) {
 			return errors.New("client-services request must contain six zones")
 		}
@@ -179,6 +211,37 @@ func ValidateRequest(request Request) error {
 			}
 			if zone.VLAN < 1 || zone.VLAN > 4094 {
 				return fmt.Errorf("firewall test zone %s has an invalid VLAN", zone.Name)
+			}
+			for _, value := range []string{zone.Address, zone.PoolStart, zone.PoolEnd} {
+				if value != "" {
+					address, err := netip.ParseAddr(value)
+					if err != nil || !address.Is4() || !prefix.Contains(address) {
+						return fmt.Errorf("firewall test zone %s contains an invalid IPv4 fixture value", zone.Name)
+					}
+				}
+			}
+			if request.Action == "client-services" && request.UseDHCP && zone.ClientMAC == "" && zone.DHCPMode == "reservations-only" {
+				return fmt.Errorf("client-services reservation-only zone %s is missing its reserved test identity", zone.Name)
+			}
+			if request.Action == "client-services" && request.UseDHCP {
+				if zone.DHCPMode != "reservations-only" && zone.DHCPMode != "pool" {
+					return fmt.Errorf("client-services zone %s has an invalid DHCP scope mode", zone.Name)
+				}
+				if zone.DHCPMode == "pool" && (zone.PoolStart == "" || zone.PoolEnd == "") {
+					return fmt.Errorf("client-services pool zone %s is missing its expected allocation range", zone.Name)
+				}
+				if zone.ClientMAC != "" {
+					mac, macErr := net.ParseMAC(zone.ClientMAC)
+					if macErr != nil || len(mac) != 6 {
+						return fmt.Errorf("client-services zone %s has an invalid test MAC", zone.Name)
+					}
+				}
+				if zone.UnknownClientMAC != "" {
+					mac, macErr := net.ParseMAC(zone.UnknownClientMAC)
+					if macErr != nil || len(mac) != 6 {
+						return fmt.Errorf("client-services zone %s has an invalid unknown-client MAC", zone.Name)
+					}
+				}
 			}
 			if request.Action == "run" {
 				publicAddress, publicErr := netip.ParseAddr(request.PublicAddress)

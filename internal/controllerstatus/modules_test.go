@@ -69,6 +69,26 @@ func TestDaemonMapsModuleStatusToExistingDisplaySlots(t *testing.T) {
 	}
 }
 
+func TestDaemonGivesSequentialModuleChecksTheirBoundedBudget(t *testing.T) {
+	d := NewDaemon(DefaultSettings(), nil)
+	d.Controller = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }
+	d.Host = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }
+	d.Connectivity = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }
+	d.Throughput = func(context.Context) (float64, error) { return 600, nil }
+	var deadline time.Time
+	d.Modules = func(ctx context.Context) ModuleStatus {
+		deadline, _ = ctx.Deadline()
+		return ModuleStatus{Firewall: CheckResult{Configured: true, Healthy: true}}
+	}
+
+	d.refresh(context.Background())
+
+	remaining := time.Until(deadline)
+	if deadline.IsZero() || remaining < 15*time.Second || remaining > moduleCheckTimeout {
+		t.Fatalf("module check deadline = %v from now, want a bounded %s budget", remaining, moduleCheckTimeout)
+	}
+}
+
 func TestModuleComponentPreservesActionRequiredAndConfigStagedStates(t *testing.T) {
 	for _, test := range []struct {
 		name  string

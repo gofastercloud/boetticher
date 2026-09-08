@@ -47,3 +47,42 @@ func TestValidateRejectsMalformedEncryptedUpstream(t *testing.T) {
 		t.Fatalf("expected encrypted-upstream validation error, got %v", err)
 	}
 }
+
+func TestValidateRejectsDHCPWithoutUsableLocalDNS(t *testing.T) {
+	if err := Validate(Modules{DHCP: &DHCPConfig{Enabled: boolPtr(true)}}, testSite()); err == nil || !strings.Contains(err.Error(), "enabled local DNS") {
+		t.Fatalf("DHCP without DNS was accepted: %v", err)
+	}
+}
+
+func TestValidateRejectsProbePoolAndRecordTypeCoexistence(t *testing.T) {
+	modules := Modules{DNS: &DNSConfig{Enabled: boolPtr(true), Records: []DNSRecord{
+		{Name: "alias", Type: "A", Value: "10.10.30.61"},
+		{Name: "alias", Type: "CNAME", Value: "target"},
+	}}}
+	if err := Validate(modules, testSite()); err == nil || !strings.Contains(err.Error(), "both A and CNAME") {
+		t.Fatalf("A/CNAME coexistence was accepted: %v", err)
+	}
+
+	modules = Modules{DNS: &DNSConfig{Enabled: boolPtr(true)}, DHCP: &DHCPConfig{Enabled: boolPtr(true), Scopes: []DHCPScope{
+		{Zone: "TRANSIT", Mode: ScopeReservationsOnly}, {Zone: "INFRA", Mode: ScopeReservationsOnly},
+		{Zone: "SERVERS", Mode: ScopePool, PoolStart: "10.10.20.100", PoolEnd: "10.10.20.199"},
+		{Zone: "TRUSTED", Mode: ScopePool, PoolStart: "10.10.30.100", PoolEnd: "10.10.30.199"},
+		{Zone: "SANDBOX", Mode: ScopePool, PoolStart: "10.10.40.250", PoolEnd: "10.10.40.254"},
+		{Zone: "MGMT", Mode: ScopeReservationsOnly},
+	}}}
+	if err := Validate(modules, testSite()); err == nil || !strings.Contains(err.Error(), "reserved probe") {
+		t.Fatalf("probe-address pool was accepted: %v", err)
+	}
+}
+
+func TestValidateRejectsDanglingAndCyclicAliases(t *testing.T) {
+	for _, records := range [][]DNSRecord{
+		{{Name: "alias", Type: "CNAME", Value: "missing"}},
+		{{Name: "a", Type: "CNAME", Value: "b"}, {Name: "b", Type: "CNAME", Value: "a"}},
+	} {
+		modules := Modules{DNS: &DNSConfig{Enabled: boolPtr(true), Records: records}}
+		if err := Validate(modules, testSite()); err == nil {
+			t.Fatalf("invalid alias graph was accepted: %#v", records)
+		}
+	}
+}

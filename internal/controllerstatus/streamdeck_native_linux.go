@@ -32,6 +32,7 @@ const (
 	streamDeckDevFSRelease    = 0x80045510
 	streamDeckDevFSBulk       = 0xc0185502
 	streamDeckDevFSControl    = 0xc0185500
+	streamDeckUSBTimeoutMS    = 1000
 	streamDeckVendorID        = uint16(0x0fd9)
 	streamDeckProductID       = uint16(0x006d)
 )
@@ -79,6 +80,14 @@ func openNativeStreamDeck(ctx context.Context, config StreamDeckConfig, brightne
 		_ = file.Close()
 		return nil, fmt.Errorf("claim StreamDeck USB interface: %w", err)
 	}
+	controlCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	if err := device.reset(controlCtx); err != nil {
+		cancel()
+		device.release()
+		_ = file.Close()
+		return nil, fmt.Errorf("reset StreamDeck: %w", err)
+	}
+	cancel()
 	value := uint8(brightness * 100)
 	if value == 0 {
 		value = 1
@@ -86,10 +95,13 @@ func openNativeStreamDeck(ctx context.Context, config StreamDeckConfig, brightne
 	if value > 100 {
 		value = 100
 	}
-	controlCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	controlCtx, cancel = context.WithTimeout(ctx, 2*time.Second)
 	_ = device.setBrightness(controlCtx, value)
 	cancel()
-	inputCtx, cancelInput := context.WithCancel(ctx)
+	// The factory's context bounds discovery/open only. The input reader must
+	// live until Close cancels it; otherwise every successful open immediately
+	// stops accepting StreamDeck button events.
+	inputCtx, cancelInput := context.WithCancel(context.Background())
 	device.cancel = cancelInput
 	device.wg.Add(1)
 	go device.readEvents(inputCtx)
@@ -155,7 +167,8 @@ type nativeStreamDeck struct {
 	events     chan KeyEvent
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
-	mu         sync.Mutex
+	readMu     sync.Mutex
+	writeMu    sync.Mutex
 	closeOnce  sync.Once
 	closeErr   error
 }
@@ -202,8 +215,8 @@ func (d *nativeStreamDeck) control(ctx context.Context, value uint16, data []byt
 		return err
 	}
 	request := streamDeckUSBFSControl{ReqType: 0x21, Req: 0x09, Value: value, Index: uint16(d.info.Interface), Length: uint16(len(data)), Timeout: 1000, Data: uintptr(unsafe.Pointer(&data[0]))}
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	return d.ioctl(streamDeckDevFSControl, uintptr(unsafe.Pointer(&request)))
 }
 
@@ -211,9 +224,9 @@ func (d *nativeStreamDeck) bulk(ctx context.Context, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	request := streamDeckUSBFSBulk{Endpoint: uint32(d.info.EndpointIn), Length: uint32(len(data)), Data: uintptr(unsafe.Pointer(&data[0])), Timeout: 1000}
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	request := streamDeckUSBFSBulk{Endpoint: uint32(d.info.EndpointIn), Length: uint32(len(data)), Data: uintptr(unsafe.Pointer(&data[0])), Timeout: streamDeckUSBTimeoutMS}
+	d.readMu.Lock()
+	defer d.readMu.Unlock()
 	return d.ioctl(streamDeckDevFSBulk, uintptr(unsafe.Pointer(&request)))
 }
 
@@ -223,11 +236,18 @@ func (d *nativeStreamDeck) setBrightness(ctx context.Context, value uint8) error
 	return d.control(ctx, 0x0303, data)
 }
 
+func (d *nativeStreamDeck) reset(ctx context.Context) error {
+	data := make([]byte, 32)
+	data[0], data[1] = 3, 2
+	return d.control(ctx, 0x0303, data)
+}
+
 func (d *nativeStreamDeck) write(ctx context.Context, data []byte) error {
 	if d.info.EndpointOut != 0 {
 		request := streamDeckUSBFSBulk{Endpoint: uint32(d.info.EndpointOut), Length: uint32(len(data)), Data: uintptr(unsafe.Pointer(&data[0])), Timeout: 1000}
-		d.mu.Lock()
-		defer d.mu.Unlock()
+		d.writeMu.Lock()
+		defer d.writeMu.Unlock()
+		request.Timeout = streamDeckUSBTimeoutMS
 		return d.ioctl(streamDeckDevFSBulk, uintptr(unsafe.Pointer(&request)))
 	}
 	return d.control(ctx, 0x0200, data)

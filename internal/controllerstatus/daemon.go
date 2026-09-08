@@ -28,32 +28,33 @@ type Daemon struct {
 	StreamDeckFactory StreamDeckFactory
 	Now               func() time.Time
 
-	renderer         Renderer
-	snapshot         StatusSnapshot
-	controller       *Debouncer
-	host             *Debouncer
-	firewall         *Debouncer
-	internet         *Debouncer
-	throughput       float64
-	throughputAt     time.Time
-	throughputTry    time.Time
-	connectivityAt   time.Time
-	lastConnectivity CheckResult
-	telemetry        ProxmoxSnapshot
-	telemetryAttempt time.Time
-	telemetryRunning bool
-	telemetryResults chan telemetryResult
-	operation        *operationDisplay
-	configStaged     bool
-	streamdeckFrames chan []KeyImage
-	streamdeckEvents chan KeyEvent
-	streamdeckView   StreamDeckView
-	streamdeckPage   int
-	streamdeckGuest  int
-	manualRefreshAt  time.Time
-	streamdeckDirty  bool
-	previous         StatusSnapshot
-	driverBroken     bool
+	renderer              Renderer
+	snapshot              StatusSnapshot
+	controller            *Debouncer
+	host                  *Debouncer
+	firewall              *Debouncer
+	internet              *Debouncer
+	throughput            float64
+	throughputAt          time.Time
+	throughputTry         time.Time
+	connectivityAt        time.Time
+	lastConnectivity      CheckResult
+	telemetry             ProxmoxSnapshot
+	telemetryAttempt      time.Time
+	telemetryRunning      bool
+	telemetryResults      chan telemetryResult
+	operation             *operationDisplay
+	configStaged          bool
+	streamdeckFrames      chan []KeyImage
+	streamdeckEvents      chan KeyEvent
+	streamdeckView        StreamDeckView
+	streamdeckPage        int
+	streamdeckGuest       int
+	streamdeckAnimationAt time.Time
+	manualRefreshAt       time.Time
+	streamdeckDirty       bool
+	previous              StatusSnapshot
+	driverBroken          bool
 }
 
 type operationDisplay struct {
@@ -66,6 +67,12 @@ type telemetryResult struct {
 	snapshot ProxmoxSnapshot
 	err      error
 }
+
+// Module status is a bounded but multi-hop observation: DHCP, DNS, and the
+// firewall status commands each perform their own authenticated provider or
+// Host checks. Keep the shorter budget for local Controller/Host checks, but
+// do not turn normal sequential module observations into false failures.
+const moduleCheckTimeout = 20 * time.Second
 
 func NewDaemon(settings Settings, driver Driver) *Daemon {
 	if settings.Interval <= 0 {
@@ -230,7 +237,7 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			checkCtx, cancel := context.WithTimeout(ctx, moduleCheckTimeout)
 			defer cancel()
 			results <- result{kind: "modules", modules: d.Modules(checkCtx)}
 		}()
@@ -369,8 +376,8 @@ func (d *Daemon) handleStreamDeckEvent(ctx context.Context, event KeyEvent) {
 		switch {
 		case event.Index == 0:
 			d.streamdeckView = StreamDeckHostDetail
-		case event.Index >= 5 && event.Index <= 12:
-			index := d.streamdeckPage*8 + event.Index - 5
+		case event.Index >= 5 && event.Index <= 9:
+			index := d.streamdeckPage*5 + event.Index - 5
 			if index < len(d.telemetry.Guests) {
 				d.streamdeckGuest = index
 				d.streamdeckView = StreamDeckGuestDetail
@@ -472,14 +479,48 @@ func (d *Daemon) render(ctx context.Context) {
 			_ = d.Driver.Close()
 		}
 	}
-	d.queueStreamDeckRender()
+	if d.streamdeckNeedsMarquee() {
+		if d.streamdeckAnimationAt.IsZero() || !now.Before(d.streamdeckAnimationAt) {
+			d.streamdeckDirty = true
+			d.streamdeckAnimationAt = now.Add(streamDeckMarqueeInterval)
+		}
+	} else {
+		d.streamdeckAnimationAt = time.Time{}
+	}
+	d.queueStreamDeckRender(now)
 }
 
-func (d *Daemon) queueStreamDeckRender() {
+func (d *Daemon) streamdeckNeedsMarquee() bool {
+	if d.operation != nil {
+		return false
+	}
+	switch d.streamdeckView {
+	case StreamDeckHostDetail:
+		return needsDeckMarquee(d.telemetry.Host.Node)
+	case StreamDeckGuestDetail:
+		if d.streamdeckGuest < 0 || d.streamdeckGuest >= len(d.telemetry.Guests) {
+			return false
+		}
+		return needsDeckMarquee(d.telemetry.Guests[d.streamdeckGuest].Name)
+	default:
+		if needsDeckMarquee(d.telemetry.Host.Node) {
+			return true
+		}
+		start := d.streamdeckPage * 5
+		for index := start; index < len(d.telemetry.Guests) && index < start+5; index++ {
+			if needsDeckMarquee(d.telemetry.Guests[index].Name) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func (d *Daemon) queueStreamDeckRender(now time.Time) {
 	if !d.Settings.StreamDeckEnabled || d.streamdeckFrames == nil || !d.streamdeckDirty {
 		return
 	}
-	frame := (StreamDeckRenderer{}).Render(d.snapshot, d.telemetry, d.operation, d.streamdeckView, d.streamdeckPage, d.streamdeckGuest)
+	frame := (StreamDeckRenderer{}).RenderAt(d.snapshot, d.telemetry, d.operation, d.streamdeckView, d.streamdeckPage, d.streamdeckGuest, now)
 	select {
 	case <-d.streamdeckFrames:
 	default:

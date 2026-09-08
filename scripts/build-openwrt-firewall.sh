@@ -62,7 +62,7 @@ uci -q set network.boetticher_home.delegate='0'
 uci -q set network.boetticher_home.ip6assign='0'
 uci -q delete dhcp.lan || true
 uci -q delete dhcp.wan || true
-uci -q delete dhcp.dnsmasq || true
+while uci -q delete dhcp.@dnsmasq[0]; do :; done
 uci -q set dhcp.boetticher_home='dhcp'
 uci -q set dhcp.boetticher_home.interface='boetticher_home'
 uci -q set dhcp.boetticher_home.ignore='1'
@@ -104,22 +104,51 @@ uci -q set uhttpd.main.redirect_https='1'
 uci -q set uhttpd.main.listen_http='0.0.0.0:80'
 uci -q set uhttpd.main.listen_https='0.0.0.0:443'
 uci -q commit uhttpd
+uci -q delete stubby.global || true
+while uci -q delete stubby.@resolver[0]; do :; done
+uci -q set stubby.global='stubby'
+uci -q set stubby.global.manual='0'
+uci -q set stubby.global.trigger='boetticher_home'
+uci -q set stubby.global.tls_authentication='1'
+uci -q set stubby.global.tls_min_version='1.2'
+uci -q set stubby.global.edns_client_subnet_private='1'
+uci -q set stubby.global.round_robin_upstreams='1'
+uci -q delete stubby.global.listen_address || true
+uci -q add_list stubby.global.listen_address='127.0.0.1@5453'
+uci -q delete stubby.global.dns_transport || true
+uci -q add_list stubby.global.dns_transport='GETDNS_TRANSPORT_TLS'
+uci -q set stubby.boetticher_resolver_9_9_9_9='resolver'
+uci -q set stubby.boetticher_resolver_9_9_9_9.address='9.9.9.9'
+uci -q set stubby.boetticher_resolver_9_9_9_9.tls_auth_name='dns.quad9.net'
+uci -q set stubby.boetticher_resolver_9_9_9_9.tls_port='853'
+uci -q set stubby.boetticher_resolver_149_112_112_112='resolver'
+uci -q set stubby.boetticher_resolver_149_112_112_112.address='149.112.112.112'
+uci -q set stubby.boetticher_resolver_149_112_112_112.tls_auth_name='dns.quad9.net'
+uci -q set stubby.boetticher_resolver_149_112_112_112.tls_port='853'
+uci -q commit stubby
 mkdir -p /etc/boetticher
 touch /etc/boetticher/dhcp.leases
 chown dnsmasq:dnsmasq /etc/boetticher/dhcp.leases
 chmod 0640 /etc/boetticher/dhcp.leases
+printf '%s\n' 'v7' >/etc/boetticher/client-services-contract
+chmod 0644 /etc/boetticher/client-services-contract
 uci -q delete system.ntp || true
 uci -q set system.ntp='timeserver'
 uci -q delete system.ntp.server || true
 uci -q add_list system.ntp.server='162.159.200.1'
-uci -q add_list system.ntp.server='162.159.200.123'
-uci -q add_list system.ntp.server='216.239.35.0'
+uci -q add_list system.ntp.server='17.253.34.125'
+uci -q add_list system.ntp.server='129.6.15.28'
+uci -q set system.ntp.enabled='1'
+uci -q set system.ntp.use_dhcp='0'
 uci -q set system.ntp.enable_server='0'
 uci -q commit system
-/etc/init.d/dnsmasq disable 2>/dev/null || true
-/etc/init.d/stubby disable 2>/dev/null || true
-/etc/init.d/sysntpd disable 2>/dev/null || true
+/etc/init.d/dnsmasq enable 2>/dev/null || true
+/etc/init.d/stubby enable 2>/dev/null || true
+/etc/init.d/sysntpd enable 2>/dev/null || true
 /etc/init.d/odhcpd disable 2>/dev/null || true
+/etc/init.d/dnsmasq restart 2>/dev/null || true
+/etc/init.d/stubby restart 2>/dev/null || true
+/etc/init.d/sysntpd restart 2>/dev/null || true
 px5g selfsigned -days 3650 -newkey rsa:2048 -keyout /etc/uhttpd.key.new -out /etc/uhttpd.crt.new -subj /C=AU/ST=NSW/L=Sydney/O=Boetticher/CN=boetticher-firewall -addext subjectAltName=DNS:boetticher-firewall
 mv /etc/uhttpd.key.new /etc/uhttpd.key
 mv /etc/uhttpd.crt.new /etc/uhttpd.crt
@@ -165,7 +194,7 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
 }
 EOF
 
-packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables dnsmasq-full stubby qemu-ga'
+packages='uhttpd uhttpd-mod-ubus rpcd rpcd-mod-file rpcd-mod-iwinfo px5g-mbedtls ca-bundle firewall4 nftables dnsmasq stubby qemu-ga'
 log "checking ImageBuilder host prerequisites"
 make -C "$builder" TOPDIR="$builder" -f include/prereq-build.mk prereq IB=1 V=s
 touch "$builder/staging_dir/host/.prereq-build"

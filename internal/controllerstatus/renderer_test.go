@@ -136,21 +136,32 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 		FetchedAt: time.Now(),
 	}
 	home := renderer.Render(snapshot, telemetry, nil, StreamDeckHome, 0, -1)
-	for index, want := range []string{"PVE", "CPU", "RAM", "DATA", "NET", "201 pulse", "", "", "", "", "", "", "", "PAGE", "REFRESH"} {
+	for index, want := range []string{"PVE", "CPU", "RAM", "DATA", "NET", "CT201", "", "", "", "", "FW", "VPN", "DNS", "SCROLL", "REFRESH"} {
 		if home[index].Title != want {
 			t.Fatalf("home key %d title = %q, want %q", index, home[index].Title, want)
 		}
 	}
-	if home[0].State != Healthy || home[4].Value != "812M" || home[5].State != Healthy {
-		t.Fatalf("home status keys = %#v %#v %#v", home[0], home[4], home[5])
+	if home[0].State != Healthy || home[3].State != Healthy || home[4].Value != "812M" || home[5].Title != "CT201" || home[5].Value != "pulse" || home[5].Footer != "RUNNING" || home[5].State != Healthy || home[10].State != Healthy || home[11].State != Off || home[12].State != Failed {
+		t.Fatalf("home status keys = %#v %#v %#v %#v %#v %#v", home[0], home[3], home[4], home[5], home[10], home[12])
 	}
 	host := renderer.Render(snapshot, telemetry, nil, StreamDeckHostDetail, 0, -1)
 	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].State != Failed || host[13].Title != "BACK" {
 		t.Fatalf("host detail keys = %#v", host)
 	}
 	guest := renderer.Render(snapshot, telemetry, nil, StreamDeckGuestDetail, 0, 0)
-	if guest[0].Value != "201" || guest[1].Value != "pulse" || guest[2].Value != "LXC" || guest[13].Title != "BACK" {
+	if guest[0].Title != "CT201" || guest[0].Value != "pulse" || guest[0].Footer != "RUNNING" || guest[1].Value != "pulse" || guest[2].Value != "LXC" || guest[13].Title != "BACK" {
 		t.Fatalf("guest detail keys = %#v", guest)
+	}
+}
+
+func TestStreamDeckMarqueeMovesLongHostnamesWithoutShrinkingGlyphs(t *testing.T) {
+	if !needsDeckMarquee("a-very-long-managed-hostname") {
+		t.Fatal("long hostname did not require marquee")
+	}
+	first := marqueeDeckText(streamDeckFont, "a-very-long-managed-hostname", streamDeckTextWidth, time.UnixMilli(0))
+	second := marqueeDeckText(streamDeckFont, "a-very-long-managed-hostname", streamDeckTextWidth, time.UnixMilli(750))
+	if first == second {
+		t.Fatalf("hostname marquee did not advance: %q", first)
 	}
 }
 
@@ -163,17 +174,17 @@ func TestStreamDeckRendererPagesGuestsAndKeepsStoppedNeutral(t *testing.T) {
 	guests[2].Status = "unknown"
 	telemetry := ProxmoxSnapshot{Guests: guests, FetchedAt: time.Now()}
 	keys := (StreamDeckRenderer{}).Render(NewSnapshot(true), telemetry, nil, StreamDeckHome, 0, -1)
-	if keys[5].Value != "VM" || keys[6].State != Off || keys[7].State != Attention || keys[13].Value != "1/2" {
+	if keys[5].Title != "VM201" || keys[5].Value != "guest" || keys[6].State != Off || keys[7].State != Attention || keys[13].Value != "1/2" {
 		t.Fatalf("first guest page = %#v", keys[5:14])
 	}
 	keys = (StreamDeckRenderer{}).Render(NewSnapshot(true), telemetry, nil, StreamDeckHome, 1, -1)
-	if keys[5].Title != "209 guest" || keys[6].Title != "" || keys[13].Value != "2/2" {
+	if keys[5].Title != "VM206" || keys[8].Title != "VM209" || keys[9].Title != "" || keys[13].Value != "2/2" {
 		t.Fatalf("second guest page = %#v", keys[5:14])
 	}
 	telemetry.Stale = true
 	keys = (StreamDeckRenderer{}).Render(NewSnapshot(true), telemetry, nil, StreamDeckHome, 0, -1)
-	if keys[1].State != Attention || keys[2].Footer != "STALE" {
-		t.Fatalf("stale telemetry keys = %#v %#v", keys[1], keys[2])
+	if keys[1].State != Attention || keys[2].Footer != "STALE" || keys[3].State != Attention {
+		t.Fatalf("stale telemetry keys = %#v %#v %#v", keys[1], keys[2], keys[3])
 	}
 }
 
@@ -188,7 +199,7 @@ func TestDaemonRetainsLastGoodTelemetryWhenCollectionFails(t *testing.T) {
 
 func TestStreamDeckNavigationIsReadOnlyAndRefreshIsRateLimited(t *testing.T) {
 	d := NewDaemon(DefaultSettings(), nil)
-	d.telemetry.Guests = []GuestStats{{VMID: 201, Name: "pulse", Kind: "lxc", Status: "running"}}
+	d.telemetry.Guests = []GuestStats{{VMID: 201, Name: "pulse", Kind: "lxc", Status: "running"}, {VMID: 202, Name: "one", Kind: "vm", Status: "running"}, {VMID: 203, Name: "two", Kind: "vm", Status: "running"}, {VMID: 204, Name: "three", Kind: "vm", Status: "running"}, {VMID: 205, Name: "four", Kind: "vm", Status: "running"}, {VMID: 206, Name: "five", Kind: "vm", Status: "running"}}
 	d.Now = func() time.Time { return time.Unix(100, 0) }
 	d.handleStreamDeckEvent(context.Background(), KeyEvent{Index: 0})
 	if d.streamdeckView != StreamDeckHostDetail {
@@ -198,8 +209,12 @@ func TestStreamDeckNavigationIsReadOnlyAndRefreshIsRateLimited(t *testing.T) {
 	if d.streamdeckView != StreamDeckHome {
 		t.Fatalf("Back key view = %s", d.streamdeckView)
 	}
+	d.handleStreamDeckEvent(context.Background(), KeyEvent{Index: 13})
+	if d.streamdeckPage != 1 {
+		t.Fatalf("Scroll key page = %d, want 1", d.streamdeckPage)
+	}
 	d.handleStreamDeckEvent(context.Background(), KeyEvent{Index: 5})
-	if d.streamdeckView != StreamDeckGuestDetail || d.streamdeckGuest != 0 {
+	if d.streamdeckView != StreamDeckGuestDetail || d.streamdeckGuest != 5 {
 		t.Fatalf("guest key view=%s guest=%d", d.streamdeckView, d.streamdeckGuest)
 	}
 	d.handleStreamDeckEvent(context.Background(), KeyEvent{Index: 13})

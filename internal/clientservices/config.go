@@ -21,6 +21,8 @@ const (
 	DNSResolverPort       = 853
 	StubbyListenAddress   = "127.0.0.1#5453"
 	LeaseFilePath         = "/etc/boetticher/dhcp.leases"
+	ProbeAddressStart     = 250
+	ProbeAddressEnd       = 254
 )
 
 // Modules is the installed lab.yml service intent. A nil capability block is
@@ -89,7 +91,7 @@ func DefaultTimeUpstreams() []string {
 	// The first endpoint is a provider-published IPv4 bootstrap address. The
 	// remaining entries provide independent IPv4 operators without requiring
 	// DNS before the appliance can acquire time.
-	return []string{"162.159.200.1", "162.159.200.123", "216.239.35.0"}
+	return []string{"162.159.200.1", "17.253.34.125", "129.6.15.28"}
 }
 
 func DefaultScopes() []DHCPScope {
@@ -142,6 +144,24 @@ func (m Modules) Normalize() Modules {
 	return result
 }
 
+func (m Modules) Clone() Modules {
+	result := Modules{}
+	if m.DNS != nil {
+		copyDNS := *m.DNS
+		copyDNS.Upstreams = append([]DNSUpstream(nil), m.DNS.Upstreams...)
+		copyDNS.Records = append([]DNSRecord(nil), m.DNS.Records...)
+		result.DNS = &copyDNS
+	}
+	if m.DHCP != nil {
+		copyDHCP := *m.DHCP
+		copyDHCP.Scopes = append([]DHCPScope(nil), m.DHCP.Scopes...)
+		copyDHCP.Reservations = append([]Reservation(nil), m.DHCP.Reservations...)
+		copyDHCP.Time.Upstreams = append([]string(nil), m.DHCP.Time.Upstreams...)
+		result.DHCP = &copyDHCP
+	}
+	return result
+}
+
 func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
 	if normalized.DNS != nil {
@@ -150,7 +170,15 @@ func Validate(modules Modules, site model.Site) error {
 		}
 	}
 	if normalized.DHCP != nil {
+		if Enabled(normalized.DHCP.Enabled) && (normalized.DNS == nil || !Enabled(normalized.DNS.Enabled)) {
+			return errors.New("enabled DHCP requires an enabled local DNS capability")
+		}
 		if err := validateDHCP(normalized.DHCP, site); err != nil {
+			return err
+		}
+	}
+	if normalized.DNS != nil && (normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
+		if err := validateSharedNames(normalized.DNS, &DHCPConfig{}, site); err != nil {
 			return err
 		}
 	}
@@ -185,6 +213,7 @@ func validateDNS(config *DNSConfig, site model.Site) error {
 		}
 	}
 	seen := map[string]struct{}{}
+	seenNames := map[string]string{}
 	owned := map[string]struct{}{}
 	for _, component := range site.PlatformComponents() {
 		if canonical, err := canonicalName(component.Hostname, site.Network.Domain); err == nil {
@@ -208,10 +237,14 @@ func validateDNS(config *DNSConfig, site model.Site) error {
 		if _, exists := seen[key]; exists {
 			return fmt.Errorf("duplicate DNS record %s %s", name, record.Type)
 		}
+		if previous, exists := seenNames[name]; exists {
+			return fmt.Errorf("DNS name %s cannot contain both %s and %s records", name, previous, record.Type)
+		}
 		if _, exists := owned[name]; exists {
 			return fmt.Errorf("DNS record %s collides with a platform name", name)
 		}
 		seen[key] = struct{}{}
+		seenNames[name] = record.Type
 		if record.Type == "A" {
 			address := net.ParseIP(record.Value)
 			if address == nil || address.To4() == nil || address.To4().String() != record.Value || !addressInZone(address.To4(), site) {
@@ -275,6 +308,9 @@ func validateDHCP(config *DHCPConfig, site model.Site) error {
 			if start == end {
 				return fmt.Errorf("modules.dhcp scope %s pool is empty", zone.Name)
 			}
+			if overlapsProbeRange(start, end) {
+				return fmt.Errorf("modules.dhcp scope %s pool overlaps reserved probe addresses", zone.Name)
+			}
 		}
 	}
 	if len(seenZones) != len(zones) {
@@ -295,6 +331,9 @@ func validateDHCP(config *DHCPConfig, site model.Site) error {
 		address, err := netip.ParseAddr(reservation.Address)
 		if err != nil || !address.Is4() || address.String() != reservation.Address || !usableAddress(address, zone) {
 			return fmt.Errorf("DHCP reservation %s address %q is outside usable %s addresses", name, reservation.Address, zone.Name)
+		}
+		if address.As4()[3] >= ProbeAddressStart && address.As4()[3] <= ProbeAddressEnd {
+			return fmt.Errorf("DHCP reservation %s uses a reserved probe address", name)
 		}
 		mac, err := canonicalMAC(reservation.MAC)
 		if err != nil {
@@ -337,10 +376,58 @@ func validateSharedNames(dns *DNSConfig, dhcp *DHCPConfig, site model.Site) erro
 		name := strings.ToLower(reservation.Name) + "." + strings.ToLower(strings.TrimSuffix(site.Network.Domain, "."))
 		seen[name] = struct{}{}
 	}
+	for _, component := range site.PlatformComponents() {
+		if name, err := canonicalName(component.Hostname, site.Network.Domain); err == nil {
+			seen[name] = struct{}{}
+		}
+		for _, alias := range component.DNSAliases {
+			if name, err := canonicalName(alias, site.Network.Domain); err == nil {
+				seen[name] = struct{}{}
+			}
+		}
+	}
+	cnameTargets := map[string]string{}
 	for _, record := range dns.Records {
-		name, _ := canonicalName(record.Name, site.Network.Domain)
+		name, err := canonicalName(record.Name, site.Network.Domain)
+		if err != nil {
+			return err
+		}
 		if _, exists := seen[name]; exists {
 			return fmt.Errorf("DNS record %s conflicts with a reservation-derived name", name)
+		}
+		if record.Type == "A" {
+			seen[name] = struct{}{}
+			continue
+		}
+		target, err := canonicalName(record.Value, site.Network.Domain)
+		if err != nil {
+			return err
+		}
+		cnameTargets[name] = target
+		seen[name] = struct{}{}
+	}
+	var walk func(string, map[string]bool) error
+	walk = func(name string, path map[string]bool) error {
+		if path[name] {
+			return fmt.Errorf("CNAME alias cycle includes %s", name)
+		}
+		target, isAlias := cnameTargets[name]
+		if !isAlias {
+			if _, known := seen[name]; !known {
+				return fmt.Errorf("CNAME target %s is not a local record, reservation, or platform name", name)
+			}
+			return nil
+		}
+		path[name] = true
+		if err := walk(target, path); err != nil {
+			return err
+		}
+		delete(path, name)
+		return nil
+	}
+	for name := range cnameTargets {
+		if err := walk(name, map[string]bool{}); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -379,6 +466,11 @@ func usableAddress(address netip.Addr, zone model.Zone) bool {
 	return address.As4() != last
 }
 
+func overlapsProbeRange(start, end netip.Addr) bool {
+	startOctet, endOctet := start.As4()[3], end.As4()[3]
+	return endOctet >= ProbeAddressStart && startOctet <= ProbeAddressEnd
+}
+
 func canonicalMAC(value string) (string, error) {
 	parsed, err := net.ParseMAC(strings.TrimSpace(value))
 	if err != nil || len(parsed) != 6 {
@@ -408,6 +500,7 @@ func canonicalName(value, domain string) (string, error) {
 }
 
 func CanonicalName(value, domain string) (string, error) { return canonicalName(value, domain) }
+func CanonicalMAC(value string) (string, error)          { return canonicalMAC(value) }
 
 func (m Modules) SortedRecords() []DNSRecord {
 	if m.DNS == nil {

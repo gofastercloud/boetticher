@@ -175,8 +175,13 @@ its absence does not block Companion setup.
 
 When a StreamDeck is attached to the Controller, it is owned by the same
 `boetticher-status.service` daemon as Blinkt. The home screen is a detailed,
-read-only view of the enrolled Host: Host, CPU, RAM, preferred storage, NET,
-and up to eight VM/LXC guests sorted by VMID, with PAGE and REFRESH controls.
+read-only view of the enrolled Host. Its five-key rows are Proxmox health
+(`PVE`, CPU, RAM, DATA, NET), five VM/LXC guests sorted by VMID, and core
+services (`FW`, VPN, DNS, SCROLL, REFRESH). DATA follows fresh/stale Host
+telemetry; VPN is visibly off until that capability exists. SCROLL cycles
+through guests five at a time. Each guest tile uses `VM<id>` or `CT<id>` on
+the first line, the hostname on the second, and its runtime status on the
+third.
 Host and guest detail views provide BACK and REFRESH only; StreamDeck input
 cannot start, stop, reboot, deploy, or run shell commands. The old standalone
 Controller StreamDeck service is removed during Controller bootstrap.

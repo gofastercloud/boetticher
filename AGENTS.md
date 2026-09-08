@@ -214,12 +214,21 @@ Expected policy is independent of the renderer. Transport, setup, and target
 failures are not successful deny results. Do not resurrect legacy artifact,
 PKI, evidence, or deployment machinery to run packet tests. Status remains
 observational and does not run the acceptance suite.
-Readiness errors retain the last meaningful boundary without leaking secrets;
-retries never weaken trust or replace conflicting identity. Internal cleanup
-runs under its caller's ownership without recursively reacquiring the same
-operation lock, and cancellation receives a fresh cleanup budget. Physical
-input must be tested independently of rendered output. Environment-blocked
-verification remains blocked, not PASS.
+
+Acquire mutation ownership before reading authoritative intent. Plan and apply
+must construct the same proposed intent; a no-op covers desired state,
+provider state, and required runtime readiness. Native global or factory
+settings require explicit ownership even when their names cannot use a
+Boetticher prefix, and configuration accepted by an API is not proof that a
+daemon consumes it. Service enablement and reboot recovery are lifecycle
+requirements.
+
+Probe fixtures never borrow production client identities. Every test-started
+process and file participates in cleanup, including foreground client
+processes, lease files, hooks, namespaces, and veths. Protocol checks validate
+the property reported, not merely a response. Preserve per-case diagnostics
+without leaking secrets. Environment-blocked verification remains blocked,
+not PASS. Fix narrow defects; do not replace them with generic frameworks.
 
 - Prefer concrete Go and small consumer-owned interfaces. Avoid generic
   managers, provider registries, plugin frameworks, and stringly typed state

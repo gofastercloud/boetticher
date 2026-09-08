@@ -12,7 +12,9 @@ func TestProviderDHCPConfigReadbackRequiresIgnoredHomeSection(t *testing.T) {
 	}{
 		{name: "disabled", config: "config dhcp 'boetticher_home'\n\toption ignore '1'\n", wantErr: false},
 		{name: "enabled", config: "config dhcp 'boetticher_home'\n\toption ignore '0'\n", wantErr: true},
-		{name: "unexpected owned section", config: "config dhcp 'boetticher_home'\n\toption ignore '1'\nconfig dhcp 'boetticher_servers'\n", wantErr: true},
+		{name: "shared client services", config: "config dnsmasq 'boetticher_dnsmasq'\nconfig dhcp 'boetticher_home'\n\toption ignore '1'\nconfig dhcp 'boetticher_dhcp_servers'\n", wantErr: false},
+		{name: "unexpected dnsmasq", config: "config dhcp 'boetticher_home'\n\toption ignore '1'\nconfig dnsmasq 'factory'\n", wantErr: true},
+		{name: "unexpected dhcp scope", config: "config dhcp 'boetticher_home'\n\toption ignore '1'\nconfig dhcp 'factory'\n", wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := validateProviderDHCPConfig(test.config); got != nil != test.wantErr {

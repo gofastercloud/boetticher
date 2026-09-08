@@ -19,6 +19,7 @@ func runStreamDeck(ctx context.Context, factory StreamDeckFactory, frames <-chan
 	}
 	var deck StreamDeck
 	var latest []KeyImage
+	var written []KeyImage
 	retryAt := time.Time{}
 	heartbeat := time.NewTicker(streamDeckWriteInterval)
 	defer heartbeat.Stop()
@@ -34,13 +35,20 @@ func runStreamDeck(ctx context.Context, factory StreamDeckFactory, frames <-chan
 				retryAt = time.Now().Add(streamDeckRetryInterval)
 			} else {
 				deck = candidate
+				written = nil
 				if logger != nil {
 					logger.Printf("StreamDeck connected")
 				}
-				if err := writeStreamDeckFrame(ctx, deck, latest); err != nil {
+				if err := writeStreamDeckFrame(ctx, deck, latest, written); err != nil {
+					if logger != nil {
+						logger.Printf("StreamDeck frame write failed: %v", err)
+					}
 					closeStreamDeck(deck, logger)
 					deck = nil
+					written = nil
 					retryAt = time.Now().Add(streamDeckRetryInterval)
+				} else {
+					written = append([]KeyImage(nil), latest...)
 				}
 			}
 		}
@@ -59,10 +67,16 @@ func runStreamDeck(ctx context.Context, factory StreamDeckFactory, frames <-chan
 		case frame := <-frames:
 			latest = frame
 			if deck != nil {
-				if err := writeStreamDeckFrame(ctx, deck, latest); err != nil {
+				if err := writeStreamDeckFrame(ctx, deck, latest, written); err != nil {
+					if logger != nil {
+						logger.Printf("StreamDeck frame write failed: %v", err)
+					}
 					closeStreamDeck(deck, logger)
 					deck = nil
+					written = nil
 					retryAt = time.Now().Add(streamDeckRetryInterval)
+				} else {
+					written = append([]KeyImage(nil), latest...)
 				}
 			}
 		case event, ok := <-deviceEvents:
@@ -78,26 +92,39 @@ func runStreamDeck(ctx context.Context, factory StreamDeckFactory, frames <-chan
 			}
 		case <-heartbeat.C:
 			if deck != nil {
-				if err := writeStreamDeckFrame(ctx, deck, latest); err != nil {
+				if err := writeStreamDeckFrame(ctx, deck, latest, written); err != nil {
+					if logger != nil {
+						logger.Printf("StreamDeck frame write failed: %v", err)
+					}
 					closeStreamDeck(deck, logger)
 					deck = nil
+					written = nil
 					retryAt = time.Now().Add(streamDeckRetryInterval)
+				} else {
+					written = append([]KeyImage(nil), latest...)
 				}
 			}
 		}
 	}
 }
 
-func writeStreamDeckFrame(ctx context.Context, deck StreamDeck, frame []KeyImage) error {
+func writeStreamDeckFrame(ctx context.Context, deck StreamDeck, frame, written []KeyImage) error {
 	if len(frame) == 0 {
 		return nil
 	}
 	for index, key := range frame {
+		if index < len(written) && sameKeyImage(written[index], key) {
+			continue
+		}
 		if err := deck.SetKey(ctx, index, key); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func sameKeyImage(left, right KeyImage) bool {
+	return left.Title == right.Title && left.Value == right.Value && left.Footer == right.Footer && left.State == right.State && left.ImageKey == right.ImageKey
 }
 
 func closeStreamDeck(deck StreamDeck, logger *log.Logger) {

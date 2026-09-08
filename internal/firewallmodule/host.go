@@ -16,6 +16,29 @@ import (
 
 const hostImagePath = "/var/tmp/boetticher-firewall-280.img"
 
+// ClientServicesImageReady verifies that the running appliance was created by
+// the current client-services image contract. It is a read-only guest-agent
+// check used before DNS/DHCP mutation so an older cached appliance cannot
+// silently satisfy a newer bootstrap requirement.
+func ClientServicesImageReady(ctx context.Context, host HostClient) (bool, error) {
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/cat /etc/boetticher/client-services-contract")
+	if err != nil {
+		return false, fmt.Errorf("read provider client-services contract through Host guest agent: %w", err)
+	}
+	var output struct {
+		ExitCode int    `json:"exitcode"`
+		Data     string `json:"out-data"`
+		Error    string `json:"err-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &output); err != nil {
+		return false, errors.New("provider guest agent returned malformed client-services contract")
+	}
+	if output.ExitCode != 0 {
+		return false, nil
+	}
+	return strings.TrimSpace(output.Data) == OpenWrtImageContract, nil
+}
+
 // HostClient is the capability's narrow Host lifecycle adapter. The public
 // operator command remains boetticher; these remote commands are its internal
 // implementation path and are never exposed as operator workflow.

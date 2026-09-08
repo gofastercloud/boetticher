@@ -49,6 +49,7 @@ boetticher module dns apply [--yes]
 boetticher module dns status
 boetticher module dns teardown --plan
 boetticher module dns teardown [--yes]
+boetticher module dns test [--plan|--yes|--cleanup-only --yes]
 boetticher module dns add-record NAME --type A|CNAME --value VALUE [--yes]
 boetticher module dns remove-record NAME [--yes]
 boetticher module dns list-records
@@ -58,6 +59,7 @@ boetticher module dhcp apply [--yes]
 boetticher module dhcp status
 boetticher module dhcp teardown --plan
 boetticher module dhcp teardown [--yes]
+boetticher module dhcp test [--plan|--yes|--cleanup-only --yes]
 boetticher module dhcp add-reservation NAME --zone ZONE --mac MAC --address IPv4 [--yes]
 boetticher module dhcp remove-reservation NAME [--yes]
 boetticher module dhcp list-reservations
@@ -104,11 +106,16 @@ Status never applies configuration or runs the acceptance suite.
 
 `module dhcp test --plan` and `module dns test --plan` are read-only. Approved
 tests use one temporary VLAN namespace per zone, an exact veth/access port,
-bounded cleanup, and a real DHCP client. They verify allocation, gateway,
-DNS/domain/NTP options, reservation-only positive controls, local resolver
-answers, and encrypted recursive resolution. Failed transport, fixture setup,
-dead targets, malformed helper output, and missing positive controls are not
-successful denials.
+and bounded cleanup. The DHCP test creates temporary, explicitly test-owned
+reservations for reservation-only scopes, uses a real DHCP client, and verifies
+allocation, gateway, DNS/domain/NTP options, reservation-only positive and
+unknown-client controls, and local naming. The DNS test uses static routed
+fixtures and does not require DHCP or NTP serving; it checks public recursion,
+configured local records, PTRs, aliases, and local negative answers where
+available. Failed transport, fixture setup, dead targets, malformed helper
+output, and missing positive controls are not successful denials. The
+`--cleanup-only --yes` form removes only the reserved client-test identities,
+records, processes, work files, namespaces, and veths.
 
 The test does not claim DHCPv6, IPv6 policy, mDNS reflection, PXE/TFTP, DHCP
 relay, DoH/HTTPS bypass prevention, physical switch isolation, or Wi-Fi
