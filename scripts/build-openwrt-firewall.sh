@@ -497,7 +497,7 @@ case "$command" in
 		exit 0
 		;;
 	restart|reload-sets) command=reload ;;
-    start|reload) ;;
+	start|reload) test "$#" -eq 0 || fail "fw4 $command does not accept lifecycle arguments" ;;
     check|print)
         verify
         run_stock "$command" "$@"
@@ -742,7 +742,11 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
     "write": {
       "ubus": {
         "uci": ["set", "add", "delete", "commit", "apply"],
-        "service": ["event"]
+        "service": ["event"],
+        "file": ["exec"]
+      },
+      "file": {
+        "/sbin/fw4": ["exec"]
       },
       "uci": {
         "network": ["read", "write"],

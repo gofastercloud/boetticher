@@ -31,8 +31,8 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 	if capability == "dns" || capability == "dhcp" {
 		return runClientServiceCapability(capability, action, remaining, input, out, errOut)
 	}
-	if capability == "tailnet" {
-		return runTailnetCapability(action, remaining, input, out, errOut)
+	if capability == "vpn" {
+		return runVPNCapability(action, remaining, input, out, errOut)
 	}
 	if capability == "tailnet" {
 		return runTailnetCapability(action, remaining, input, out, errOut)

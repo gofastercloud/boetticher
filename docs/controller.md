@@ -65,8 +65,8 @@ checks. `controller status` is read-only: it does not repair the host, run
 Ansible, or change Blinkt. The status daemon may contact the enrolled Host for
 its lightweight health, update, and connectivity checks.
 
-The controller installs Go 1.26.5 under
-`/opt/boetticher/toolchains/go1.26.5/` and Ansible Core 2.19.11 in
+The controller installs Go 1.26.6 under
+`/opt/boetticher/toolchains/go1.26.6/` and Ansible Core 2.19.11 in
 `/opt/boetticher/venv/`. The Boetticher binary is always the prebuilt payload;
 the Pi does not compile it. Go checks use `GOTOOLCHAIN=local`.
 
@@ -201,7 +201,7 @@ configured-but-unavailable service is failed.
 | `/opt/boetticher/releases/<build-id>/` | Immutable installed payload |
 | `/opt/boetticher/current` | Active release symlink |
 | `/opt/boetticher/venv/` | Private Ansible environment |
-| `/opt/boetticher/toolchains/go1.26.5/` | Pinned Go toolchain |
+| `/opt/boetticher/toolchains/go1.26.6/` | Pinned Go toolchain |
 | `/etc/boetticher/controller.yml` | Minimal operator and Blinkt configuration |
 | `/var/lib/boetticher/controller/` | Controller state, including the log2ram boot marker |
 | `/run/boetticher/status.sock` | Root-only best-effort operation event socket |
@@ -228,7 +228,7 @@ phases. No alternate workstation, TUI, kiosk, or Companion bootstrap path is
 supported.
 
 The pinned inputs are [Raspberry Pi OS](https://www.raspberrypi.com/documentation/computers/os.html)
-Debian 13/Trixie ARM64, [Go 1.26.5](https://go.dev/dl/),
+Debian 13/Trixie ARM64, [Go 1.26.6](https://go.dev/dl/),
 [Ansible Core 2.19.11](https://pypi.org/project/ansible-core/2.19.11/), and
 [Azlux log2ram](https://github.com/azlux/log2ram). The Go archive checksum and
 Ansible pin are recorded in the repository; the Azlux archive key is shipped as

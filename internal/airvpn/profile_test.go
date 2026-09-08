@@ -39,6 +39,7 @@ func TestGenerateBuildsBoundedAirVPNRequestAndRedactsFailures(t *testing.T) {
 			"device":        "default",
 			"resolve":       "on",
 			"iplayer_entry": "ipv4",
+			"iplayer_exit":  "ipv4",
 		}
 		for key, value := range want {
 			if r.URL.Query().Get(key) != value {

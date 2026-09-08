@@ -95,6 +95,36 @@ func TestComposeApplianceRejectsMalformedReservationAndPolicy(t *testing.T) {
 	}
 }
 
+func TestComposeApplianceWithVPNUsesNativeAirVPNIdentityAndTerminalRules(t *testing.T) {
+	enabled := true
+	modules := compositionModules(true)
+	modules.VPN = &clientservices.VPNConfig{Enabled: &enabled, Location: "europe", Clients: []string{"peer"}, Forwards: []clientservices.VPNForward{{Name: "web", Reservation: "peer", Protocols: []string{"tcp"}, Port: 443}}}
+	composition, err := ComposeApplianceWithVPN(model.NewSite("lab", "controller-local", model.GatewayModeManaged), modules, nil, VPNProfile{
+		PrivateKey: "private", Address: "10.64.12.3/32", PeerPublicKey: "peer", PresharedKey: "shared", EndpointHost: "vpn.example", EndpointPort: 1637, MTU: 1320, PersistentKeepalive: 25,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var airvpn, terminal bool
+	var redirect Section
+	for _, section := range composition.Network {
+		if section.Name == "airvpn" && section.Options["proto"] == "wireguard" {
+			airvpn = true
+		}
+		if section.Options["action"] == "unreachable" && section.Options["priority"] == "10100" {
+			terminal = true
+		}
+	}
+	for _, section := range composition.Firewall {
+		if section.Type == "redirect" {
+			redirect = section
+		}
+	}
+	if !airvpn || !terminal || redirect.Options["src_dport"] != "443" || redirect.Options["reflection"] != "0" {
+		t.Fatalf("VPN composition lost native interface or terminal source rule: %#v", composition.Network)
+	}
+}
+
 func containsName(names []string, want string) bool {
 	for _, name := range names {
 		if name == want {

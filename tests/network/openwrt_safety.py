@@ -292,6 +292,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--image-sha256")
+    parser.add_argument("--status-only", action="store_true", help="Check only the read-only safety-status contract on an already qualified image")
     parser.add_argument("--results", type=Path, default=Path("/tmp/boetticher-openwrt-safety.json"))
     options = parser.parse_args()
     if not Path("/.dockerenv").exists():
@@ -347,10 +348,19 @@ def main() -> int:
         if boot_packets.returncode == 0 and boot_packets.stdout.strip():
             raise AssertionError("preinit emitted IPv6 traffic on the HOME bridge")
         configure_guest(qga_path)
-        echo = start_echo(namespaces[0]); children.append(echo)
-        wait_echo(namespaces[2], "10.10.20.250", echo)
-        run_checks(qga_path, namespaces, report)
-        run_reload_failures(qga_path, namespaces, report)
+        snapshot_command = "set -eu; nft -s list table inet fw4 | sha256sum; sha256sum /etc/config/firewall /etc/config/network; cat /proc/sys/net/ipv4/ip_forward"
+        before_status = require_guest(qga_path, snapshot_command)
+        marker = require_guest(qga_path, "/sbin/fw4 safety-status").strip()
+        after_status = require_guest(qga_path, snapshot_command)
+        if marker != "BOETTICHER_SAFETY_OK" or before_status != after_status:
+            raise AssertionError("safety-status did not return its exact marker without mutation")
+        report["read-only-safety-status"] = {"marker": marker, "state_unchanged": True}
+        report["scope"] = "safety-status only" if options.status_only else "full safety harness"
+        if not options.status_only:
+            echo = start_echo(namespaces[0]); children.append(echo)
+            wait_echo(namespaces[2], "10.10.20.250", echo)
+            run_checks(qga_path, namespaces, report)
+            run_reload_failures(qga_path, namespaces, report)
         report["status"] = "PASS"
     except KeyboardInterrupt:
         report["status"] = "CANCELLED"
