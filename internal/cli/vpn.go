@@ -38,8 +38,14 @@ type vpnOptions struct {
 }
 
 func runVPNCapability(action string, args []string, input io.Reader, out, errOut io.Writer) error {
-	if action != "plan" && action != "apply" && action != "status" && action != "teardown" && action != "add-client" {
+	if action != "plan" && action != "apply" && action != "status" && action != "teardown" && action != "add-client" && action != "remove-client" {
 		return fmt.Errorf("module capability %q does not implement action %q", "vpn", action)
+	}
+	if action == "add-client" {
+		return runVPNAddClient(args, input, out, errOut)
+	}
+	if action == "remove-client" {
+		return runVPNRemoveClient(args, input, out, errOut)
 	}
 	opts, err := parseVPNOptions(action, args)
 	if err != nil {
@@ -62,9 +68,6 @@ func runVPNCapability(action string, args []string, input io.Reader, out, errOut
 			return err
 		}
 		return runVPNStatus(ctx, serviceContext, opts, out)
-	}
-	if action == "add-client" {
-		return runVPNAddClient(args, input, out, errOut)
 	}
 	var lock *site.OperationLock
 	if action == "apply" || action == "teardown" {
@@ -92,7 +95,64 @@ func runVPNCapability(action string, args []string, input io.Reader, out, errOut
 	}
 }
 
+func runVPNRemoveClient(args []string, input io.Reader, out, errOut io.Writer) error {
+	if len(args) == 2 && args[1] == "--yes" {
+		args = []string{"--yes", args[0]}
+	}
+	fs := flag.NewFlagSet("module vpn remove-client", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	yes := fs.Bool("yes", false, "approve the VPN client change")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: boetticher module vpn remove-client RESERVATION [--yes]")
+	}
+	lock, err := acquireClientServicesLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	serviceContext, err := loadClientServiceContext()
+	if err != nil {
+		return err
+	}
+	if serviceContext.Config.Modules.VPN == nil {
+		return errors.New("VPN capability is not configured")
+	}
+	canonical := strings.ToLower(strings.TrimSpace(fs.Arg(0)))
+	proposed := serviceContext.Config.Modules.Clone()
+	copyVPN := *proposed.VPN
+	clients := make([]string, 0, len(copyVPN.Clients))
+	found := false
+	for _, existing := range copyVPN.Clients {
+		if existing == canonical {
+			found = true
+			continue
+		}
+		clients = append(clients, existing)
+	}
+	if !found {
+		return fmt.Errorf("VPN client %q is not configured", canonical)
+	}
+	for _, forward := range copyVPN.Forwards {
+		if forward.Reservation == canonical {
+			return fmt.Errorf("VPN client %q has dependent forward %q; remove the forward first", canonical, forward.Name)
+		}
+	}
+	copyVPN.Clients = clients
+	proposed.VPN = &copyVPN
+	if err := clientservices.Validate(proposed, serviceContext.Site); err != nil {
+		return err
+	}
+	serviceContext.Config.Modules = proposed
+	return runVPNApply(context.Background(), serviceContext, vpnOptions{yes: *yes}, input, out, errOut)
+}
+
 func runVPNAddClient(args []string, input io.Reader, out, errOut io.Writer) error {
+	if len(args) == 2 && args[1] == "--yes" {
+		args = []string{"--yes", args[0]}
+	}
 	fs := flag.NewFlagSet("module vpn add-client", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	yes := fs.Bool("yes", false, "approve the VPN client change")

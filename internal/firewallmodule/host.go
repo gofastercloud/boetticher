@@ -31,6 +31,28 @@ func FirewallSafetyStatusViaHost(ctx context.Context, host HostClient) (bool, er
 	return parseFirewallSafetyStatus(result.Stdout)
 }
 
+// EnsureVPNIPv6DisabledViaHost reapplies the IPv6-off invariant to the
+// dynamically created WireGuard interface. netifd can create that interface
+// after the image safety sysctls have loaded, so the narrow owned hook is
+// reapplied at the VPN reconcile boundary.
+func EnsureVPNIPv6DisabledViaHost(ctx context.Context, host HostClient) error {
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/sh -c 'if [ -e /proc/sys/net/ipv6/conf/airvpn/disable_ipv6 ]; then /sbin/sysctl -q -w net.ipv6.conf.airvpn.disable_ipv6=1 net.ipv6.conf.airvpn.autoconf=0 net.ipv6.conf.airvpn.accept_ra=0 net.ipv6.conf.airvpn.forwarding=0; fi'")
+	if err != nil {
+		return fmt.Errorf("apply provider VPN IPv6 safety sysctls through Host guest agent: %w", err)
+	}
+	var output struct {
+		ExitCode int    `json:"exitcode"`
+		Error    string `json:"err-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &output); err != nil {
+		return errors.New("provider guest agent returned malformed VPN IPv6 safety state")
+	}
+	if output.ExitCode != 0 {
+		return fmt.Errorf("provider VPN IPv6 safety sysctl failed (%d): %s", output.ExitCode, strings.TrimSpace(output.Error))
+	}
+	return nil
+}
+
 func parseFirewallSafetyStatus(data []byte) (bool, error) {
 	var output struct {
 		ExitCode *int   `json:"exitcode"`
@@ -80,7 +102,7 @@ func VPNRuntimeStatusViaHost(ctx context.Context, host HostClient) (VPNRuntimeSt
 
 func parseVPNRuntimeStatus(data string) (VPNRuntimeStatus, error) {
 	status := VPNRuntimeStatus{}
-	status.InterfaceUp = strings.Contains(data, "airvpn") && (strings.Contains(data, `"operstate":"UP"`) || strings.Contains(data, `"operstate": "UP"`) || strings.Contains(data, "state UP"))
+	status.InterfaceUp = strings.Contains(data, "airvpn") && (strings.Contains(data, `"operstate":"UP"`) || strings.Contains(data, `"operstate": "UP"`) || strings.Contains(data, "state UP") || (strings.Contains(data, `"flags":["POINTOPOINT","NOARP","UP","LOWER_UP"`) || strings.Contains(data, `"flags": ["POINTOPOINT", "NOARP", "UP", "LOWER_UP"`)))
 	lines := strings.Split(data, "\n")
 	phase := ""
 	for _, raw := range lines {

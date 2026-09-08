@@ -13,7 +13,8 @@ verification requirements remain controlling.
   reduces tokens without weakening correctness or verification.
 - Use the lowest suitable model and effort. Use `gpt-5.6-luna` for routine
   research, coding, testing, and browser work; use `gpt-5.6-terra` only for a
-  justified deeper review. Do not default to High effort.
+  justified deeper review. After demonstrated errors, raise effort or refresh
+  the handoff instead of repeating an inadequate pass. Do not default to High.
 - Reserve `gpt-6-astra` for orchestration. Consider a manually verified
   handover to `gpt-5.6-sol` for a sustained, settled, bounded backlog. Never
   run Astra and Sol concurrently, and never claim an automatic model switch.
@@ -30,9 +31,11 @@ verification requirements remain controlling.
 - Search narrowly, read relevant lines, and keep tool results compact; do not
   retain or emit transcripts. Avoid frequent polling, timers, unchanged status,
   and administrative busywork.
-- Progress is normally one sentence and the final is short. Keep required
-  receipts on disk and provide one compact checkpoint; do not create
-  unsolicited evidence bundles or status documents.
+- Progress is normally one sentence and the final is short. At meaningful
+  boundaries and before a long wait, report the actual operation and result or
+  error; do not silently orphan live work. Keep required receipts on disk and
+  provide one compact checkpoint; do not create unsolicited evidence bundles or
+  status documents.
 - At meaningful boundaries, check for oversized briefs, duplicate investigation
   or tests, idle wakes, and rework. Record corrective actions only when found.
 - Report usage separately as cached input, uncached input, and output. Do not
@@ -48,10 +51,13 @@ verification requirements remain controlling.
   Use subagents only when bounded independent work demonstrably reduces total
   work or rework; keep trivial, tightly coupled, or urgent integration work
   local.
-- Use `gpt-5.6-luna` subagents for all Git-related work, including read-only
-  inspection, branching, staging, commits, pushes, pull requests, reviews,
-  merges, and cleanup. The coordinator retains scope, authorization, and final
-  verification ownership; delegate execution to one Git owner.
+- Use `gpt-5.6-luna` for Git work, including read-only inspection, branching,
+  staging, commits, pushes, pull requests, reviews, merges, and cleanup. The
+  same Luna integrator may own normal read-only Git/build/test/package checks
+  (including incidental Git checks inside `make ci`) and, when explicitly
+  authorized, Git delivery; a separate Git agent is not required and is not a
+  reason to split a coherent implementation. The coordinator retains scope,
+  authorization, and final verification ownership.
 - Give each delegate a short brief: outcome, exact read/write scope,
   constraints, acceptance criteria, and return format. Assign disjoint files;
   share only relevant context. Avoid full-history forks, recursive delegation,
@@ -62,6 +68,10 @@ verification requirements remain controlling.
   checks, findings, and blockers, not transcripts.
   Never restore files to HEAD to undo an agent mistake: revert only your own
   exact edit, preserving concurrent parent/user work; report uncertain overlap.
+- Keep one integrator for a tightly coupled operator journey. Dispatch,
+  wiring, material, routing, lifecycle, payload, and the required signatures or
+  context plumbing belong to that authorized end-to-end slice; a helper-only or
+  compile-only milestone is not completion.
 - Use targeted rg, bounded tool output, and relevant document sections. Batch
   independent reads; avoid rereading unchanged material. Give brief substantive
   progress updates, not repeated plans or command-by-command narration.
@@ -89,6 +99,11 @@ verification requirements remain controlling.
 - Finish the requested slice and final live state. Never automatically redeploy
   after an acceptance teardown. Honor explicit deferrals without relabeling
   them PASS. Do not reopen accepted peripheral compromises or provider selection.
+- Complete routine discovery, prerequisite wiring, and preparation within the
+  granted scope. Pause before any action lacking authority or a genuinely
+  missing decision or external dependency; when an operation has failed, report
+  its exact error and the smallest resolution. Do not treat routine plumbing as
+  a blocker or ask again for authority already granted.
 
 ## Product and CLI
 
@@ -162,6 +177,11 @@ verification requirements remain controlling.
   authentication/authorization, runtime. Keep the last meaningful error.
   Retry transient readiness within a measured budget; never conceal failure with
   sleeps, blind credential rotation, weaker trust, or repeated rebuild/install.
+- Once scoped live fix-forward authority exists, diagnose the first failing
+  boundary on the exact owned target, make the smallest reversible correction,
+  test there, backport it to source, and perform one coherent final package and
+  deploy after fixes settle. Never leave source and runtime divergent or weaken
+  safety, SSH, TLS, integrity, or ownership checks.
 - API acceptance does not prove daemon consumption, init enablement, persistent
   storage permissions, or reboot recovery. Use pinned native contracts and real
   response shapes; narrow permissions to required methods/packages.
@@ -186,8 +206,12 @@ verification requirements remain controlling.
   run under existing ownership with a fresh bounded cancellation budget.
   Cleanup-only must work without a healthy provider. Recovery removing leftovers
   is not successful automatic cleanup; cleanup failure prevents suite PASS.
-- Add focused behavioral regressions for real defects. Run make ci before runtime
-  handoff; execute Linux-only tests on Linux, not merely a cross-build.
+- Add focused behavioral regressions for real defects and for the selected
+  public command journey; prove fixture setup and positive controls before
+  counting denial results, and prevent legacy-handler fallthrough. Compare the
+  candidate's absolute path, build ID, compiler, and checksum rather than a
+  preserved dist/ filename. Run make ci before runtime handoff; execute
+  Linux-only tests on Linux, not merely a cross-build.
   Docs-only edits need structure/link/diff checks. After fixes settle, run the
   required closing journey once; don't repeat qualified Host teardown/reboots
   or full ceremonies for wording/display changes.
@@ -210,6 +234,10 @@ verification requirements remain controlling.
   unexecuted gates. Preserve FAIL/HOLD/NOT TESTED and explicit deferrals.
   Use one concise handoff: source/build, verified outcomes, gaps, cleanup, and
   actual final state. No mandatory evidence bundles or log dumps.
+- Reuse qualified baseline evidence. Run changed checks while iterating, then
+  the required final source gate and payload build on the coherent candidate;
+  do not repeat aggregate ceremonies without a demonstrated defect or scoped
+  selected-path requirement. Verify exact owned resources before claiming cleanup.
 - Use direct argv or safe shell quoting. Pass multiline GitHub text through
   temporary body files; backticks and dollar substitutions execute shell code.
 

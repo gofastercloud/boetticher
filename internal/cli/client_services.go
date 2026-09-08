@@ -215,6 +215,11 @@ func reconcileClientServices(ctx context.Context, provider *openwrt.Client, serv
 	}
 	verify := firewallmodule.ApplianceVerifyCallbacks{
 		SafetyBeforeNetwork: func(ctx context.Context) error {
+			if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
+				if err := firewallmodule.EnsureVPNIPv6DisabledViaHost(ctx, serviceContext.Host); err != nil {
+					return err
+				}
+			}
 			if err := verifyComposedFirewall(ctx, provider, composed.Firewall); err != nil {
 				return err
 			}
@@ -242,6 +247,11 @@ func reconcileClientServices(ctx context.Context, provider *openwrt.Client, serv
 			return nil
 		},
 		SafetyAfterNetwork: func(ctx context.Context) error {
+			if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
+				if err := firewallmodule.EnsureVPNIPv6DisabledViaHost(ctx, serviceContext.Host); err != nil {
+					return err
+				}
+			}
 			if err := verifyComposedFirewall(ctx, provider, composed.Firewall); err != nil {
 				return err
 			}

@@ -35,3 +35,12 @@ peer-public-key 1024 2048`)
 		t.Fatal("handshake timestamp was not observed")
 	}
 }
+
+func TestParseVPNRuntimeStatusAcceptsWireGuardUnknownOperstateWithUpFlags(t *testing.T) {
+	now := time.Now().Unix()
+	status, err := parseVPNRuntimeStatus(`[{"ifname":"airvpn","flags":["POINTOPOINT","NOARP","UP","LOWER_UP"],"operstate":"UNKNOWN"}]
+peer ` + fmt.Sprint(now))
+	if err != nil || !status.InterfaceUp || !status.PeerSeen {
+		t.Fatalf("runtime status=%+v err=%v", status, err)
+	}
+}
