@@ -1,255 +1,170 @@
-# Boetticher agent guide
+# Boetticher: Codex contract
 
-This is the contributor contract for the small, opinionated Proxmox appliance.
-Product and qualification detail belongs in `README.md` and `docs/`; these
-rules keep the Controller/Host/Module boundary explicit.
+Agent instructions only. Human explanations, command examples, configuration,
+and acceptance records belong in README.md and docs/.
 
-## Product model
+## Coordinate efficiently
 
-The supported product is:
+- Act as coordinator and product owner: own scope, priorities, integration,
+  verification, and the final outcome. Delegate implementation to
+  `gpt-5.6-luna` and planning/design analysis to `gpt-5.6-terra`.
+  Use subagents whenever bounded independent work saves time or tokens;
+  keep trivial, tightly coupled, or urgent integration work local.
+- Give each delegate a short brief: outcome, exact read/write scope,
+  constraints, acceptance criteria, and return format. Assign disjoint files;
+  share only relevant context. Avoid full-history forks, recursive delegation,
+  duplicate investigation, and repeated polling. Reuse agents. If a requested
+  model is unavailable, disclose the fallback.
+- Keep one owner for live systems and Git delivery; delegation grants no new
+  authority. Review delegate changes. Returns should contain changed paths,
+  checks, findings, and blockers, not transcripts.
+  Never restore files to HEAD to undo an agent mistake: revert only your own
+  exact edit, preserving concurrent parent/user work; report uncertain overlap.
+- Use targeted rg, bounded tool output, and relevant document sections. Batch
+  independent reads; avoid rereading unchanged material. Give brief substantive
+  progress updates, not repeated plans or command-by-command narration.
 
-```text
-Controller
-    |
-    v
-Proxmox Host
-    |
-    +-- Module <capability>
-    +-- Module <capability>
-```
+## Scope and authority
 
-- Controller is the machine running Boetticher. The current reference is a
-  Raspberry Pi, but generic code and operator documentation use `Controller`.
-- Host is the one currently supported Proxmox machine. Host owns trust,
-  enrollment, the Proxmox OS baseline, storage, virtual networking, later
-  physical LAB networking, inventory/status, teardown, and reboot.
-- Module is an operator-visible capability on the Host. Modules are bounded
-  first-party capabilities, not plugins, arbitrary workloads, generic ingress,
-  or a policy DSL. Proxmox owns user workloads; Boetticher never adopts,
-  imports, or deletes unknown guests.
+- Inspect root, branch, status, worktrees, and applicable instructions before
+  editing. Preserve unrelated dirty/untracked/ignored work, including dist/.
+  Build separately when existing outputs must be retained.
+- Use feature branches. Commits, pushes, PRs, merges, deployment, reboot,
+  destructive cleanup, and external messages require scoped user authorization.
+  Approval persists for ordinary steps in its window; do not repeatedly ask.
+  Planning or push approval alone does not authorize deployment or replacement.
+- Never reset to an old reviewed SHA, overwrite unpublished fixes, rewrite
+  pushed history, or discard dirty worktrees for a clean report. Before approved
+  cleanup, verify exact targets, ownership, merge ancestry/patch equivalence,
+  unique files, and PR state. Keep ambiguous resources.
+- Finish the requested slice and final live state. Never automatically redeploy
+  after an acceptance teardown. Honor explicit deferrals without relabeling
+  them PASS. Do not reopen accepted peripheral compromises or provider selection.
 
-There is no supported `base` or `foundation` product object. Storage and
-networking are Host configuration. Do not add lifecycle, status, reboot,
-correctness, or evidence machinery for either retired noun.
+## Product and CLI
 
-## CLI contract
+- Controller → one Proxmox Host → first-party Module capabilities. Controller
+  runs Boetticher and owns peripherals. Host owns enrollment, SSH trust,
+  Proxmox baseline, storage, bridges, inventory, teardown, and reboot.
+  Host apply never deploys Modules; Modules consume rather than repair substrate.
+  Proxmox owns user workloads; never adopt/import/delete unknown guests.
+- A capability is operator intent, not necessarily a VM/package/daemon.
+  Firewall/DNS/DHCP share OpenWrt. Delegate through ordinary internal Go calls,
+  never recursive CLI execution, hidden aliases, or another API service.
+  NTP and DHCP-derived DNS are supporting functions, not capabilities.
+- Grammar: `boetticher controller|host <action> [flags]` and
+  `boetticher module <capability> <action> [flags]`. Use apply for changes;
+  plan/status/list are read-only. Base/foundation and top-level network/DHCP/DNS
+  commands are retired. Do not invent a core-services Module.
+- Advertise only implemented flags. Leaf help succeeds without enrollment or
+  remote calls. Invalid input, refusal, blank response, and EOF cause no mutation.
+  Changes use --yes or affirmative confirmation; only a read-only determination
+  of no change may bypass approval. Never mutate to discover a no-op.
+  Use --plan, not another --dry-run spelling; preserve exact disk/adoption approvals.
+- Keep hardware/addresses in reference bindings. Pass Host configuration
+  explicitly; no premature multi-Host selectors, placement, or provider registry.
+  Roadmap: 4A firewall, 4B client services, 4C VPN, 4D integration/recovery,
+  Phase 5 additional capabilities. Future plans do not authorize implementation.
 
-Core commands use exactly two levels:
+## Intent and shared ownership
 
-```text
-boetticher <target> <action> [flags]
-```
+- /etc/boetticher/lab.yml owns Host/LAB/capability intent;
+  /etc/boetticher/controller.yml owns Controller-local settings. Use existing
+  typed readers/writers; preserve every supported section and reject unsupported
+  fields. Retain atomic writes, restrictive permissions, path containment, and
+  symlink protection.
+- Acquire the shared bounded mutation lock BEFORE loading intent. Under it:
+  load, prepare/validate, inspect prerequisites/conflicts, confirm, save,
+  reconcile, verify. Plan/apply share pure preparation. Defaults initialize only
+  approved changes. No-op requires desired, provider, and runtime agreement.
+  Identical adds must not conceal pending application failure.
+- Saved intent survives failed application: report the partial result and normal
+  apply recovery. No rollback journal or duplicate configuration/lease database.
+- Coordinate shared dnsmasq settings, time, and capability firewall rules through
+  one owner. Reconcile explicit owned objects, never another capability's entries
+  by prefix. Handle factory/global sections explicitly. Preserve unrelated state
+  or refuse conflict. Reload only affected services.
+- Firewall creates the appliance; enable DNS before DHCP. Remove DHCP before DNS;
+  refuse appliance removal with enabled dependants. Retain reusable service
+  intent and upstream appliance time on service teardown.
+- Reservations/records are desired state; leases are observed runtime state.
+  Preserve flat canonical naming and native A/PTR ownership, dynamic pools on
+  SERVERS/TRUSTED/SANDBOX, reservation-only TRANSIT/INFRA/MGMT, and probe space.
+  Validate names/MACs/addresses/pools and active-lease conflicts.
 
-The normal Controller/Host targets are `controller` and `host`. Host actions
-include `create-identity`, `show-public-key`, `import-host-key`, `enroll`,
-`apply`, `status`, `plan-storage`, `teardown`, and `reboot`.
+## Deploy and diagnose
 
-Modules use the one deliberate third-level namespace:
+- Acceptance uses the normal INSTALLED Controller CLI outside a checkout.
+  Install one coherent CLI/status/helper/builder/bootstrap payload through the
+  existing procedure. Record source, included dirty changes, and installed build;
+  preserved dist/ does not prove current bytes. Invalidate only affected caches.
+- Normal operation needs no private site, Age identity, Proxmox API token,
+  development override, Mac-copied appliance image, or manual OpenWrt preparation.
+  Preserve security in retained legacy code without making it a dependency.
+- Use established strict Controller-to-Host SSH and verified HTTPS /ubus.
+  Internal bounded Host-native tools are appropriate; provider configuration uses
+  its supported API. Read-only exact-VM guest-agent diagnosis is permitted.
+  Never expose secrets or weaken SSH/TLS, ACLs, integrity, or ownership checks.
+- Preserve Controller identity, Host trust, Proxmox node/boot/data storage,
+  vmbr0/HOME, persistent vmbr1, unrelated guests/volumes, and physical networking.
+  Never answer HOME DHCP or migrate management/time incidentally. LXCs inherit
+  Host time; namespace probes never set clocks. Reboot only the scoped target.
+- Diagnose the first failing boundary: boot, network, listener/TCP, TLS, protocol,
+  authentication/authorization, runtime. Keep the last meaningful error.
+  Retry transient readiness within a measured budget; never conceal failure with
+  sleeps, blind credential rotation, weaker trust, or repeated rebuild/install.
+- API acceptance does not prove daemon consumption, init enablement, persistent
+  storage permissions, or reboot recovery. Use pinned native contracts and real
+  response shapes; narrow permissions to required methods/packages.
 
-```text
-boetticher module <capability> <action> [flags]
-```
+## Observe and verify
 
-Capability names describe operator intent (`firewall`, `dhcp`, `dns`,
-`vpn`, `monitoring`, `statuspage`, `printer`), not provider-specific or runtime
-names. Phase 4 network services are delivered capability-first. OpenWrt is the
-current provider implementation, not a public Module namespace. The supported
-Module UX is `boetticher module <capability> <action>`.
+- Shared capability facts feed CLI/Blinkt/StreamDeck. VM-running is not service
+  health; unconfigured is off and unknown is not healthy. Status is bounded and
+  observational: no repair, full suites, package refresh, or test clients.
+- The existing daemon owns peripherals. Measure delays before changing libraries
+  or timeouts: synchronous collection itself can block animation/input; an output
+  queue alone cannot fix that. Budget sequential checks, bound device I/O, and
+  retain input lifetime until close. Peripheral failure cannot gate the lab.
+  Test physical input/reconnect independently of rendered output.
+- Packet expectations are independent of the renderer. Denials require working
+  sources/positive-control targets and executed attempts. Transport/setup/target/
+  protocol failures are errors. IPv4-only is not proof of IPv6 leak protection,
+  same-VLAN, Wi-Fi, or switch isolation; do not disable household IPv6 incidentally.
+- Fixtures never borrow production identities. Own exact processes, files,
+  namespaces, interfaces, and temporary reservations. Use isolated client hooks
+  and separate positive/unknown-client lease state. Register cleanup immediately;
+  run under existing ownership with a fresh bounded cancellation budget.
+  Cleanup-only must work without a healthy provider. Recovery removing leftovers
+  is not successful automatic cleanup; cleanup failure prevents suite PASS.
+- Add focused behavioral regressions for real defects. Run make ci before runtime
+  handoff; execute Linux-only tests on Linux, not merely a cross-build.
+  Docs-only edits need structure/link/diff checks. After fixes settle, run the
+  required closing journey once; don't repeat qualified Host teardown/reboots
+  or full ceremonies for wording/display changes.
+- GitHub Actions is Pages-only; testing is local unless explicitly changed.
+  Do not resurrect retired all-artifact release ceremonies from older documents.
 
-For Phase 4A, the firewall capability owns its provider lifecycle and consumes
-Host-owned `vmbr1`; it must not silently create, repair, or re-own Host
-substrate. Normal provider management uses verified HTTPS `/ubus` and UCI. Do
-not use SSH mutation, LuCI automation, direct provider configuration-file
-editing, or ad-hoc shell mutation as the normal lifecycle. Preserve unrelated
-provider-native state by owning deterministic semantic sections rather than
-replacing whole configuration packages. Prefer direct desired-state
-generation over provider frameworks, policy compilers, or reconciliation
-engines. `apply` is the normal mutation verb and a correct repeat is a
-semantic no-op. `status` is a cheap operational view; `plan` reports meaningful
-operator-visible changes rather than implementation-level diff noise.
+## Keep it small and truthful
 
-Do not expose OpenWrt, UCI, rpcd, firewall4, dnsmasq, Stubby, or other provider
-nouns in normal capability UX unless the operator genuinely needs them. Avoid
-hashes, manifests, evidence stores, generation counters, shadow inventories,
-and other audit machinery without a concrete operational requirement.
+- Prefer concrete Go, native services, and small consumer-owned interfaces.
+  No speculative frameworks, dependency DAGs, policy DSLs, DDNS synchronizers,
+  monitoring stacks, workflow databases, or correctness/audit theatre. Hashes,
+  signatures, and reports need real consumers; preserve actual security checks.
+  Remove superseded callers/docs within scope, not via repository-wide rewrites.
+- Update canonical human docs and generated help together; generate commands.md
+  from internal/cli/commands.go. Replace contradictions. Keep AGENTS short:
+  no command catalog, incident diary, live inventory, or duplicated standards.
+  Historical spike results remain historical.
+- Report source checks, deployment, packet journeys, and physical acceptance
+  separately. Merge, green LEDs, status PASS, and prior claims cannot prove
+  unexecuted gates. Preserve FAIL/HOLD/NOT TESTED and explicit deferrals.
+  Use one concise handoff: source/build, verified outcomes, gaps, cleanup, and
+  actual final state. No mandatory evidence bundles or log dumps.
+- Use direct argv or safe shell quoting. Pass multiline GitHub text through
+  temporary body files; backticks and dollar substitutions execute shell code.
 
-Phase 4B implements DHCP and DNS as peer capabilities sharing the firewall
-appliance. DHCP-derived DNS and client-facing NTP are supporting behaviour,
-not standalone capabilities. Do not implement VPN, physical trunking, or
-external-switch management in this phase. Use the existing status model,
-polling, debouncer, Blinkt slots, and StreamDeck Host-detail slots; an
-unconfigured service is off, not a permanent red fault.
-
-Canonical verbs are `bootstrap`, `enroll`, `apply`, `status`, `plan`,
-`teardown`, `reboot`, and `test`. `apply` is the declarative Host operation;
-repeating correct state is a successful no-op. Do not expose `prepare`,
-`initialize`, `configure`, `provision`, `reconcile`, or `converge` as public
-synonyms for `apply`.
-
-`status` is read-only. `--details` expands status; `--verbose` is diagnostic
-verbosity where a command needs it. Use `--yes` for ordinary approval,
-`--data-disk` for exact destructive disk binding, and one Host-oriented
-`--adopt-existing-network` flag for explicit internal-bridge adoption. Do not
-retain `--confirm`, `--approve`, `--non-interactive`, or
-`--confirm-storage` as ordinary-approval synonyms.
-
-## Authority and bindings
-
-- `internal/model` is the canonical typed contract. Desired configuration is
-  authoritative; generated files, observations, and evidence are projections.
-- Keep Controller-specific intent in `/etc/boetticher/controller.yml` and Host
-  intent in `/etc/boetticher/lab.yml`.
-- Preserve deterministic revisions, fixed ownership ranges, the protected HOME
-  `vmbr0` path, the VLAN-aware `vmbr1` path, and semantic VLANs 5, 10, 20, 30,
-  40, and 99.
-- Generic code uses roles and bindings. Raspberry Pi, Lenovo, disk model,
-  address, NIC, and exact `/dev/disk/by-id` values are reference-lab bindings,
-  not architecture. Do not add public `--host`, `--node`, `hosts:`, `cluster:`,
-  or host selectors during Phase 3D.
-- Keep singleton assumptions local: pass Host configuration explicitly to Host
-  operations; do not add package globals such as `CurrentNode`, `HostAddress`,
-  or `DataDisk`. Multi-Host UX is not implemented.
-- Blinkt, StreamDeck, display, kiosk, and similar peripherals remain
-  Controller implementation details, not Module namespaces.
-
-### Controller UX
-
-- `boetticher-status.service` is a lightweight, self-contained Controller
-  convenience for the fixed eight-pixel Blinkt layout; it is not monitoring,
-  qualification, or evidence machinery.
-- The status daemon owns Blinkt exclusively. Controller operations send
-  best-effort status/progress events rather than writing GPIO directly.
-- Status checks are simple, read-only, and infrequent. They must not depend on
-  Pulse, Prometheus, Loki, Alertmanager, Gatus, a logging Module, or an
-  external observability system.
-- Blinkt or status-daemon failure must never gate Controller, Host, or Module
-  operations.
-- The fixed operator layout is `CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES
-  HOST-UPDATES`; Controller and Host update indicators are read-only status,
-  not update or reboot workflows.
-- Controller update status may be green with no available updates, amber for
-  pending updates or the native reboot-required marker, or blue for an
-  explicit Boetticher configuration-staged event. Host update status may be
-  green with no Proxmox update/reboot requirement or amber when one exists.
-- Host Internet ping checks may run every 60 seconds, but the full speedtest
-  runs from the enrolled Host no more than hourly. Do not refresh APT lists,
-  install packages, or reboot from a status check.
-- Controller bootstrap always installs the status daemon and Host apply always
-  installs the release-built Host speedtest helper. Blinkt and StreamDeck are
-  optional peripherals: absent hardware may be reported as `NOT TESTED` or
-  retried by its service, but never blocks Controller or Host setup.
-- The attached StreamDeck, when enabled, is owned by `boetticher-status.service`
-  and is read-only navigation/inspection. It must reuse the shared coarse
-  status, Internet, and operation state; detailed Host telemetry may be cached
-  separately in memory. No StreamDeck input may reach mutation, shell, or
-  Proxmox-credential paths.
-- Do not add hashes, manifests, evidence, persistent status databases, or
-  synthetic monitoring journeys to improve LED correctness. Future Controller
-  peripherals should consume the shared status snapshot rather than becoming
-  Modules.
-
-## Safety and lifecycle
-
-- Fail closed on trust, ownership, destructive, ambiguous, malformed, and
-  incomplete state. Human-facing asserted checks and operations are binary
-  `PASS` or `FAIL`; retain richer internal diagnostics without presenting them
-  as operator outcomes.
-- Preserve strict SSH host identity and authenticated enrollment. Never use
-  TOFU, `ssh-keyscan`, disabled host-key checking, or secret values in argv,
-  logs, JSON, generated output, or plaintext temporary files.
-- Host apply inspects native state before mutation and stops at trust,
-  destructive storage, and ambiguous network-adoption boundaries. It never
-  deploys Modules.
-- Host teardown removes only exact Boetticher-owned Host state and preserves
-  Controller configuration, imported Host trust, Proxmox installation, boot
-  storage, HOME management, and independent recovery access. Do not weaken the
-  twice-qualified teardown/rebuild behavior.
-- `host status` and `host plan-storage` are read-only. The retained guest IPv6
-  bridge regression uses reserved temporary VMIDs, proves both directions,
-  explicitly stops and destroys guests, and verifies VMIDs and temporary
-  volumes are absent, but it is internal to the current vmbr1 implementation,
-  not a supported Host command or acceptance journey.
-- The current reference architecture is IPv4-only. IPv6 forwarding and
-  security policy belong to explicit future firewall/network Module work and
-  must not be inferred from the internal bridge regression.
-- Do not add persisted workflow state, resume tokens, plan digests, mutation
-  ledgers, transaction databases, or generic rollback engines for Host apply.
-
-## Engineering
-
-### Capabilities and implementations
-
-Public commands express operator intent as `boetticher module <capability>
-<action> [flags]`. A capability may share an appliance, credentials, native
-configuration, and lifecycle resources with another capability. Handlers call
-ordinary internal functions; never delegate through hidden CLI aliases,
-recursive CLI execution, a private command namespace, or another API service.
-
-The installed `lab.yml` is authoritative for LAB and client-service intent.
-Defaults materialise only during approved mutation. Every writer preserves the
-other supported sections, and reservations/records remain desired state while
-leases and service observations remain native runtime state. Shared dnsmasq,
-Stubby, NTP, and firewall service rules have one coordinated internal owner;
-reconcile explicit owned sections and preserve unrelated provider state.
-
-Apply is the normal mutation verb; plan, status, and list operations are
-read-only, and an unchanged operation is a semantic no-op. Teardown disables
-its service, checks enabled dependants, and preserves the shared appliance.
-Provider and fixture failures are not successful deny results. Temporary probe
-fixtures are narrowly owned and cleaned after success, failure, timeout, or
-interruption; namespace time probes never set the Host clock.
-
-Readiness errors retain their failing boundary without leaking secrets. Normal
-retries never weaken trust or replace conflicting identity. Internal cleanup
-runs under its caller's ownership without recursively reacquiring the same
-operation lock, and cancellation receives a fresh cleanup budget. Physical
-input is tested independently of rendered output. Environment-blocked
-verification remains blocked, not PASS. Documentation, help, examples, and
-agent guidance change together; do not resurrect private-site, PKI, evidence,
-or deployment machinery for the supported client-service journey.
-
-Firewall acceptance uses the installed Controller CLI and the existing strict
-Host trust. Probe fixtures are temporary and independently cleaned up.
-Expected policy is independent of the renderer. Transport, setup, and target
-failures are not successful deny results. Do not resurrect legacy artifact,
-PKI, evidence, or deployment machinery to run packet tests. Status remains
-observational and does not run the acceptance suite.
-
-Acquire mutation ownership before reading authoritative intent. Plan and apply
-must construct the same proposed intent; a no-op covers desired state,
-provider state, and required runtime readiness. Native global or factory
-settings require explicit ownership even when their names cannot use a
-Boetticher prefix, and configuration accepted by an API is not proof that a
-daemon consumes it. Service enablement and reboot recovery are lifecycle
-requirements.
-
-Probe fixtures never borrow production client identities. Every test-started
-process and file participates in cleanup, including foreground client
-processes, lease files, hooks, namespaces, and veths. Protocol checks validate
-the property reported, not merely a response. Preserve per-case diagnostics
-without leaking secrets. Environment-blocked verification remains blocked,
-not PASS. Fix narrow defects; do not replace them with generic frameworks.
-
-- Prefer concrete Go and small consumer-owned interfaces. Avoid generic
-  managers, provider registries, plugin frameworks, and stringly typed state
-  without a current concrete consumer.
-- Fix defects at the narrowest ownership boundary. Add focused regression tests
-  for behavior or security changes, including negative and cleanup paths.
-- Propagate contexts through I/O and process boundaries and execute direct argv.
-- Preserve SOPS/Age ownership and atomic writes/path containment for desired,
-  generated, archive, and sensitive files.
-- Keep appliance artifacts authoritative for application software. Ansible
-  performs bounded site configuration and verification; it does not replace
-  artifact-selected software.
-
-## Verification and delivery
-
-- Run `make ci` before handoff. Report local, remote, deployed, journey, and
-  product evidence separately; source tests and generated configuration do not
-  prove live deployment or qualification.
-- Preserve `PASS`, `HOLD`, `FAIL`, `NOT TESTED`, and provisional status in
-  evidence. Never turn CI, a PR, screenshots, or source review into live proof.
-- Keep diffs narrow, preserve unrelated dirty/untracked state, inspect the
-  complete diff, use feature branches, and never commit directly to `main`.
-- Do not commit, push, open a PR, merge, deploy, message, or delete branches
-  unless explicitly requested.
+Read as needed: README.md/docs/start.md (operator flow), docs/modules.md
+(ownership), docs/controller.md/docs/lab.md (bindings), and
+docs/networking/firewall-capability.md, client-services.md, openwrt-provider.md
+(network contracts). This is a routing list, not a mandatory reading list.
