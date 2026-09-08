@@ -138,7 +138,7 @@ func renderHome(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnaps
 		keys[5+slot] = renderGuestKeyAt(guest, now)
 	}
 	keys[10] = renderDeckKey("FW", stateLabel(snapshot.Firewall.State), "MODULE", snapshot.Firewall.State)
-	keys[11] = renderDeckKey("VPN", "OFF", "MODULE", Off)
+	keys[11] = renderDeckKey("VPN", stateLabel(snapshot.VPN.State), "MODULE", snapshot.VPN.State)
 	keys[12] = renderDeckKey("TAILNET", stateLabel(snapshot.Tailnet.State), "MODULE", snapshot.Tailnet.State)
 	keys[13] = renderDeckKey("SCROLL", fmt.Sprintf("%d/%d", page+1, pageCount), "GUESTS", Off)
 	keys[14] = renderDeckKey("REFRESH", "READ", "STATUS", Off)
@@ -160,6 +160,7 @@ func renderHostDetail(keys []KeyImage, snapshot StatusSnapshot, telemetry Proxmo
 	keys[8] = renderDeckKey("FW", stateLabel(snapshot.Firewall.State), "MODULE", snapshot.Firewall.State)
 	keys[9] = renderDeckKey("DHCP", stateLabel(snapshot.DHCPNTP.State), "MODULE", snapshot.DHCPNTP.State)
 	keys[10] = renderDeckKey("TAILNET", stateLabel(snapshot.Tailnet.State), "MODULE", snapshot.Tailnet.State)
+	keys[11] = renderDeckKey("DNS", stateLabel(snapshot.DNS.State), "MODULE", snapshot.DNS.State)
 	keys[13] = renderDeckKey("BACK", "HOME", "NAV", Off)
 	keys[14] = renderDeckKey("REFRESH", "READ", "STATUS", Off)
 	return keys

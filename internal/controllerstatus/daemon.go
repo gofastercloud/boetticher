@@ -47,6 +47,12 @@ type Daemon struct {
 	configStaged          bool
 	streamdeckFrames      chan []KeyImage
 	streamdeckEvents      chan KeyEvent
+	refreshResults        chan refreshResult
+	refreshRunning        bool
+	refreshCancel         context.CancelFunc
+	throughputResults     chan throughputResult
+	throughputRunning     bool
+	skipThroughput        bool
 	streamdeckView        StreamDeckView
 	streamdeckPage        int
 	streamdeckGuest       int
@@ -66,6 +72,21 @@ type operationDisplay struct {
 type telemetryResult struct {
 	snapshot ProxmoxSnapshot
 	err      error
+}
+
+type refreshResult struct {
+	snapshot         StatusSnapshot
+	connectivityAt   time.Time
+	lastConnectivity CheckResult
+	throughput       float64
+	throughputAt     time.Time
+	throughputTry    time.Time
+}
+
+type throughputResult struct {
+	value float64
+	err   error
+	at    time.Time
 }
 
 // Module status is a bounded but multi-hop observation: DHCP, DNS, and the
@@ -94,22 +115,24 @@ func NewDaemon(settings Settings, driver Driver) *Daemon {
 		settings.SocketPath = DefaultSocketPath
 	}
 	return &Daemon{
-		Settings:         settings,
-		Driver:           driver,
-		Logger:           log.New(io.Discard, "", 0),
-		Now:              time.Now,
-		renderer:         NewRenderer(settings.Brightness),
-		controller:       NewDebouncer(Checking),
-		host:             NewDebouncer(Checking),
-		firewall:         NewDebouncer(Checking),
-		internet:         NewDebouncer(Checking),
-		telemetryResults: make(chan telemetryResult, 1),
-		streamdeckFrames: make(chan []KeyImage, 1),
-		streamdeckEvents: make(chan KeyEvent, 16),
-		streamdeckView:   StreamDeckHome,
-		streamdeckGuest:  -1,
-		streamdeckDirty:  true,
-		snapshot:         NewSnapshot(false),
+		Settings:          settings,
+		Driver:            driver,
+		Logger:            log.New(io.Discard, "", 0),
+		Now:               time.Now,
+		renderer:          NewRenderer(settings.Brightness),
+		controller:        NewDebouncer(Checking),
+		host:              NewDebouncer(Checking),
+		firewall:          NewDebouncer(Checking),
+		internet:          NewDebouncer(Checking),
+		telemetryResults:  make(chan telemetryResult, 1),
+		refreshResults:    make(chan refreshResult, 1),
+		throughputResults: make(chan throughputResult, 1),
+		streamdeckFrames:  make(chan []KeyImage, 1),
+		streamdeckEvents:  make(chan KeyEvent, 16),
+		streamdeckView:    StreamDeckHome,
+		streamdeckGuest:   -1,
+		streamdeckDirty:   true,
+		snapshot:          NewSnapshot(false),
 	}
 }
 
@@ -159,7 +182,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	d.Logger.Printf("status daemon started; polling every %s; StreamDeck %s; telemetry every %s", d.Settings.Interval, streamDeckState, d.Settings.TelemetryInterval)
 	d.startup(ctx)
-	d.refresh(ctx)
+	d.scheduleRefresh(ctx, d.Now())
 	d.render(ctx)
 	ticker := time.NewTicker(d.Settings.Interval)
 	defer ticker.Stop()
@@ -172,6 +195,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			if d.refreshCancel != nil {
+				d.refreshCancel()
+			}
 			d.shutdown(ctx)
 			return nil
 		case event := <-events:
@@ -183,11 +209,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case result := <-d.telemetryResults:
 			d.applyTelemetry(result)
 			d.render(ctx)
+		case result := <-d.refreshResults:
+			d.applyRefreshResult(result)
+			d.scheduleThroughput(ctx, d.Now())
+			d.render(ctx)
+		case result := <-d.throughputResults:
+			d.applyThroughputResult(result)
+			d.render(ctx)
+			d.render(ctx)
 		case now := <-telemetryTicks:
 			d.scheduleTelemetry(ctx, now)
 			d.render(ctx)
 		case now := <-ticker.C:
-			d.refreshAt(ctx, now)
+			d.scheduleRefresh(ctx, now)
+			d.scheduleThroughput(ctx, now)
 			d.render(ctx)
 		case <-frameTicker.C:
 			d.render(ctx)
@@ -197,6 +232,75 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 func (d *Daemon) refresh(ctx context.Context) {
 	d.refreshAt(ctx, d.Now())
+}
+
+func (d *Daemon) scheduleRefresh(ctx context.Context, now time.Time) {
+	if d.refreshRunning {
+		return
+	}
+	d.refreshRunning = true
+	checkCtx, cancel := context.WithCancel(ctx)
+	d.refreshCancel = cancel
+	worker := *d
+	worker.snapshot = d.snapshot
+	worker.previous = d.previous
+	worker.skipThroughput = true
+	worker.Telemetry = nil
+	go func() {
+		worker.refreshAt(checkCtx, now)
+		cancel()
+		result := refreshResult{
+			snapshot: worker.snapshot, connectivityAt: worker.connectivityAt,
+			lastConnectivity: worker.lastConnectivity, throughput: worker.throughput,
+			throughputAt: worker.throughputAt, throughputTry: worker.throughputTry,
+		}
+		select {
+		case d.refreshResults <- result:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (d *Daemon) applyRefreshResult(result refreshResult) {
+	d.refreshRunning = false
+	d.refreshCancel = nil
+	d.snapshot = result.snapshot
+	d.connectivityAt = result.connectivityAt
+	d.lastConnectivity = result.lastConnectivity
+	d.streamdeckDirty = true
+	d.logTransitions()
+}
+
+func (d *Daemon) scheduleThroughput(ctx context.Context, now time.Time) {
+	if d.Throughput == nil || d.throughputRunning || !d.lastConnectivity.Healthy {
+		return
+	}
+	if !d.throughputTry.IsZero() && now.Sub(d.throughputTry) < d.Settings.ThroughputInterval {
+		return
+	}
+	d.throughputTry = now
+	d.throughputRunning = true
+	go func() {
+		checkCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		value, err := d.Throughput(checkCtx)
+		cancel()
+		select {
+		case d.throughputResults <- throughputResult{value: value, err: err, at: now}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (d *Daemon) applyThroughputResult(result throughputResult) {
+	d.throughputRunning = false
+	if result.err != nil {
+		d.Logger.Printf("throughput sample failed: %v", result.err)
+	} else if result.value >= 0 {
+		d.throughput, d.throughputAt = result.value, result.at
+	}
+	d.snapshot.Internet.ThroughputMbps = d.throughput
+	d.snapshot.Internet.ThroughputAt = d.throughputAt
+	d.streamdeckDirty = true
 }
 
 func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
@@ -272,9 +376,7 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 			d.lastConnectivity = result.data
 			d.connectivityAt = now
 		case "modules":
-			d.snapshot.Firewall = debouncedModuleComponent(d.firewall, result.modules.Firewall)
-			d.snapshot.DHCPNTP = moduleComponent(result.modules.DHCPNTP)
-			d.snapshot.Tailnet = moduleComponent(result.modules.Tailnet)
+			d.applyModuleStatus(result.modules)
 		}
 	}
 	if !runConnectivity {
@@ -288,7 +390,7 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 		connectivityComponent := d.internet.Update(connectivity.Healthy, connectivity.Detail)
 		d.snapshot.Internet.Component = connectivityComponent
 	}
-	if connectivity.Healthy && (d.throughputTry.IsZero() || now.Sub(d.throughputTry) >= d.Settings.ThroughputInterval) {
+	if !d.skipThroughput && connectivity.Healthy && (d.throughputTry.IsZero() || now.Sub(d.throughputTry) >= d.Settings.ThroughputInterval) {
 		d.throughputTry = now
 		throughputCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		value, err := d.Throughput(throughputCtx)
@@ -314,6 +416,16 @@ func (d *Daemon) refreshAt(ctx context.Context, now time.Time) {
 		}
 	}
 	d.scheduleTelemetry(ctx, now)
+	d.streamdeckDirty = true
+	d.logTransitions()
+}
+
+func (d *Daemon) applyModuleStatus(modules ModuleStatus) {
+	d.snapshot.Firewall = debouncedModuleComponent(d.firewall, modules.Firewall)
+	d.snapshot.VPN = moduleComponent(modules.VPN)
+	d.snapshot.DHCPNTP = moduleComponent(modules.DHCPNTP)
+	d.snapshot.DNS = moduleComponent(modules.DNS)
+	d.snapshot.Tailnet = moduleComponent(modules.Tailnet)
 	d.streamdeckDirty = true
 	d.logTransitions()
 }

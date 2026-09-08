@@ -97,11 +97,14 @@ running without a display, and the GPIO check is reported as `NOT TESTED` rather
 than blocking Controller readiness. Host apply always installs the packaged
 Host speedtest helper; it does not depend on Blinkt or StreamDeck hardware.
 
-The fixed physical layout, viewed from the operator side, is:
+The current 4E status layout, viewed from the operator side, is:
 
 ```text
-CTL HOST FW DHCP/NTP TAILNET NET CTRL-UPDATES HOST-UPDATES
+CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES
 ```
+
+DHCP/NTP and independent DNS detail remain available through the existing
+StreamDeck detail view and CLI status.
 
 | Display | Meaning |
 | --- | --- |
@@ -179,8 +182,9 @@ When a StreamDeck is attached to the Controller, it is owned by the same
 `boetticher-status.service` daemon as Blinkt. The home screen is a detailed,
 read-only view of the enrolled Host. Its five-key rows are Proxmox health
 (`PVE`, CPU, RAM, DATA, NET), five VM/LXC guests sorted by VMID, and core
-services (`FW`, VPN, DNS, SCROLL, REFRESH). DATA follows fresh/stale Host
-telemetry; VPN is visibly off until that capability exists. SCROLL cycles
+services (`FW`, VPN, TAILNET, SCROLL, REFRESH). DATA follows fresh/stale Host
+telemetry; VPN currently renders `OFF` because the status snapshot has no VPN
+mapping, which is a display gap rather than proof that VPN is absent. SCROLL cycles
 through guests five at a time. Each guest tile uses `VM<id>` or `CT<id>` on
 the first line, the hostname on the second, and its runtime status on the
 third.
@@ -352,7 +356,7 @@ HOME
 
 Virtual LAB
   |
-  +-- vmbr1   VLAN-aware, no host address, no physical members
+  +-- vmbr1   VLAN-aware, no host address, nic1 tagged member (VLAN 20/40)
        |
        +-- VLAN 5   TRANSIT
        +-- VLAN 10  INFRA
@@ -369,12 +373,13 @@ sudo boetticher host apply --adopt-existing-network --yes
 sudo boetticher host status
 ```
 
-`host status` is read-only. `host apply` adds
-an absent `vmbr1` stanza with VLAN awareness and no address,
-gateway, or physical port. It never rewrites `vmbr0`, changes `192.168.4.5`,
-changes the default route, attaches the second NIC, creates host VLAN
-subinterfaces, enables forwarding, or configures DHCP, DNS, firewall, guests,
-or switches. An existing conflicting `vmbr1` is reported and not adopted.
+`host status` is read-only. `host apply` adds an absent `vmbr1` stanza with VLAN
+awareness and no address or gateway. The accepted physical binding is the
+verified `nic1` MAC `a0:ce:c8:a2:b2:10`, restricted to tagged VLAN 20/40 with
+untagged ingress rejected. It never rewrites `vmbr0`, changes `192.168.4.5`,
+changes the default route, creates host VLAN subinterfaces, enables forwarding,
+or configures DHCP, DNS, firewall, guests, or switches. An unknown or
+conflicting `vmbr1` or physical binding is reported and not adopted.
 
 A compatible existing bridge requires explicit adoption:
 
@@ -384,7 +389,7 @@ sudo boetticher host apply --adopt-existing-network --yes
 
 The command displays the protected HOME path and runtime addresses before
 asking for confirmation (or accepts `--yes` for deliberate scripted use).
-Adoption requires a VLAN-aware, portless bridge with no configured addresses,
+Adoption requires a VLAN-aware bridge with no configured addresses,
 gateway, or unknown interface directives. Runtime IPv6 link-local addresses
 alone are compatible; configured link-local, global IPv6, IPv4, and gateway
 routes remain conflicts.

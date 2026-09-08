@@ -37,8 +37,9 @@ boetticher module printer status
 ```
 
 DHCP-derived DNS and client-facing NTP are supporting behaviour of the peer
-`dhcp` and `dns` capabilities, not standalone capabilities. VPN remains a
-future capability.
+`dhcp` and `dns` capabilities, not standalone capabilities. VPN dispatch,
+provider reconciliation, fail-closed policy, and Controller-daemon observation
+are implemented; remote and physical acceptance remain separate gates.
 
 ## Phase 4D Tailnet capability
 
@@ -57,8 +58,54 @@ package version, persistent assets, and the loaded policy. Tailnet status is
 local runtime evidence; remote peer reachability, split-DNS grants, packet
 journeys, and physical isolation require separate acceptance. Key expiry or
 machine approval attention is recoverable by rerunning apply with a current
-operator-approved key. Phase 4D remains a rebase point for 4E integration and
-recovery; it is not a qualified full-lab rollout.
+operator-approved key. Phase 4D local runtime is qualified; remote and physical
+acceptance remain separate gates.
+
+## 4E network closeout state
+
+The fixed Firewall, DHCP/DNS, VPN, and Tailnet capability boundary now feeds
+the status daemon through ordinary internal calls. The daemon maps VPN and DNS
+facts into the existing snapshot and StreamDeck slots, keeps module collection
+single-flight off the event loop, and preserves bounded cancellation. A
+configured VPN with unverified egress remains distinct from a failed or
+unconfigured VPN.
+
+Native observations and regressions are bounded: VPN failure is not `OFF`, and
+healthy DHCP plus failed DNS is not `healthy`. Keep the Blinkt mapping fixed at
+eight pixels: `CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES`.
+DHCP/NTP detail remains in StreamDeck host detail and CLI status. Keep the
+existing StreamDeck home `FW`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH` area;
+use its existing detail navigation for DHCP/NTP and DNS. Add no display stack,
+hardware, or framework.
+
+Keep cleanup narrow: delete only proven obsolete reachable network callers and
+docs, preserve security tests, and add regressions for changed behaviour. NET
+remains a Host HOME observation; VPN availability does not prove protected
+client enforcement. Physical navigation, USB reconnect, and overlay expiry
+returning fresh state remain NOT TESTED; fix only observed faults.
+
+The reference physical path now uses exact `nic1` ownership on `vmbr1`, with
+tagged VLAN 20 (SERVERS) and VLAN 40 (SANDBOX) only and untagged ingress
+rejected. Current lease evidence is Pi `10.10.20.106` on SERVERS and the
+MacBook `10.10.40.181` on SANDBOX; HOME remains on `vmbr0`. Remote Tailnet,
+packet, physical USB, and the disposable protected VPN-client journey remain
+separate acceptance gates and are reported as `NOT TESTED` or `HOLD` until
+their exact journeys execute.
+
+Recovery retains protected off-component config, identities, and AirVPN/Tailnet
+credentials, or documents deliberate reprovision; leases are disposable. Use
+the existing independent Controller/Host management path, with no backup
+platform or Host teardown.
+
+Application networking keeps ordinary existing calls with narrow ingress,
+egress, and identity names; do not add a generic schema. Use owned-domain
+HTTPS with DNS-01 automated renewal, the first Stage 5 dashboard, and an
+application backup before Stage 6. Stage 5 covers monitoring, logging, and
+statuspage work; add no CA or proxy platform now.
+
+Defer new network modules, an aggregate coordinator, CA/SSO/proxy platforms,
+observability implementation, and switch automation. The existing management
+route remains the boundary.
 
 ## Phase 4A firewall capability
 

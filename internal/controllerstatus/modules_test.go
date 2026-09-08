@@ -3,10 +3,37 @@ package controllerstatus
 import (
 	"context"
 	"errors"
+	"log"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+type responsiveStatusDeck struct {
+	events   chan KeyEvent
+	nodeSeen chan struct{}
+}
+
+func (d *responsiveStatusDeck) SetKey(_ context.Context, _ int, key KeyImage) error {
+	if key.Title == "NODE" {
+		select {
+		case d.nodeSeen <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+func (d *responsiveStatusDeck) Clear(context.Context) error { return nil }
+func (d *responsiveStatusDeck) Events() <-chan KeyEvent     { return d.events }
+func (d *responsiveStatusDeck) Close() error                { return nil }
+
+type statusLogWriter chan<- string
+
+func (w statusLogWriter) Write(data []byte) (int, error) {
+	w <- string(data)
+	return len(data), nil
+}
 
 func TestParseTailnetResultRejectsStaleAndUnknownEvidence(t *testing.T) {
 	now := time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)
@@ -37,12 +64,12 @@ func TestParseTailnetResultAllowsValidNonzeroCommandStatesButNeverHealthy(t *tes
 }
 
 func TestModuleCheckerReusesNativeFirewallStatusCommand(t *testing.T) {
-	var command string
+	var firewallCommand bool
 	checker := ModuleChecker{
 		CommandPath: "/usr/local/bin/boetticher",
 		RunCommand: func(_ context.Context, path string, args ...string) ([]byte, error) {
-			command = path + " " + strings.Join(args, " ")
 			if strings.Join(args, " ") == "module firewall status" {
+				firewallCommand = path == "/usr/local/bin/boetticher"
 				return []byte("Firewall: PASS\n"), nil
 			}
 			return []byte("capability: not configured\n"), errors.New("not configured")
@@ -52,14 +79,43 @@ func TestModuleCheckerReusesNativeFirewallStatusCommand(t *testing.T) {
 	if !result.Firewall.Configured || !result.Firewall.Healthy {
 		t.Fatalf("healthy firewall result = %#v", result.Firewall)
 	}
-	if result.DHCPNTP.Configured || result.DHCPNTP.State != Off || result.Tailnet.State != Failed || result.DHCPNTP.Detail == "" || result.Tailnet.Detail == "" {
+	if result.DHCPNTP.Configured || result.DHCPNTP.State != Off || result.DNS.Configured || result.DNS.State != Off || result.VPN.State != Failed || result.Tailnet.State != Failed || result.DHCPNTP.Detail == "" || result.DNS.Detail == "" || result.VPN.Detail == "" || result.Tailnet.Detail == "" {
 		t.Fatalf("unimplemented capability result = %#v", result)
 	}
-	if command != "/usr/local/bin/boetticher module firewall status" {
-		t.Fatalf("module status command = %s", command)
+	if !firewallCommand {
+		t.Fatal("native firewall status command was not used")
 	}
-	if strings.Contains(command, "site.yml") {
-		t.Fatalf("module status command reintroduced site.yml: %s", command)
+}
+
+func TestModuleCheckerDistinguishesVPNFailureAndDNSFailureFromOff(t *testing.T) {
+	checker := ModuleChecker{
+		CommandPath: "/usr/local/bin/boetticher",
+		RunCommand: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			switch strings.Join(args, " ") {
+			case "module dhcp status":
+				return []byte("DHCP: PASS\n"), nil
+			case "module dns status":
+				return []byte("DNS: FAIL\n"), errors.New("dns unavailable")
+			case "module vpn status":
+				return []byte("VPN: BLOCKED\n"), errors.New("vpn unavailable")
+			case "module tailnet status --json":
+				return []byte(`{"configured":false,"state":"off","detail":"Tailnet capability not configured","observed_at":"` + time.Now().UTC().Format(time.RFC3339Nano) + `"}`), nil
+			case "module firewall status":
+				return []byte("Firewall: PASS\n"), nil
+			default:
+				return nil, errors.New("unexpected command")
+			}
+		},
+	}
+	result := checker.Check(context.Background())
+	if !result.DHCPNTP.Healthy || result.DHCPNTP.State != Healthy {
+		t.Fatalf("healthy DHCP result = %#v", result.DHCPNTP)
+	}
+	if result.DNS.State != Failed || !result.DNS.Configured {
+		t.Fatalf("failed DNS result = %#v", result.DNS)
+	}
+	if result.VPN.State != Failed || !result.VPN.Configured {
+		t.Fatalf("failed VPN result = %#v", result.VPN)
 	}
 }
 
@@ -83,14 +139,16 @@ func TestDaemonMapsModuleStatusToExistingDisplaySlots(t *testing.T) {
 	d.Modules = func(context.Context) ModuleStatus {
 		return ModuleStatus{
 			Firewall: CheckResult{Configured: true, Healthy: true, Detail: "firewall provider is running"},
+			VPN:      CheckResult{Configured: true, State: Failed, Detail: "VPN status is not healthy"},
 			DHCPNTP:  CheckResult{Configured: true, State: Failed, Detail: "DHCP/NTP capability is unavailable"},
+			DNS:      CheckResult{Configured: true, State: Healthy, Detail: "DNS capability is healthy"},
 			Tailnet:  CheckResult{Configured: true, State: Failed, Detail: "Tailnet capability is unavailable"},
 		}
 	}
 	d.Now = func() time.Time { return time.Unix(100, 0) }
 	d.refresh(context.Background())
-	if d.snapshot.Firewall.State != Healthy || d.snapshot.DHCPNTP.State != Failed || d.snapshot.Tailnet.State != Failed {
-		t.Fatalf("module display slots = firewall:%#v dhcp:%#v tailnet:%#v", d.snapshot.Firewall, d.snapshot.DHCPNTP, d.snapshot.Tailnet)
+	if d.snapshot.Firewall.State != Healthy || d.snapshot.VPN.State != Failed || d.snapshot.DHCPNTP.State != Failed || d.snapshot.DNS.State != Healthy || d.snapshot.Tailnet.State != Failed {
+		t.Fatalf("module display slots = firewall:%#v vpn:%#v dhcp:%#v dns:%#v tailnet:%#v", d.snapshot.Firewall, d.snapshot.VPN, d.snapshot.DHCPNTP, d.snapshot.DNS, d.snapshot.Tailnet)
 	}
 	if d.snapshot.Firewall.Detail == "" {
 		t.Fatal("firewall detail was lost")
@@ -114,6 +172,113 @@ func TestDaemonGivesSequentialModuleChecksTheirBoundedBudget(t *testing.T) {
 	remaining := time.Until(deadline)
 	if deadline.IsZero() || remaining < 15*time.Second || remaining > moduleCheckTimeout {
 		t.Fatalf("module check deadline = %v from now, want a bounded %s budget", remaining, moduleCheckTimeout)
+	}
+}
+
+func TestDaemonProcessesIPCAndStreamDeckWhileModuleCheckRuns(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "bcs-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	settings := DefaultSettings()
+	settings.SocketPath = dir + "/status.sock"
+	settings.Interval = time.Hour
+	settings.TelemetryInterval = time.Hour
+	deck := &responsiveStatusDeck{events: make(chan KeyEvent, 1), nodeSeen: make(chan struct{}, 1)}
+	started := make(chan struct{})
+	hostStarted := make(chan struct{})
+	release := make(chan struct{})
+	throughputStarted := make(chan struct{})
+	throughputRelease := make(chan struct{})
+	logs := make(chan string, 8)
+	d := NewDaemon(settings, nil)
+	d.Logger = log.New(statusLogWriter(logs), "", 0)
+	d.StreamDeckFactory = func(context.Context) (StreamDeck, error) { return deck, nil }
+	d.Controller = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }
+	d.Host = func(ctx context.Context) CheckResult {
+		close(hostStarted)
+		select {
+		case <-release:
+			return CheckResult{Configured: true, Healthy: true}
+		case <-ctx.Done():
+			return CheckResult{}
+		}
+	}
+	d.Connectivity = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }
+	d.Throughput = func(ctx context.Context) (float64, error) {
+		close(throughputStarted)
+		select {
+		case <-throughputRelease:
+			return 600, nil
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+	d.Telemetry = func(context.Context) (ProxmoxSnapshot, error) { return ProxmoxSnapshot{}, nil }
+	d.Modules = func(ctx context.Context) ModuleStatus {
+		close(started)
+		select {
+		case <-release:
+			return ModuleStatus{}
+		case <-ctx.Done():
+			return ModuleStatus{}
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("status daemon exited before module check started: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("module check did not start")
+	}
+	select {
+	case <-hostStarted:
+	case err := <-done:
+		t.Fatalf("status daemon exited before host check started: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("host check did not start")
+	}
+	if err := Notify(context.Background(), settings.SocketPath, OperationEvent{Event: "operation-start", Name: "host apply", TotalSteps: 1}); err != nil {
+		t.Fatalf("notify operation: %v", err)
+	}
+	operationDeadline := time.After(time.Second)
+	for {
+		select {
+		case message := <-logs:
+			if strings.Contains(message, "operation started: host apply") {
+				goto operationStarted
+			}
+		case <-operationDeadline:
+			t.Fatal("operation IPC was blocked by module check")
+		}
+	}
+
+operationStarted:
+	deck.events <- KeyEvent{Index: 0}
+	select {
+	case <-deck.nodeSeen:
+	case <-time.After(time.Second):
+		t.Fatal("StreamDeck input was blocked by module check")
+	}
+	close(release)
+	select {
+	case <-throughputStarted:
+	case <-time.After(time.Second):
+		t.Fatal("throughput check did not start after refresh publication")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("status daemon did not stop")
 	}
 }
 
