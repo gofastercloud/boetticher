@@ -25,6 +25,7 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher module firewall plan|apply|status|reboot|test|teardown [flags]"},
 	{Usage: "boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [flags]"},
 	{Usage: "boetticher module dhcp plan|apply|status|teardown|test|add-reservation|remove-reservation|list-reservations|list-leases [flags]"},
+	{Usage: "boetticher module vpn plan|apply|status|teardown|add-client [flags]"},
 }
 
 var advancedCommandSpecs = []commandSpec{
@@ -174,6 +175,24 @@ var helpSpecs = map[string]helpSpec{
 	},
 	"module dns": {
 		Usage: "boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [flags]", Purpose: "Manage local A/CNAME names and authenticated encrypted upstream DNS on the shared firewall appliance.", Arguments: "Names may be short local names; results display canonical lab.home.arpa names.", Options: "apply, teardown, test, and resource changes accept --yes; test also accepts --plan or --cleanup-only --yes; plan and list operations are read-only.", Safety: "Uses verified appliance management with Quad9 DoT and no plaintext fallback or private site credentials.", Examples: "boetticher module dns plan; boetticher module dns apply --yes; boetticher module dns add-record app --type A --value 10.10.20.61 --yes", Related: "module dhcp, module firewall",
+	},
+	"module vpn": {
+		Usage: "boetticher module vpn plan|apply|status|teardown|add-client [flags]", Purpose: "Manage one retained AirVPN WireGuard connection and VPN-only egress for declared protected client reservations.", Arguments: "Clients reference existing DHCP reservations in the permanent protected address class.", Options: "apply accepts --yes and initial provisioning accepts --api-key-stdin --yes; add-client accepts --yes; teardown accepts --plan or --yes; status accepts --details.", Safety: "Plan and status are observational. Account API credentials are read once from stdin, never stored in lab.yml or arguments; ordinary reapply uses retained root-only tunnel material without account access. Teardown retains client intent, protected ranges, and reusable account material, leaving protected clients blocked while disconnected.", Examples: "boetticher module vpn plan; boetticher module vpn apply --api-key-stdin --yes; boetticher module vpn add-client vpn-test-trusted --yes; boetticher module vpn status --details; boetticher module vpn teardown --plan", Related: "module firewall, module dhcp",
+	},
+	"module vpn plan": {
+		Usage: "boetticher module vpn plan", Purpose: "Preview the exact VPN connection, source-routing, and protected-client policy changes.", Arguments: "No positional arguments.", Options: "No options.", Safety: "Read-only. It never contacts the AirVPN account API, writes retained tunnel material, or changes the provider.", Examples: "boetticher module vpn plan", Related: "module vpn apply, module vpn status",
+	},
+	"module vpn apply": {
+		Usage: "boetticher module vpn apply [--yes] [--api-key-stdin]", Purpose: "Apply or reapply one Europe-selected AirVPN WireGuard connection and fail-closed protected-client egress policy.", Arguments: "No positional arguments.", Options: "--yes approves desired and provider changes; --api-key-stdin is required with --yes only for first provisioning or explicit profile refresh.", Safety: "Uses the installed Controller configuration, authenticated Host/provider transports, permanent IPv4/IPv6 safety guard, and exact retained device identity. It never falls back to ordinary WAN for protected clients.", Examples: "boetticher module vpn apply --api-key-stdin --yes; boetticher module vpn apply --yes", Related: "module vpn status, module vpn teardown",
+	},
+	"module vpn status": {
+		Usage: "boetticher module vpn status [--details]", Purpose: "Observe VPN connection and protected-client enforcement separately.", Arguments: "No positional arguments.", Options: "--details includes location and selected-client counts.", Safety: "Read-only. A missing or unusable connection is reported as blocked/unavailable and never repairs the killswitch.", Examples: "boetticher module vpn status --details", Related: "module vpn apply, module vpn teardown",
+	},
+	"module vpn teardown": {
+		Usage: "boetticher module vpn teardown [--plan|--yes]", Purpose: "Disable the active VPN connection while retaining VPN-required intent and permanent protection.", Arguments: "No positional arguments.", Options: "--plan previews; --yes approves the change.", Safety: "Protected clients remain unable to use ordinary WAN; profile and account device identity are retained for deliberate reapply. Shared firewall, DNS, DHCP, Host trust, and physical networking are preserved.", Examples: "boetticher module vpn teardown --plan; boetticher module vpn teardown --yes", Related: "module vpn status, module firewall status",
+	},
+	"module vpn add-client": {
+		Usage: "boetticher module vpn add-client RESERVATION [--yes]", Purpose: "Declare one existing DHCP reservation as VPN-only and reconcile its protected source policy.", Arguments: "RESERVATION must already exist in DHCP and use a valid protected .224-.239 address.", Options: "--yes approves the desired and provider change.", Safety: "The reservation is never copied or renumbered. The client cannot fall back to ordinary WAN, and the shared DNS/NTP exceptions remain explicit.", Examples: "boetticher module vpn add-client vpn-test-trusted --yes", Related: "module vpn apply, module dhcp list-reservations",
 	},
 	"module dhcp plan":               {Usage: "boetticher module dhcp plan", Purpose: "Preview DHCP scopes, reservations, NTP options, and owned provider changes.", Arguments: "No positional arguments.", Options: "No options.", Safety: "Read-only; it does not write lab.yml or provider state.", Examples: "boetticher module dhcp plan", Related: "module dhcp apply"},
 	"module dhcp apply":              {Usage: "boetticher module dhcp apply [--yes]", Purpose: "Enable and reconcile reference DHCP scopes and client-facing NTP.", Arguments: "No positional arguments.", Options: "--yes approves the desired and provider change.", Safety: "Requires an existing usable firewall and DNS capability; failed application retains saved intent.", Examples: "boetticher module dhcp apply --yes", Related: "module dhcp status, module dns apply"},

@@ -71,7 +71,7 @@ func EvaluateSnapshot(snapshot StatusSnapshot) []Check {
 	return []Check{
 		{Name: "Platform", Passed: snapshot.Platform, Detail: "Raspberry Pi OS Trixie, ARM64"},
 		{Name: "Controller runtime", Passed: snapshot.Runtime, Detail: "Installed"},
-		{Name: "Go", Passed: snapshot.Go, Detail: "1.26.5"},
+		{Name: "Go", Passed: snapshot.Go, Detail: "1.26.6"},
 		{Name: "Ansible", Passed: snapshot.Ansible, Detail: "2.19.11"},
 		{Name: "SSH", Passed: snapshot.SSH, Detail: "Public-key authentication; root login disabled"},
 		{Name: "Security updates", Passed: snapshot.Updates, Detail: "Enabled; automatic reboot disabled"},
@@ -111,7 +111,7 @@ func RunStatus(ctx context.Context, options StatusOptions) ([]Check, error) {
 	checks := make([]Check, 0, 14)
 	checks = append(checks, Check{Name: "Platform", Passed: platformReady(ctx, options.Command), Detail: "Raspberry Pi OS Trixie, ARM64"})
 	checks = append(checks, Check{Name: "Controller runtime", Passed: runtimeReady(options.RuntimeDir), Detail: "Installed"})
-	checks = append(checks, Check{Name: "Go", Passed: commandContains(ctx, options.Command, "/usr/local/bin/go", "version", "go1.26.5"), Detail: "1.26.5"})
+	checks = append(checks, Check{Name: "Go", Passed: commandContains(ctx, options.Command, "/usr/local/bin/go", "version", "go1.26.6"), Detail: "1.26.6"})
 	checks = append(checks, Check{Name: "Ansible", Passed: commandContains(ctx, options.Command, filepath.Join(VenvPath, "bin", "ansible-playbook"), "--version", "core 2.19.11"), Detail: "2.19.11"})
 	checks = append(checks, Check{Name: "SSH", Passed: sshReady(ctx, options.Command, options.Operator), Detail: "Public-key authentication; root login disabled"})
 	checks = append(checks, Check{Name: "Security updates", Passed: fileContains("/etc/apt/apt.conf.d/52boetticher-unattended", "Unattended-Upgrade::Automatic-Reboot \"false\";", "origin=Debian,codename=trixie-security"), Detail: "Enabled; automatic reboot disabled"})

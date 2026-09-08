@@ -98,7 +98,8 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 		}
 	}
 	state.System = append(state.System, ntpSections(site, ntpUpstreams, ntpServe)...)
-	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled)
+	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
+	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
 	return state, nil
 }
 
@@ -289,7 +290,7 @@ func ntpSections(site model.Site, upstreams []string, serve *bool) []Section {
 	return []Section{{Name: serviceNTPSection, Type: "timeserver", Options: map[string]string{"enabled": "1", "use_dhcp": "0", "enable_server": enableServer}, Lists: map[string][]string{"server": append([]string(nil), upstreams...)}}}
 }
 
-func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled bool) []Section {
+func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled, vpnEnabled bool) []Section {
 	if !dnsEnabled && !dhcpEnabled {
 		return nil
 	}
@@ -306,11 +307,17 @@ func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled bool) []Se
 			}
 			for _, item := range []struct{ suffix, protocol, port string }{{"dns_udp", "udp", "53"}, {"dns_tcp", "tcp", "53"}, {"dot_tcp", "tcp", "853"}} {
 				sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_" + item.suffix, Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external " + item.suffix, "src": name, "dest": "home_wan", "proto": item.protocol, "dest_port": item.port, "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+				if vpnEnabled {
+					sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_" + item.suffix + "_vpn", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external " + item.suffix + " via VPN", "src": name, "dest": "vpn", "proto": item.protocol, "dest_port": item.port, "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+				}
 			}
 		}
 		if dhcpEnabled {
 			sections = append(sections, Section{Name: "boetticher_allow_" + name + "_ntp", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " NTP", "src": name, "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}})
 			sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_ntp", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external NTP", "src": name, "dest": "home_wan", "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+			if vpnEnabled {
+				sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_ntp_vpn", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external NTP via VPN", "src": name, "dest": "vpn", "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
+			}
 		}
 	}
 	return sections

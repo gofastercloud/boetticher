@@ -63,6 +63,15 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 }
 
 func managedStaleSection(name string, section openwrt.UCISection) bool {
+	if name == "airvpn" && section.Type == "interface" {
+		return true
+	}
+	if strings.HasPrefix(name, "boetticher_vpn_") {
+		switch section.Type {
+		case "interface", "wireguard_airvpn", "route", "rule", "zone", "forwarding", "redirect":
+			return true
+		}
+	}
 	if section.Type == "host" {
 		return nativeHostSectionName(section.Options["name"]) == name && section.Options["name"] != ""
 	}
@@ -112,7 +121,9 @@ func managedRuleIdentity(name string, options map[string]string) bool {
 		}
 		for _, item := range []struct{ suffix, proto, port string }{{"dns_udp", "udp", "53"}, {"dns_tcp", "tcp", "53"}, {"dot_tcp", "tcp", "853"}} {
 			checks["boetticher_deny_"+zone+"_external_"+item.suffix] = [3]string{"Boetticher " + label + " deny external " + item.suffix, zone, item.proto}
+			checks["boetticher_deny_"+zone+"_external_"+item.suffix+"_vpn"] = [3]string{"Boetticher " + label + " deny external " + item.suffix + " via VPN", zone, item.proto}
 		}
+		checks["boetticher_deny_"+zone+"_external_ntp_vpn"] = [3]string{"Boetticher " + label + " deny external NTP via VPN", zone, "udp"}
 		if expected, ok := checks[name]; ok {
 			return options["name"] == expected[0] && options["src"] == expected[1] && options["proto"] == expected[2] && options["family"] == "ipv4"
 		}
@@ -121,6 +132,9 @@ func managedRuleIdentity(name string, options map[string]string) bool {
 }
 
 func compatibleIdentity(name string, observed openwrt.UCISection, desired Section) bool {
+	if name == "airvpn" {
+		return observed.Options["proto"] == "wireguard"
+	}
 	if observed.Type == "host" {
 		return observed.Options["name"] == desired.Options["name"]
 	}
@@ -149,7 +163,7 @@ func nativeRecordSectionName(name string) string {
 }
 
 func sameSection(observed openwrt.UCISection, desired Section) bool {
-	if observed.Type != desired.Type || len(observed.Options) != len(desired.Options) || len(observed.Lists) != len(desired.Lists) {
+	if observed.Type != desired.Type || len(observed.Options) != len(desired.Options) {
 		return false
 	}
 	for key, value := range desired.Options {
@@ -158,13 +172,22 @@ func sameSection(observed openwrt.UCISection, desired Section) bool {
 		}
 	}
 	for key, values := range desired.Lists {
-		if len(observed.Lists[key]) != len(values) {
+		observedValues, exists := observed.Lists[key]
+		if len(values) == 0 && (!exists || len(observedValues) == 0) {
+			continue
+		}
+		if len(observedValues) != len(values) {
 			return false
 		}
 		for index := range values {
-			if observed.Lists[key][index] != values[index] {
+			if observedValues[index] != values[index] {
 				return false
 			}
+		}
+	}
+	for key, values := range observed.Lists {
+		if _, wanted := desired.Lists[key]; !wanted && len(values) != 0 {
+			return false
 		}
 	}
 	return true
@@ -284,6 +307,9 @@ func writeSection(ctx context.Context, client uciWriter, packageName string, des
 			if err := client.UCIDelete(ctx, packageName, desired.Name, list); err != nil {
 				return fmt.Errorf("reset provider list %s.%s: %w", desired.Name, list, err)
 			}
+		}
+		if len(values) == 0 {
+			continue
 		}
 		if err := client.UCISetList(ctx, packageName, desired.Name, list, values); err != nil {
 			return fmt.Errorf("set provider list %s.%s: %w", desired.Name, list, err)

@@ -45,6 +45,52 @@ type Profile struct {
 	Metadata Metadata
 }
 
+// WireGuardSettings exposes only the normalized fields required by the native
+// OpenWrt projection. It is intentionally derived from Profile.Config so the
+// parser remains the single validation boundary.
+type WireGuardSettings struct {
+	PrivateKey          string
+	Address             string
+	PeerPublicKey       string
+	PresharedKey        string
+	EndpointHost        string
+	EndpointPort        int
+	MTU                 int
+	PersistentKeepalive int
+}
+
+func (p Profile) WireGuardSettings() (WireGuardSettings, error) {
+	parsed, err := ParseProfileStrict([]byte(p.Config))
+	if err != nil {
+		return WireGuardSettings{}, err
+	}
+	values := map[string]string{}
+	section := ""
+	for _, raw := range strings.Split(parsed.Config, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = line[1 : len(line)-1]
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			values[section+"."+strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	port, _ := strconv.Atoi(values["Peer.Endpoint"][strings.LastIndex(values["Peer.Endpoint"], ":")+1:])
+	keepalive, _ := strconv.Atoi(values["Peer.PersistentKeepalive"])
+	mtu, _ := strconv.Atoi(values["Interface.MTU"])
+	endpoint := values["Peer.Endpoint"]
+	host, _, splitErr := net.SplitHostPort(endpoint)
+	if splitErr != nil {
+		return WireGuardSettings{}, errors.New("AirVPN normalized profile endpoint is malformed")
+	}
+	return WireGuardSettings{PrivateKey: values["Interface.PrivateKey"], Address: values["Interface.Address"], PeerPublicKey: values["Peer.PublicKey"], PresharedKey: values["Peer.PresharedKey"], EndpointHost: host, EndpointPort: port, MTU: mtu, PersistentKeepalive: keepalive}, nil
+}
+
 // Metadata contains only values safe for firewall and routing projections.
 type Metadata struct {
 	EndpointHost  string `json:"endpoint_host"`
@@ -72,7 +118,7 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (Profile, 
 		baseURL = DefaultAPIBaseURL
 	}
 	httpClient := c.profileHTTPClient()
-	profile, attempt, err := c.generateProfile(ctx, baseURL, apiKey, servers, defaultDeviceName, httpClient, "generate_profile")
+	profile, attempt, err := c.generateProfile(ctx, baseURL, apiKey, servers, defaultDeviceName, httpClient, "generate_profile", false)
 	if err == nil {
 		return profile, nil
 	}
@@ -83,6 +129,58 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (Profile, 
 		return Profile{}, err
 	}
 	return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(attempt.ContentType, attempt.Data), err)
+}
+
+// GenerateForDevice renders one profile for the exact provider device ID
+// returned by the account API. It deliberately does not inspect, adopt, or
+// rename devices and is the steady-state path used by the public VPN module.
+func (c Client) GenerateForDevice(ctx context.Context, apiKey, servers, deviceID string) (Profile, error) {
+	if strings.TrimSpace(apiKey) == "" || strings.ContainsAny(apiKey, " \t\r\n") {
+		return Profile{}, errors.New("AirVPN API key is empty or contains whitespace")
+	}
+	if err := validateSelector(servers); err != nil {
+		return Profile{}, err
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" || len(deviceID) > 256 || strings.ContainsAny(deviceID, " \t\r\n/\\") {
+		return Profile{}, errors.New("AirVPN device ID is empty or unsafe")
+	}
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = DefaultAPIBaseURL
+	}
+	profile, attempt, err := c.generateProfile(ctx, baseURL, apiKey, servers, deviceID, c.profileHTTPClient(), "generate_profile", true)
+	if err == nil {
+		return profile, nil
+	}
+	if attempt.ParseError {
+		return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(attempt.ContentType, attempt.Data), err)
+	}
+	return Profile{}, err
+}
+
+// CreateDevice requests one provider device and returns only the exact ID
+// supplied by the API. A missing ID is a provider schema prerequisite failure;
+// callers must not invent a name or infer ownership from a display label.
+func (c Client) CreateDevice(ctx context.Context, apiKey string) (string, error) {
+	if strings.TrimSpace(apiKey) == "" || strings.ContainsAny(apiKey, " \t\r\n") {
+		return "", errors.New("AirVPN API key is empty or contains whitespace")
+	}
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = DefaultAPIBaseURL
+	}
+	data, err := c.providerDeviceAction(ctx, baseURL, apiKey, c.profileHTTPClient(), "create_device", "add", nil)
+	if err != nil {
+		return "", fmt.Errorf("create AirVPN device: %w", err)
+	}
+	var response struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil || strings.TrimSpace(response.ID) == "" {
+		return "", errors.New("AirVPN device API did not return the required device id; inspect the account before retrying")
+	}
+	return strings.TrimSpace(response.ID), nil
 }
 
 // handleGeneratorJSONFailure applies only safe, bounded remediation to an
@@ -183,7 +281,7 @@ func (c Client) retryWithManagedDeviceAfterReadiness(ctx context.Context, baseUR
 	if err != nil {
 		return Profile{}, err
 	}
-	profile, managedAttempt, err := c.generateProfile(ctx, baseURL, apiKey, servers, managedDevice, httpClient, "generate_managed_profile")
+	profile, managedAttempt, err := c.generateProfile(ctx, baseURL, apiKey, servers, managedDevice, httpClient, "generate_managed_profile", false)
 	if err == nil {
 		return profile, nil
 	}
@@ -220,7 +318,7 @@ func (c Client) profileHTTPClient() *http.Client {
 	return httpClient
 }
 
-func (c Client) generateProfile(ctx context.Context, baseURL, apiKey, servers, device string, httpClient *http.Client, operation string) (profile Profile, attempt providerProfileAttempt, err error) {
+func (c Client) generateProfile(ctx context.Context, baseURL, apiKey, servers, device string, httpClient *http.Client, operation string, strictIPv4 bool) (profile Profile, attempt providerProfileAttempt, err error) {
 	parsed, err := url.Parse(strings.TrimRight(baseURL, "/") + "/generator/")
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
 		return Profile{}, providerProfileAttempt{}, errors.New("AirVPN generator URL must be HTTPS without user information")
@@ -268,7 +366,11 @@ func (c Client) generateProfile(ctx context.Context, baseURL, apiKey, servers, d
 			return Profile{}, providerProfileAttempt{}, err
 		}
 	}
-	profile, err = ParseProfile(data)
+	if strictIPv4 {
+		profile, err = ParseProfileStrict(data)
+	} else {
+		profile, err = ParseProfile(data)
+	}
 	if err != nil {
 		return Profile{}, providerProfileAttempt{ContentType: contentType, Data: data, ParseError: true}, err
 	}
@@ -802,6 +904,17 @@ func collectProviderJSONStrings(value any, details *[]string, depth int) {
 }
 
 func ParseProfile(data []byte) (Profile, error) {
+	return parseProfile(data, false)
+}
+
+// ParseProfileStrict applies the IPv4-only contract used by the public VPN
+// lifecycle. The tolerant parser remains for the legacy profile inspection
+// path, which historically normalized away an extra interface IPv6 address.
+func ParseProfileStrict(data []byte) (Profile, error) {
+	return parseProfile(data, true)
+}
+
+func parseProfile(data []byte, strictIPv4 bool) (Profile, error) {
 	if len(data) == 0 || len(data) > maxProfileBytes {
 		return Profile{}, errors.New("AirVPN WireGuard profile is empty or too large")
 	}
@@ -856,7 +969,7 @@ func ParseProfile(data []byte) (Profile, error) {
 	if err := validateKey(iface["PrivateKey"]); err != nil {
 		return Profile{}, fmt.Errorf("AirVPN private key: %w", err)
 	}
-	addresses, tunnelAddress, err := validateAddresses(iface["Address"])
+	addresses, tunnelAddress, err := validateAddresses(iface["Address"], strictIPv4)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -879,8 +992,9 @@ func ParseProfile(data []byte) (Profile, error) {
 	for _, allowed := range strings.Split(peer["AllowedIPs"], ",") {
 		allowed = strings.TrimSpace(allowed)
 		if strings.Contains(allowed, ":") {
-			// Keep the module's explicit IPv4-only routing contract even
-			// when the provider returns a dual-stack AllowedIPs list.
+			if strictIPv4 {
+				return Profile{}, errors.New("AirVPN profile contains unsupported IPv6 AllowedIPs")
+			}
 			continue
 		}
 		if allowed != "0.0.0.0/0" {
@@ -940,7 +1054,7 @@ func validateKey(value string) error {
 	return nil
 }
 
-func validateAddresses(value string) ([]string, string, error) {
+func validateAddresses(value string, strictIPv4 bool) ([]string, string, error) {
 	parts := strings.Split(value, ",")
 	addresses := make([]string, 0, len(parts))
 	first := ""
@@ -951,10 +1065,12 @@ func validateAddresses(value string) ([]string, string, error) {
 			return nil, "", errors.New("AirVPN profile contains an invalid interface address")
 		}
 		if ip.To4() == nil {
-			// AirVPN may return a dual-stack interface even when the
-			// generator request selects IPv4. Boetticher is intentionally
-			// IPv4-only; omit the IPv6 address from the normalized profile
-			// so it cannot create an unmodeled IPv6 path.
+			// The image is IPv4-only. Ignore an extra provider interface
+			// address instead of allowing it into the normalized runtime
+			// profile; IPv6 AllowedIPs remain a hard error below.
+			if strictIPv4 {
+				return nil, "", errors.New("AirVPN profile contains unsupported IPv6 interface address")
+			}
 			continue
 		}
 		if first == "" {

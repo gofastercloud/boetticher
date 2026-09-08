@@ -3,6 +3,7 @@ package firewallmodule
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -101,6 +102,57 @@ func ComposeAppliance(site model.Site, modules clientservices.Modules, policy *C
 	desired.Firewall = append(desired.Firewall, safetySections...)
 	ownership := ownershipFor(desired.Network, desired.Firewall, services.DHCP, services.Stubby, services.System)
 	return ApplianceComposition{DesiredState: desired, DHCP: services.DHCP, Stubby: services.Stubby, System: services.System, Safety: safety, DeclaredVPN: declaration, Ownership: ownership}, nil
+}
+
+// VPNProfile is the small provider-neutral projection needed to render the
+// native WireGuard interface. It contains retained tunnel material only while
+// an apply is in progress; it is never part of lab.yml or operator output.
+type VPNProfile struct {
+	PrivateKey          string
+	Address             string
+	PeerPublicKey       string
+	PresharedKey        string
+	EndpointHost        string
+	EndpointPort        int
+	MTU                 int
+	PersistentKeepalive int
+}
+
+// ComposeApplianceWithVPN extends the shared appliance composition with one
+// exact WireGuard connection and source-policy routing. The ordinary
+// composition remains usable for DNS/DHCP and for protected teardown.
+func ComposeApplianceWithVPN(site model.Site, modules clientservices.Modules, policy *CompositionPolicy, profile VPNProfile) (ApplianceComposition, error) {
+	if modules.VPN == nil || !clientservices.Enabled(modules.VPN.Enabled) {
+		return ComposeAppliance(site, modules, policy)
+	}
+	if err := ValidateVPNProfile(profile); err != nil {
+		return ApplianceComposition{}, err
+	}
+	composition, err := ComposeAppliance(site, modules, policy)
+	if err != nil {
+		return ApplianceComposition{}, err
+	}
+	vpnNetwork, vpnFirewall := vpnSections(site, modules, profile)
+	composition.Network = append(composition.Network, vpnNetwork...)
+	composition.Firewall = append(composition.Firewall, vpnFirewall...)
+	composition.Ownership = ownershipFor(composition.Network, composition.Firewall, composition.DHCP, composition.Stubby, composition.System)
+	return composition, nil
+}
+
+func ValidateVPNProfile(profile VPNProfile) error {
+	if profile.PrivateKey == "" || profile.PeerPublicKey == "" || profile.PresharedKey == "" {
+		return fmt.Errorf("VPN profile is missing required WireGuard key material")
+	}
+	if profile.Address == "" || strings.Contains(profile.Address, ":") {
+		return fmt.Errorf("VPN profile must contain one IPv4 tunnel address")
+	}
+	if profile.EndpointHost == "" || profile.EndpointPort <= 0 || profile.MTU < 576 || profile.MTU > 9000 {
+		return fmt.Errorf("VPN profile has invalid endpoint or MTU")
+	}
+	if profile.PersistentKeepalive < 0 || profile.PersistentKeepalive > 120 {
+		return fmt.Errorf("VPN profile has invalid persistent keepalive")
+	}
+	return nil
 }
 
 func ownershipFor(network, firewall, dhcp, stubby, system []Section) Ownership {

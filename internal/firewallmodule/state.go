@@ -105,6 +105,17 @@ func StoreTrust(dir string, pem []byte) error {
 	return nil
 }
 
+// RemoveTrust clears only the provider certificate pin when an owned provider
+// is deliberately replaced. The Controller credential and other state remain
+// reusable across the replacement.
+func RemoveTrust(dir string) error {
+	path := filepath.Join(dir, trustFile)
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return err
+	}
+	return pathguard.RemoveAll(path)
+}
+
 func RemoveState(dir string) error {
 	if err := pathguard.ValidateNoSymlinkComponents(dir); err != nil {
 		return err

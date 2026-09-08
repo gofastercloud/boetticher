@@ -58,6 +58,35 @@ func TestServiceStateKeepsUpstreamTimeWhenClientDHCPIsDisabled(t *testing.T) {
 	}
 }
 
+func TestServiceStateDeniesPublicResolverAndTimePortsViaVPN(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	enabled := true
+	state, err := ServiceStateFromModules(site, clientservices.Modules{
+		DNS:  &clientservices.DNSConfig{Enabled: &enabled},
+		DHCP: &clientservices.DHCPConfig{Enabled: &enabled},
+		VPN:  &clientservices.VPNConfig{Enabled: &enabled, Location: "europe"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"boetticher_deny_trusted_external_dns_udp_vpn": false,
+		"boetticher_deny_trusted_external_dns_tcp_vpn": false,
+		"boetticher_deny_trusted_external_dot_tcp_vpn": false,
+		"boetticher_deny_trusted_external_ntp_vpn":     false,
+	}
+	for _, section := range state.Firewall {
+		if _, ok := want[section.Name]; ok && section.Options["dest"] == "vpn" {
+			want[section.Name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("missing VPN service deny rule %s", name)
+		}
+	}
+}
+
 func TestNativeRecordSuffixKeepsHyphenAndDotIdentitiesDistinct(t *testing.T) {
 	if nativeRecordSuffix("app-a.lab.home.arpa") == nativeRecordSuffix("app.a-lab.home.arpa") {
 		t.Fatal("distinct DNS identities mapped to the same native section name")
