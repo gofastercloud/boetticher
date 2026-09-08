@@ -45,7 +45,7 @@ func (r Renderer) Frame(snapshot StatusSnapshot, now time.Time) []Pixel {
 	components := []Component{
 		snapshot.Controller,
 		snapshot.Host,
-		snapshot.Firewall,
+		networkComponent(snapshot),
 		snapshot.VPN,
 		snapshot.Tailnet,
 		snapshot.Internet.Component,

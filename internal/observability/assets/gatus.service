@@ -1,0 +1,16 @@
+[Unit]
+Description=Gatus
+After=network-online.target
+[Service]
+User=gatus
+Group=gatus
+Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml
+Environment=GATUS_WEBSERVER_HOST=127.0.0.1
+ExecStart=/bin/sh -ec 'if [ -r /run/credentials/gatus.service/pushover-credentials ]; then IFS=: read -r BOETTICHER_PUSHOVER_USER BOETTICHER_PUSHOVER_TOKEN < /run/credentials/gatus.service/pushover-credentials || :; export BOETTICHER_PUSHOVER_USER BOETTICHER_PUSHOVER_TOKEN; fi; exec /usr/local/bin/gatus'
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/boetticher/observability/state/gatus
+[Install]
+WantedBy=multi-user.target

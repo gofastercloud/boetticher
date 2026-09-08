@@ -6,15 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 const (
-	InternalBridge        = "vmbr1"
-	HomeManagementAddress = "192.168.4.5"
+	InternalBridge              = "vmbr1"
+	HomeManagementAddress       = "192.168.4.5"
+	InternalManagementInterface = "vmbr1.99"
+	InternalManagementAddress   = "10.10.99.5/24"
+	InternalManagementGateway   = "10.10.99.1"
 )
+
+var InternalManagementRoutes = []string{"10.10.5.0/24", "10.10.10.0/24", "10.10.20.0/24", "10.10.30.0/24", "10.10.40.0/24"}
 
 type VLANConfig struct {
 	Transit int `yaml:"transit"`
@@ -109,17 +116,19 @@ type ManagementPath struct {
 }
 
 type BridgeState struct {
-	Exists          bool
-	Up              bool
-	VLANAware       bool
-	HostAddresses   []string
-	Gateway         string
-	PhysicalMembers []string
-	Configured      bool
-	Adoptable       bool
-	IPv6Disabled    bool
-	Owned           bool
-	Detail          string
+	Exists            bool
+	Up                bool
+	VLANAware         bool
+	HostAddresses     []string
+	Gateway           string
+	PhysicalMembers   []string
+	Configured        bool
+	Adoptable         bool
+	IPv6Disabled      bool
+	Owned             bool
+	ManagementAddress string
+	ManagementRoutes  []string
+	Detail            string
 }
 
 type NetworkPlan struct {
@@ -177,9 +186,10 @@ type ipLink struct {
 type ipAddress struct {
 	IfName   string `json:"ifname"`
 	AddrInfo []struct {
-		Family string `json:"family"`
-		Local  string `json:"local"`
-		Scope  string `json:"scope"`
+		Family    string `json:"family"`
+		Local     string `json:"local"`
+		Scope     string `json:"scope"`
+		PrefixLen int    `json:"prefixlen"`
 	} `json:"addr_info"`
 }
 
@@ -269,7 +279,7 @@ func DiscoverNetwork(ctx context.Context, transport Transport, config LabConfig)
 	if !bridge.Exists && strings.TrimSpace(string(configResult.Stdout)) == "" {
 		plan.State = "absent"
 		plan.Detail = "vmbr1 is absent and can be created additively"
-	} else if bridge.Up && bridge.VLANAware && len(bridge.HostAddresses) == 0 && bridge.Gateway == "" && bridge.Configured && bridge.Owned && bridge.IPv6Disabled {
+	} else if bridge.Up && bridge.VLANAware && len(bridge.HostAddresses) == 0 && bridge.Gateway == "" && bridge.ManagementAddress == InternalManagementAddress && equalStrings(bridge.ManagementRoutes, InternalManagementRoutes) && bridge.Configured && bridge.Owned && bridge.IPv6Disabled {
 		plan.State = "exact"
 		plan.Detail = "vmbr1 is up with the expected VLAN-aware Host shape"
 	} else if bridge.Adoptable {
@@ -326,11 +336,17 @@ func bridgeState(links []ipLink, addresses []ipAddress, routes []ipRoute, member
 		}
 	}
 	for _, address := range addresses {
-		if address.IfName != InternalBridge {
+		if address.IfName != InternalBridge && address.IfName != InternalManagementInterface {
 			continue
 		}
 		for _, info := range address.AddrInfo {
 			if info.Local != "" {
+				if address.IfName == InternalManagementInterface {
+					if info.Family == "inet" {
+						state.ManagementAddress = info.Local + "/" + fmt.Sprint(info.PrefixLen)
+					}
+					continue
+				}
 				state.HostAddresses = append(state.HostAddresses, info.Family+" "+info.Local)
 				addr, err := netip.ParseAddr(info.Local)
 				if err != nil || info.Family != "inet6" || info.Scope != "link" || !addr.Is6() || !addr.IsLinkLocalUnicast() {
@@ -342,6 +358,9 @@ func bridgeState(links []ipLink, addresses []ipAddress, routes []ipRoute, member
 	for _, route := range routes {
 		if route.Dev == InternalBridge && (route.Dst == "default" || route.Gateway != "") {
 			state.Gateway = route.Dst + " via " + route.Gateway
+		}
+		if route.Dev == InternalManagementInterface && route.Gateway == InternalManagementGateway {
+			state.ManagementRoutes = append(state.ManagementRoutes, route.Dst)
 		}
 	}
 	state.VLANAware = strings.Contains(detail, "vlan_filtering 1") || strings.Contains(detail, "vlan_filtering on")
@@ -358,6 +377,10 @@ func bridgeState(links []ipLink, addresses []ipAddress, routes []ipRoute, member
 		state.Detail = "vmbr1 has an unexpected gateway route"
 	} else if !state.VLANAware {
 		state.Detail = "vmbr1 is not VLAN-aware"
+	} else if state.ManagementAddress != InternalManagementAddress {
+		state.Detail = "vmbr1.99 does not have the expected internal management address"
+	} else if !equalStrings(state.ManagementRoutes, InternalManagementRoutes) {
+		state.Detail = "vmbr1.99 does not have the expected LAB routes"
 	} else if !state.Configured {
 		state.Detail = "vmbr1 configuration ownership or shape is unknown"
 	}
@@ -366,6 +389,14 @@ func bridgeState(links []ipLink, addresses []ipAddress, routes []ipRoute, member
 	}
 	_ = membership
 	return state
+}
+
+func equalStrings(got, want []string) bool {
+	gotCopy := append([]string(nil), got...)
+	wantCopy := append([]string(nil), want...)
+	sort.Strings(gotCopy)
+	sort.Strings(wantCopy)
+	return slices.Equal(gotCopy, wantCopy)
 }
 
 // Reject unrecognized persistent directives, including addresses, gateways and
@@ -379,7 +410,7 @@ func compatibleBridgeConfig(config string) bool {
 		}
 		line = strings.Join(strings.Fields(line), " ")
 		switch line {
-		case "auto vmbr1", "iface vmbr1 inet manual", "iface vmbr1 inet6 manual", "bridge-ports none", "bridge-stp off", "bridge-fd 0", "bridge-vlan-aware yes", "bridge-vids 2-4094":
+		case "auto vmbr1", "iface vmbr1 inet manual", "iface vmbr1 inet6 manual", "bridge-ports none", "bridge-stp off", "bridge-fd 0", "bridge-vlan-aware yes", "bridge-vids 2-4094", "auto vmbr1.99", "iface vmbr1.99 inet static", "address 10.10.99.5/24", "vlan-raw-device vmbr1", "up ip route replace 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99", "up ip route replace 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99", "up ip route replace 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99", "up ip route replace 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99", "up ip route replace 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99":
 		default:
 			return false
 		}
@@ -388,7 +419,12 @@ func compatibleBridgeConfig(config string) bool {
 		}
 		seen[line] = true
 	}
-	return seen["auto vmbr1"] && seen["iface vmbr1 inet manual"] && seen["bridge-ports none"] && seen["bridge-vlan-aware yes"] && seen["bridge-vids 2-4094"]
+	base := seen["auto vmbr1"] && seen["iface vmbr1 inet manual"] && seen["bridge-ports none"] && seen["bridge-vlan-aware yes"] && seen["bridge-vids 2-4094"]
+	management := seen["auto vmbr1.99"] || seen["iface vmbr1.99 inet static"] || seen["address 10.10.99.5/24"] || seen["vlan-raw-device vmbr1"]
+	if !management {
+		return base
+	}
+	return base && seen["auto vmbr1.99"] && seen["iface vmbr1.99 inet static"] && seen["address 10.10.99.5/24"] && seen["vlan-raw-device vmbr1"]
 }
 
 // ifupdown2 must actually execute the persistent interface-up hook.
@@ -429,9 +465,17 @@ install -m 600 "$file" "$backup"
 tmp=$(mktemp /etc/network/interfaces.boetticher.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
 cat "$file" >"$tmp"
-printf '%s\n' '' '# Managed by Boetticher Phase 3B: virtual-only internal bridge' 'auto vmbr1' 'iface vmbr1 inet manual' '    bridge-ports none' '    bridge-stp off' '    bridge-fd 0' '    bridge-vlan-aware yes' '    bridge-vids 2-4094' 'iface vmbr1 inet6 manual' >>"$tmp"
+printf '%s\n' '' '# Managed by Boetticher Phase 3B: virtual-only internal bridge' 'auto vmbr1' 'iface vmbr1 inet manual' '    bridge-ports none' '    bridge-stp off' '    bridge-fd 0' '    bridge-vlan-aware yes' '    bridge-vids 2-4094' 'iface vmbr1 inet6 manual' '' '# Managed by Boetticher observability internal management' 'auto vmbr1.99' 'iface vmbr1.99 inet static' '    address 10.10.99.5/24' '    vlan-raw-device vmbr1' '    up ip route replace 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99' '    up ip route replace 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99' '    up ip route replace 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99' '    up ip route replace 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99' '    up ip route replace 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99' >>"$tmp"
 chmod 644 "$tmp"; mv -f "$tmp" "$file"
 if ! ifup --no-act vmbr1; then install -m 644 "$backup" "$file"; exit 82; fi
+`
+	} else {
+		command += `tmp=$(mktemp /etc/network/interfaces.boetticher.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat "$file" >"$tmp"
+printf '%s\n' '' '# Managed by Boetticher observability internal management' 'auto vmbr1.99' 'iface vmbr1.99 inet static' '    address 10.10.99.5/24' '    vlan-raw-device vmbr1' '    up ip route replace 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99' '    up ip route replace 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99' '    up ip route replace 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99' '    up ip route replace 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99' '    up ip route replace 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99' >>"$tmp"
+chmod 644 "$tmp"; mv -f "$tmp" "$file"
+if ! ifup --no-act vmbr1.99; then exit 82; fi
 `
 	}
 	for _, file := range []struct{ path, content, mode string }{{bridgeSysctlPath, bridgeSysctl, "644"}, {bridgeHookPath, bridgeHook, "755"}} {
@@ -439,6 +483,9 @@ if ! ifup --no-act vmbr1; then install -m 644 "$backup" "$file"; exit 82; fi
 	}
 	if plan.State == "absent" {
 		command += "ifup vmbr1\n"
+	}
+	if plan.State == "adoptable" {
+		command += "ifup vmbr1.99\n"
 	}
 	command += `sysctl -q -w net.ipv6.conf.vmbr1.disable_ipv6=1
 test "$(cat /proc/sys/net/ipv6/conf/vmbr1/disable_ipv6)" = 1

@@ -92,6 +92,9 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 	if section.Type == "hostrecord" && strings.HasPrefix(name, "boetticher_record_") {
 		return nativeRecordSectionName(section.Options["name"]) == name && section.Options["name"] != ""
 	}
+	if section.Type == "hostrecord" && strings.HasPrefix(name, "boetticher_observability_record_") {
+		return "boetticher_observability_record_"+nativeRecordSuffix(section.Options["name"]) == name && section.Options["name"] != ""
+	}
 	if section.Type == "cname" && strings.HasPrefix(name, "boetticher_cname_") {
 		return "boetticher_cname_"+nativeRecordSuffix(strings.TrimSuffix(section.Options["cname"], ".")) == name && section.Options["cname"] != ""
 	}
@@ -160,6 +163,9 @@ func compatibleIdentity(name string, observed openwrt.UCISection, desired Sectio
 		key := "name"
 		if observed.Type == "cname" {
 			key = "cname"
+		}
+		if strings.HasPrefix(name, "boetticher_observability_record_") && observed.Options["ip"] != desired.Options["ip"] {
+			return false
 		}
 		return observed.Options[key] == desired.Options[key]
 	}

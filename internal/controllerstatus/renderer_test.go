@@ -138,12 +138,12 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 		FetchedAt: time.Now(),
 	}
 	home := renderer.Render(snapshot, telemetry, nil, StreamDeckHome, 0, -1)
-	for index, want := range []string{"PVE", "CPU", "RAM", "DATA", "NET", "CT201", "", "", "", "", "FW", "VPN", "TAILNET", "SCROLL", "REFRESH"} {
+	for index, want := range []string{"PVE", "CPU", "RAM", "DATA", "NET", "CT201", "", "", "", "", "NETWORK", "VPN", "TAILNET", "SCROLL", "REFRESH"} {
 		if home[index].Title != want {
 			t.Fatalf("home key %d title = %q, want %q", index, home[index].Title, want)
 		}
 	}
-	if home[0].State != Healthy || home[3].State != Healthy || home[4].Value != "812M" || home[5].Title != "CT201" || home[5].Value != "pulse" || home[5].Footer != "RUNNING" || home[5].State != Healthy || home[10].State != Healthy || home[11].State != Failed || home[12].State != Failed {
+	if home[0].State != Healthy || home[3].State != Healthy || home[4].Value != "812M" || home[5].Title != "CT201" || home[5].Value != "pulse" || home[5].Footer != "RUNNING" || home[5].State != Healthy || home[10].State != Failed || home[11].State != Failed || home[12].State != Failed {
 		t.Fatalf("home status keys = %#v %#v %#v %#v %#v %#v", home[0], home[3], home[4], home[5], home[10], home[12])
 	}
 	host := renderer.Render(snapshot, telemetry, nil, StreamDeckHostDetail, 0, -1)
@@ -153,6 +153,51 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 	guest := renderer.Render(snapshot, telemetry, nil, StreamDeckGuestDetail, 0, 0)
 	if guest[0].Title != "CT201" || guest[0].Value != "pulse" || guest[0].Footer != "RUNNING" || guest[1].Value != "pulse" || guest[2].Value != "LXC" || guest[13].Title != "BACK" {
 		t.Fatalf("guest detail keys = %#v", guest)
+	}
+}
+
+func TestNetworkAggregateRequiresAllHealthyAndPreservesUnknown(t *testing.T) {
+	snapshot := NewSnapshot(true)
+	snapshot.Firewall = Component{State: Healthy}
+	snapshot.DNS = Component{State: Healthy}
+	snapshot.DHCPNTP = Component{State: Healthy}
+	if got := networkComponent(snapshot); got.State != Healthy {
+		t.Fatalf("all healthy network aggregate = %#v", got)
+	}
+	snapshot.DNS = Component{State: Failed}
+	if got := networkComponent(snapshot); got.State != Failed {
+		t.Fatalf("failed network aggregate = %#v", got)
+	}
+	snapshot.DNS = Component{Detail: "unknown"}
+	if got := networkComponent(snapshot); got.State == Healthy {
+		t.Fatalf("unknown network aggregate was healthy: %#v", got)
+	}
+}
+
+func TestStreamDeckNetworkAndCapabilityDetailNavigation(t *testing.T) {
+	snapshot := NewSnapshot(true)
+	snapshot.Firewall = Component{State: Healthy, Detail: "firewall healthy"}
+	snapshot.DNS = Component{State: Failed, Detail: "DNS unavailable"}
+	snapshot.DHCPNTP = Component{State: Healthy, Detail: "DHCP healthy"}
+	snapshot.VPN = Component{State: Healthy, Detail: "VPN connected"}
+	snapshot.Tailnet = Component{State: Attention, Detail: "authentication required"}
+	keys := (StreamDeckRenderer{}).Render(snapshot, ProxmoxSnapshot{}, nil, StreamDeckNetworkDetail, 0, -1)
+	if keys[0].Title != "NETWORK" || keys[0].State != Failed || keys[1].Title != "FIREWALL" || keys[2].State != Failed || keys[13].Title != "BACK" {
+		t.Fatalf("network detail keys = %#v", keys[:4])
+	}
+	keys = (StreamDeckRenderer{}).Render(snapshot, ProxmoxSnapshot{}, nil, StreamDeckVPNDetail, 0, -1)
+	if keys[0].Title != "VPN" || keys[0].State != Healthy || keys[1].Value != "VPN connected" {
+		t.Fatalf("VPN detail keys = %#v", keys[:2])
+	}
+	d := NewDaemon(DefaultSettings(), nil)
+	d.handleStreamDeckEvent(context.Background(), KeyEvent{Index: 10})
+	if d.streamdeckView != StreamDeckNetworkDetail {
+		t.Fatalf("Network navigation view = %s", d.streamdeckView)
+	}
+	d.handleStreamDeckEvent(context.Background(), KeyEvent{Index: 13})
+	d.handleStreamDeckEvent(context.Background(), KeyEvent{Index: 11})
+	if d.streamdeckView != StreamDeckVPNDetail {
+		t.Fatalf("VPN navigation view = %s", d.streamdeckView)
 	}
 }
 

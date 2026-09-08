@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,30 +33,61 @@ func (c ModuleChecker) Check(ctx context.Context) ModuleStatus {
 		DNS:     CheckResult{State: Off, Detail: "DNS capability not configured"},
 		Tailnet: CheckResult{State: Off, Detail: "Tailnet capability not configured"},
 	}
-	if c.FirewallCommand != nil {
+	// A test or embedding may provide only the native firewall check. Preserve
+	// that narrow mode without attempting the default CLI for other modules.
+	if c.FirewallCommand != nil && c.RunCommand == nil {
 		status.Firewall = c.FirewallCommand(ctx)
 		return status
 	}
-	run := c.RunCommand
-	if run == nil {
-		run = defaultCommand
+
+	type result struct {
+		component string
+		value     CheckResult
 	}
-	path := c.CommandPath
-	if path == "" {
-		path = "/usr/local/bin/boetticher"
+	results := make(chan result, 5)
+	var workers sync.WaitGroup
+	start := func(component string, check func(context.Context) CheckResult) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			// Every check starts together and may use the complete refresh budget.
+			// Parallelism prevents a slow provider from consuming another check's
+			// budget; a shorter per-check timeout would reject valid native checks.
+			checkCtx, cancel := context.WithTimeout(ctx, moduleCheckTimeout)
+			defer cancel()
+			results <- result{component: component, value: check(checkCtx)}
+		}()
 	}
-	output, err := run(ctx, path, "module", "firewall", "status")
-	if err != nil {
-		status.Firewall = CheckResult{Configured: true, Detail: "firewall capability status check failed"}
-	} else if strings.Contains(string(output), "Firewall: PASS") {
-		status.Firewall = CheckResult{Configured: true, Healthy: true, State: Healthy, Detail: "firewall capability status is healthy"}
-	} else {
-		status.Firewall = CheckResult{Configured: true, State: Failed, Detail: "firewall capability status is not healthy"}
+	start("firewall", func(checkCtx context.Context) CheckResult {
+		if c.FirewallCommand != nil {
+			return c.FirewallCommand(checkCtx)
+		}
+		return c.checkCapability(checkCtx, "module", "firewall", "status", "Firewall")
+	})
+	start("dhcp", func(checkCtx context.Context) CheckResult {
+		return c.checkCapability(checkCtx, "module", "dhcp", "status", "DHCP/NTP")
+	})
+	start("dns", func(checkCtx context.Context) CheckResult {
+		return c.checkCapability(checkCtx, "module", "dns", "status", "DNS")
+	})
+	start("vpn", c.checkVPN)
+	start("tailnet", c.checkTailnet)
+	workers.Wait()
+	close(results)
+	for item := range results {
+		switch item.component {
+		case "firewall":
+			status.Firewall = item.value
+		case "dhcp":
+			status.DHCPNTP = item.value
+		case "dns":
+			status.DNS = item.value
+		case "vpn":
+			status.VPN = item.value
+		case "tailnet":
+			status.Tailnet = item.value
+		}
 	}
-	status.DHCPNTP = c.checkCapability(ctx, "module", "dhcp", "status", "DHCP/NTP")
-	status.DNS = c.checkCapability(ctx, "module", "dns", "status", "DNS")
-	status.VPN = c.checkVPN(ctx)
-	status.Tailnet = c.checkTailnet(ctx)
 	return status
 }
 

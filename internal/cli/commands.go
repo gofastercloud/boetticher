@@ -25,6 +25,10 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher module firewall plan|apply|status|reboot|test|teardown [flags]"},
 	{Usage: "boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [flags]"},
 	{Usage: "boetticher module dhcp plan|apply|status|teardown|test|add-reservation|remove-reservation|list-reservations|list-leases [flags]"},
+	{Usage: "boetticher module observability plan|apply|status|test|teardown|secrets [flags]"},
+	{Usage: "boetticher module observability alerts pushover apply|status|test|remove [flags]"},
+	{Usage: "boetticher module logging query|status [flags]"},
+	{Usage: "boetticher module aiops ask QUESTION [--yes] [--json]"},
 	{Usage: "boetticher module vpn plan|apply|status|teardown|add-client|remove-client [flags]"},
 	{Usage: "boetticher module tailnet plan|apply|status|test|teardown [flags]"},
 }
@@ -39,6 +43,12 @@ var advancedCommandSpecs = []commandSpec{
 // paths explicit makes every help request useful without making command
 // dispatch depend on a second parser or on a recursive help hint.
 var helpSpecs = map[string]helpSpec{
+	"module logging":       {Usage: "boetticher module logging query|status [flags]", Purpose: "Read a bounded VictoriaLogs view from the shared observability runtime.", Arguments: "query accepts filters only as flags; status accepts no positional arguments.", Options: "query supports --host, --unit, --level, --since up to 168h, and --limit 1-500 (default 100).", Safety: "Read-only; values are fixed quoted LogsQL literals, the owned lab-monitor-01 guest is verified before execution, and no arbitrary query language is accepted.", Examples: "boetticher module logging query --host lab-dns-01 --unit blocky.service --since 1h; boetticher module logging status", Related: "module observability"},
+	"module monitoring":    {Usage: "boetticher module monitoring status", Purpose: "Inspect metrics and Grafana in the shared observability runtime.", Arguments: "No positional arguments.", Options: "No lifecycle options.", Safety: "Read-only; module observability owns the LXC, providers, secrets, and teardown.", Examples: "boetticher module monitoring status", Related: "module observability"},
+	"module statuspage":    {Usage: "boetticher module statuspage status", Purpose: "Inspect Gatus in the shared observability runtime.", Arguments: "No positional arguments.", Options: "No lifecycle options.", Safety: "Read-only; module observability owns the LXC, providers, secrets, and teardown.", Examples: "boetticher module statuspage status", Related: "module observability"},
+	"module observability": {Usage: "boetticher module observability plan|apply|status|test|teardown|secrets [--yes]", Purpose: "Own the atomic shared monitoring runtime, provider payload, credentials, and lifecycle.", Arguments: "The shared lab-monitor-01 runtime carries metrics, logs, Grafana, Gatus, Holmes, and Bifrost.", Options: "--yes approves lifecycle changes; --plan previews teardown.", Safety: "All providers are installed or none are exposed; foreign guests and missing prerequisites stop before mutation.", Examples: "boetticher module observability plan; boetticher module observability apply --yes; boetticher module observability status", Related: "module monitoring"},
+	"module aiops":         {Usage: "boetticher module aiops ask QUESTION [--yes] [--json]", Purpose: "Ask the installed read-only Holmes investigation engine one question.", Arguments: "QUESTION is one bounded operator question.", Options: "--yes approves a request that may incur model charges; --json emits a machine-readable answer.", Safety: "The ask is sent through loopback Bifrost using the separate Holmes client credential.", Examples: "boetticher module aiops ask 'Why did DNS latency rise?'", Related: "module observability"},
+	"module observability alerts pushover": {Usage: "boetticher module observability alerts pushover apply|status|test|remove [flags]", Purpose: "Configure or explicitly test the optional Pushover alert contact.", Arguments: "apply changes intent and can import a bounded user:API credential file; test reads a user:API credential file without saving it; status never displays keys.", Options: "apply accepts --credentials-file, --enabled, --title, and priority -2..1 with --yes; test requires --credentials-file and --yes to send without prompting; remove requires --yes.", Safety: "Disabled or unconfigured Pushover is inert. Configuration activation waits for module observability apply; test sends one clearly labelled normal-priority notification and never retries.", Examples: "boetticher module observability alerts pushover apply --credentials-file ~/.secrets/btcr-pushover.key --yes; boetticher module observability alerts pushover status; boetticher module observability alerts pushover test --credentials-file ~/.secrets/btcr-pushover.key", Related: "module observability"},
 	"controller": {
 		Usage: "boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]", Purpose: "Bootstrap, inspect, or explicitly reboot the local Controller.", Arguments: "bootstrap configures locally; status reads local readiness; reboot requires --yes and never contacts Proxmox.", Options: "--operator selects the existing local operator account; bootstrap requires --confirm-key-login; reboot requires --yes.", Safety: "Bootstrap and status are local. Controller reboot is explicit and does not reboot the Host.", Examples: "boetticher controller bootstrap --operator pi --confirm-key-login; boetticher controller status; boetticher controller reboot --yes", Related: "host",
 	},
@@ -251,6 +261,13 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"firewall rule remove": helpSpecs["firewall rule remove"],
 	"module dhcp":          helpSpecs["module dhcp"],
 	"module dns":           helpSpecs["module dns"],
+	"module logging":       helpSpecs["module logging"],
+	"module logging query": helpSpecs["module logging"],
+	"module monitoring":    helpSpecs["module monitoring"],
+	"module statuspage":    helpSpecs["module statuspage"],
+	"module observability": helpSpecs["module observability"],
+	"module observability alerts pushover": helpSpecs["module observability alerts pushover"],
+	"module aiops":         helpSpecs["module aiops"],
 	"config validate":      helpSpecs["config"],
 	"config show":          helpSpecs["config"],
 	"config schema":        helpSpecs["config"],

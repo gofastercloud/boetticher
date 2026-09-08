@@ -32,7 +32,7 @@ boetticher module tailnet status
 boetticher module tailnet apply --auth-key-file /secure/path/key --yes
 boetticher module vpn status
 boetticher module monitoring status
-boetticher module statuspage add-check
+boetticher module statuspage status
 boetticher module printer status
 ```
 
@@ -98,14 +98,13 @@ the existing independent Controller/Host management path, with no backup
 platform or Host teardown.
 
 Application networking keeps ordinary existing calls with narrow ingress,
-egress, and identity names; do not add a generic schema. Use owned-domain
-HTTPS with DNS-01 automated renewal, the first Stage 5 dashboard, and an
-application backup before Stage 6. Stage 5 covers monitoring, logging, and
-statuspage work; add no CA or proxy platform now.
+egress, and identity names; do not add a generic schema. Stage 5 uses the
+public Caddy DNS-01 frontend and native journal upload with system trust. The
+Host-owned `vmbr1.99` path is `10.10.99.5/24` with LAB routes via `10.10.99.1`.
+Stage 5 covers monitoring, logging, statuspage, and AIOps work.
 
-Defer new network modules, an aggregate coordinator, CA/SSO/proxy platforms,
-observability implementation, and switch automation. The existing management
-route remains the boundary.
+Defer new network modules, an aggregate coordinator, SSO platforms, and
+switch automation. The existing management route remains the boundary.
 
 ## Phase 4A firewall capability
 
@@ -162,6 +161,64 @@ not standalone modules. The status monitor consumes their bounded native
 status facts in the existing `DHCP/NTP` and `Tailnet` slots; unconfigured is off,
 configured-but-unavailable is failed, and no status database or scheduler is
 introduced.
+
+## Phase 5 observability capabilities
+
+The installed Controller owns one atomic observability runtime through the
+same single-Host path:
+
+```text
+boetticher module observability plan|apply|status|test|teardown|secrets
+boetticher module logging query|status
+boetticher module monitoring status
+boetticher module statuspage status
+boetticher module aiops ask QUESTION
+boetticher module observability alerts pushover apply|status|test|remove
+```
+
+`module observability` creates and reconciles the exact unprivileged
+`lab-monitor-01` LXC (VMID 120, VLAN 10) with retained metrics, logs, and
+observability state volumes. It owns VictoriaMetrics, VictoriaLogs, Grafana,
+Gatus, and Bifrost together; the four operator capabilities are logging,
+monitoring, status page, and AIOps. The lifecycle and `secrets` operations
+apply to the whole runtime, while the component commands are read-only status
+and query operations. `module aiops ask` is an explicit model operation.
+Teardown stops the whole owned guest and retains its data for a later apply.
+Apply provisions the public Caddy frontend and native collection paths. Live
+Controller/Host acceptance of that path remains `NOT TESTED` in this phase.
+Journal upload uses system trust and no client certificate; metrics use
+authenticated HTTPS paths through the fixed internal Caddy address. Ingest
+accepts only POST `/upload` from the three resolved collection sources and
+does not trust forwarded headers. Metrics paths are fixed per target and use
+Basic Auth; arbitrary upstream paths are denied.
+
+When Holmes is enabled under AIOps intent, the same LXC runs the pinned Holmes
+0.40 runner on demand. Holmes can use only the local Prometheus-compatible
+VictoriaMetrics endpoint and VictoriaLogs endpoint. Bifrost is the sole model
+route at `127.0.0.1:4000/v1`; its separate `holmes-client-token` is the only
+credential Holmes receives, and upstream provider keys remain Bifrost-only.
+`module aiops ask QUESTION` requires normal operator approval before a model
+request that may incur charges. The runner is unprivileged and bounded, uses
+pinned localhost routes, and does not save transcripts. Kernel-level LXC
+egress containment remains `NOT TESTED`.
+
+Pushover is an optional alert contact. `module observability alerts pushover
+apply` records the enabled state, title, and priority and may import a bounded
+`--credentials-file` containing `user:API`; its credential remains
+in the Controller secret store and activation is applied with the atomic
+observability lifecycle. `status` never prints keys. `test` accepts a local
+`user:API` file, requires approval unless `--yes` is supplied, validates the
+account, and sends one clearly labelled normal-priority message without retry.
+Disabled or unconfigured Pushover remains inert.
+
+Apply creates only an absent exact guest, refuses foreign or mismatched
+identity, uploads the installed provider payload, and verifies the active
+provider units and local endpoints. Repeating a healthy apply is a no-op.
+`--yes` approves mutation, while an interactive affirmative answer is required
+otherwise. Source, package, and offline checks are available locally; live
+Controller/Host rollout and live acceptance remain `NOT TESTED` in this phase.
+Gatus currently checks the shared provider health endpoints; broader lab
+outcome checks remain deferred.
 
 ## Capability, provider, runtime
 

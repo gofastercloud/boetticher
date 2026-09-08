@@ -124,6 +124,8 @@ type NetworkInterface struct {
 	Gateway         string `json:"gateway"`
 	BridgePorts     string `json:"bridge_ports"`
 	BridgeVLANAware bool   `json:"bridge_vlan_aware"`
+	VLANID          int    `json:"vlan-id"`
+	VLANRawDevice   string `json:"vlan-raw-device"`
 	HWAddr          string `json:"hwaddr"`
 	Driver          string `json:"driver"`
 	Model           string `json:"model"`
@@ -189,6 +191,10 @@ func (n *NetworkInterface) UnmarshalJSON(data []byte) error {
 		BridgePortsDash     string          `json:"bridge-ports"`
 		BridgeVLANAware     json.RawMessage `json:"bridge_vlan_aware"`
 		BridgeVLANAwareDash json.RawMessage `json:"bridge-vlan-aware"`
+		VLANID              int             `json:"vlan-id"`
+		VLANIDUnderscore    int             `json:"vlan_id"`
+		VLANRawDevice       string          `json:"vlan-raw-device"`
+		VLANRawDeviceUnder  string          `json:"vlan_raw_device"`
 		HWAddr              string          `json:"hwaddr"`
 		Driver              string          `json:"driver"`
 		Model               string          `json:"model"`
@@ -217,6 +223,15 @@ func (n *NetworkInterface) UnmarshalJSON(data []byte) error {
 		aware = raw.BridgeVLANAwareDash
 	}
 	n.Iface, n.Type, n.Method, n.Address, n.Gateway = raw.Iface, raw.Type, raw.Method, address, raw.Gateway
+	vlanID := raw.VLANID
+	if vlanID == 0 {
+		vlanID = raw.VLANIDUnderscore
+	}
+	vlanRawDevice := raw.VLANRawDevice
+	if vlanRawDevice == "" {
+		vlanRawDevice = raw.VLANRawDeviceUnder
+	}
+	n.VLANID, n.VLANRawDevice = vlanID, vlanRawDevice
 	model := raw.Model
 	if model == "" {
 		model = raw.Product
@@ -820,6 +835,7 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	}
 	var bridge *NetworkInterface
 	var candidate *NetworkInterface
+	var management *NetworkInterface
 	for i := range interfaces {
 		iface := &interfaces[i]
 		if iface.Iface == physicalInterface {
@@ -834,6 +850,10 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 		}
 		if iface.Iface == "vmbr1" {
 			bridge = iface
+		}
+		if iface.Iface == "vmbr1.99" {
+			copy := *iface
+			management = &copy
 		}
 	}
 	if candidate == nil || candidate.Type != "eth" {
@@ -851,8 +871,25 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	if bridge.BridgePorts != "" && bridge.BridgePorts != "none" && bridge.BridgePorts != physicalInterface {
 		return fmt.Errorf("vmbr1 already has bridge ports %q", bridge.BridgePorts)
 	}
+	if management != nil && !managementVLANExact(*management) {
+		return errors.New("refusing to attach trunk: vmbr1.99 has a conflicting management address or VLAN configuration")
+	}
+	if bridgeHasPort(interfaces, "vmbr1", physicalInterface) && management != nil {
+		return nil
+	}
 	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); err != nil {
 		return fmt.Errorf("attach %s to vmbr1: %w", physicalInterface, err)
+	}
+	managementParams := managementVLANParams()
+	var managementErr error
+	if management == nil {
+		managementErr = client.CreateNodeNetwork(ctx, node, managementParams)
+	} else {
+		managementErr = client.UpdateNodeNetwork(ctx, node, "vmbr1.99", managementParams)
+	}
+	if managementErr != nil {
+		_ = client.UpdateNodeNetwork(ctx, node, "vmbr1", virtualOnlyBridgeParams())
+		return fmt.Errorf("configure vmbr1.99 management path after attaching %s: %w", physicalInterface, managementErr)
 	}
 	if err := client.ReloadNodeNetwork(ctx, node); err != nil {
 		return fmt.Errorf("reload network after attaching %s: %w", physicalInterface, err)
@@ -870,7 +907,30 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 		}
 		return fmt.Errorf("trunk attach was not observed after mutation; rollback completed")
 	}
+	if !managementVLANPresent(after) {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", virtualOnlyBridgeParams()); rollbackErr != nil {
+			return fmt.Errorf("HOLD: vmbr1.99 management path was not observed and rollback failed: %v", rollbackErr)
+		}
+		return errors.New("vmbr1.99 management path was not observed after trunk attach; rollback completed")
+	}
 	return nil
+}
+
+func managementVLANParams() url.Values {
+	return url.Values{"iface": {"vmbr1.99"}, "type": {"vlan"}, "autostart": {"1"}, "vlan-id": {"99"}, "vlan-raw-device": {"vmbr1"}, "address": {"10.10.99.5/24"}}
+}
+
+func managementVLANExact(iface NetworkInterface) bool {
+	return iface.Type == "vlan" && iface.Address == "10.10.99.5/24" && iface.Gateway == "" && (iface.Method == "" || iface.Method == "static") && (iface.VLANID == 0 || iface.VLANID == 99) && (iface.VLANRawDevice == "" || iface.VLANRawDevice == "vmbr1")
+}
+
+func managementVLANPresent(interfaces []NetworkInterface) bool {
+	for _, iface := range interfaces {
+		if iface.Iface == "vmbr1.99" {
+			return managementVLANExact(iface)
+		}
+	}
+	return false
 }
 
 func DetachTrunk(ctx context.Context, client *Client, node, physicalInterface, bootstrapAddress string) error {

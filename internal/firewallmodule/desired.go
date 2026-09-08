@@ -142,6 +142,13 @@ func DesiredFromSiteWithServices(site model.Site, services clientservices.Module
 	state := DesiredState{ManagementAddress: management, ManagementNetwork: managementNetwork, ManagementNetmask: managementNetmask, ManagementGateway: managementGateway, ControllerAddress: controllerAddress, Zones: zones}
 	state.Network = networkSections(zones, management, managementNetmask, managementGateway)
 	state.Firewall = firewallSections(zones, managementNetwork, controllerAddress)
+	if services.Observability != nil && clientservices.Enabled(services.Observability.Enabled) {
+		observabilitySections, err := observabilityFirewallSections(services)
+		if err != nil {
+			return DesiredState{}, err
+		}
+		state.Firewall = append(state.Firewall, observabilitySections...)
+	}
 	serviceState, err := ServiceStateFromModules(site, services)
 	if err != nil {
 		return DesiredState{}, err
@@ -151,6 +158,31 @@ func DesiredFromSiteWithServices(site model.Site, services clientservices.Module
 		state.Firewall = append(state.Firewall, tailnetFirewallSections(managementNetwork)...)
 	}
 	return state, nil
+}
+
+func observabilityFirewallSections(services clientservices.Modules) ([]Section, error) {
+	controller, ok := observabilityControllerReservation(services)
+	if !ok {
+		return nil, errors.New("enabled observability requires the lab-companion SERVERS reservation")
+	}
+	return []Section{
+		{Name: "boetticher_observability_metrics_proxmox", Type: "rule", Options: map[string]string{"name": "Boetticher observability metrics to Proxmox", "src": "infra", "src_ip": "10.10.10.20/32", "dest": "mgmt", "dest_ip": "10.10.99.5/32", "proto": "tcp", "dest_port": "9100", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
+		{Name: "boetticher_observability_metrics_controller", Type: "rule", Options: map[string]string{"name": "Boetticher observability metrics to Controller", "src": "infra", "src_ip": "10.10.10.20/32", "dest": "servers", "dest_ip": controller.Address + "/32", "proto": "tcp", "dest_port": "9100", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
+		{Name: "boetticher_observability_logs_proxmox", Type: "rule", Options: map[string]string{"name": "Boetticher Host logs to observability", "src": "mgmt", "src_ip": "10.10.99.5/32", "dest": "infra", "dest_ip": "10.10.10.20/32", "proto": "tcp", "dest_port": "443", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
+		{Name: "boetticher_observability_logs_controller", Type: "rule", Options: map[string]string{"name": "Boetticher Controller logs to observability", "src": "servers", "src_ip": controller.Address + "/32", "dest": "infra", "dest_ip": "10.10.10.20/32", "proto": "tcp", "dest_port": "443", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
+	}, nil
+}
+
+func observabilityControllerReservation(services clientservices.Modules) (clientservices.Reservation, bool) {
+	if services.DHCP == nil {
+		return clientservices.Reservation{}, false
+	}
+	for _, reservation := range services.DHCP.Reservations {
+		if reservation.Name == "lab-companion" && reservation.Zone == "SERVERS" && reservation.Address != "" && reservation.MAC != "" {
+			return reservation, true
+		}
+	}
+	return clientservices.Reservation{}, false
 }
 
 func prefixNetmask(prefix netip.Prefix) (string, error) {

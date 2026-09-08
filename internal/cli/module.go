@@ -31,6 +31,24 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 	if capability == "dns" || capability == "dhcp" {
 		return runClientServiceCapability(capability, action, remaining, input, out, errOut)
 	}
+	if capability == "observability" && (action == "plan" || action == "status" || action == "apply" || action == "teardown" || action == "secrets" || action == "test") {
+		return runObservabilityCapability(capability, action, remaining, input, out, errOut)
+	}
+	if capability == "observability" && action == "alerts" {
+		return runObservabilityAlerts(remaining, input, out, errOut)
+	}
+	if capability == "logging" && action == "query" {
+		return runLoggingQuery(remaining, out, errOut)
+	}
+	if capability == "aiops" && action == "ask" {
+		return runAIOpsAsk(remaining, input, out, errOut)
+	}
+	if capability == "logging" || capability == "monitoring" || capability == "statuspage" || capability == "aiops" {
+		if action != "status" {
+			return fmt.Errorf("module %s exposes status/operations only; lifecycle is owned by module observability", capability)
+		}
+		return runObservabilityCapability(capability, action, remaining, input, out, errOut)
+	}
 	if capability == "vpn" {
 		return runVPNCapability(action, remaining, input, out, errOut)
 	}

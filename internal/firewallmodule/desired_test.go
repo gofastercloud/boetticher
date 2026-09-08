@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
@@ -59,6 +60,36 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 		if strings.HasPrefix(section.Name, "boetticher_zone_") && section.Options["masq"] != "" {
 			t.Fatalf("LAB zone owns masquerading: %#v", section)
 		}
+	}
+}
+
+func TestObservabilityFirewallRulesUseExactInternalSourcesAndReservation(t *testing.T) {
+	enabled := true
+	services := clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled}, DHCP: &clientservices.DHCPConfig{Reservations: []clientservices.Reservation{{Name: "lab-companion", Zone: "SERVERS", MAC: "dc:a6:32:e9:dd:82", Address: "10.10.20.10"}}}}
+	state, err := DesiredFromSiteWithServices(model.NewSite("installation", "age1example", model.GatewayModeManaged), services)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]Section{}
+	for _, section := range state.Firewall {
+		seen[section.Name] = section
+	}
+	for _, test := range []struct {
+		name, source, destination, sourceIP, destinationIP, port string
+	}{
+		{"boetticher_observability_metrics_proxmox", "infra", "mgmt", "10.10.10.20/32", "10.10.99.5/32", "9100"},
+		{"boetticher_observability_metrics_controller", "infra", "servers", "10.10.10.20/32", "10.10.20.10/32", "9100"},
+		{"boetticher_observability_logs_proxmox", "mgmt", "infra", "10.10.99.5/32", "10.10.10.20/32", "443"},
+		{"boetticher_observability_logs_controller", "servers", "infra", "10.10.20.10/32", "10.10.10.20/32", "443"},
+	} {
+		section, ok := seen[test.name]
+		if !ok || section.Options["src"] != test.source || section.Options["dest"] != test.destination || section.Options["src_ip"] != test.sourceIP || section.Options["dest_ip"] != test.destinationIP || section.Options["dest_port"] != test.port {
+			t.Fatalf("observability rule %s = %#v", test.name, section)
+		}
+	}
+	services.DHCP.Reservations[0].Address = "10.10.20.11"
+	if _, err := DesiredFromSiteWithServices(model.NewSite("installation", "age1example", model.GatewayModeManaged), services); err != nil {
+		t.Fatal("reservation address should remain intent-driven: ", err)
 	}
 }
 

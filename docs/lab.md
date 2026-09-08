@@ -73,7 +73,8 @@ and conflicting or ambiguous state stops without mutation.
 ## Fixed virtual topology
 
 HOME management remains on `vmbr0`. The current Host binding uses a
-VLAN-aware `vmbr1` with no Host address and the verified `nic1` physical member
+VLAN-aware `vmbr1` with no parent Host address, the owned `vmbr1.99`
+management address `10.10.99.5/24`, and the verified `nic1` physical member
 restricted to tagged VLANs 20 and 40. The current
 semantic VLANs are:
 

@@ -9,6 +9,29 @@ import (
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
 
+func TestObservabilityDNSSectionsUseOwnedPublicNamesAndMonitorAddress(t *testing.T) {
+	sections := observabilityDNSSections("davebarton.cc")
+	if len(sections) != 4 {
+		t.Fatalf("observability DNS section count = %d", len(sections))
+	}
+	for _, name := range []string{"observability.davebarton.cc", "status.davebarton.cc", "ingest.davebarton.cc", "metrics.davebarton.cc"} {
+		found := false
+		for _, section := range sections {
+			if section.Options["name"] == name && section.Options["ip"] == "10.10.10.20" && strings.HasPrefix(section.Name, "boetticher_observability_record_") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing owned observability DNS record %s: %#v", name, sections)
+		}
+	}
+	foreign := sections[0]
+	foreign.Options = map[string]string{"name": foreign.Options["name"], "ip": "10.10.10.99"}
+	if _, err := DiffOwned(map[string]openwrt.UCISection{foreign.Name: {Type: foreign.Type, Options: foreign.Options}}, sections); err == nil {
+		t.Fatal("conflicting observability DNS record was accepted")
+	}
+}
+
 func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	enabled := true

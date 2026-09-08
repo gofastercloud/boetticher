@@ -24,6 +24,7 @@
       - logrotate
       - python3-lgpio
       - gpiod
+      - systemd-journal-remote
     state: present
     update_cache: true
     cache_valid_time: 3600

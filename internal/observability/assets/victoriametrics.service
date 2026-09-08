@@ -1,0 +1,16 @@
+[Unit]
+Description=VictoriaMetrics
+After=network-online.target
+[Service]
+User=victoriametrics
+Group=victoriametrics
+ExecStart=/usr/local/bin/victoria-metrics -httpListenAddr=127.0.0.1:8428 -storageDataPath=/var/lib/victoriametrics -retentionPeriod=@RETENTION_DAYS@d -promscrape.config=/etc/boetticher/observability/collection.yml
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/victoriametrics
+ReadOnlyPaths=/etc/boetticher/observability/collection.yml
+LoadCredential=node-exporter-read-token:/var/lib/boetticher/credentials/node-exporter-read-token.cred
+[Install]
+WantedBy=multi-user.target

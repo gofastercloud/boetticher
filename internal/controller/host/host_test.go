@@ -195,11 +195,16 @@ func TestValidateNetworkConfigRequiresFixedVLANTopology(t *testing.T) {
 func TestBridgeStateRecognizesExactVirtualOnlyBridge(t *testing.T) {
 	state := bridgeState(
 		[]ipLink{{IfName: "vmbr1", LinkType: "bridge", OperState: "UP"}},
-		[]ipAddress{{IfName: "vmbr1"}},
-		[]ipRoute{},
+		[]ipAddress{{IfName: "vmbr1"}, {IfName: "vmbr1.99", AddrInfo: []struct {
+			Family    string `json:"family"`
+			Local     string `json:"local"`
+			Scope     string `json:"scope"`
+			PrefixLen int    `json:"prefixlen"`
+		}{{Family: "inet", Local: "10.10.99.5", PrefixLen: 24}}}},
+		[]ipRoute{{Dst: "10.10.5.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}, {Dst: "10.10.10.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}, {Dst: "10.10.20.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}, {Dst: "10.10.30.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}, {Dst: "10.10.40.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}},
 		"",
 		"vmbr1: vlan_filtering 1",
-		"auto vmbr1\niface vmbr1 inet manual\n\tbridge-ports none\n\tbridge-vlan-aware yes\n\tbridge-vids 2-4094\n",
+		"auto vmbr1\niface vmbr1 inet manual\n\tbridge-ports none\n\tbridge-vlan-aware yes\n\tbridge-vids 2-4094\n\nauto vmbr1.99\niface vmbr1.99 inet static\n\taddress 10.10.99.5/24\n\tvlan-raw-device vmbr1\n\tup ip route replace 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99\n\tup ip route replace 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99\n\tup ip route replace 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99\n\tup ip route replace 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99\n\tup ip route replace 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99\n",
 	)
 	if !state.Exists || !state.VLANAware || !state.Configured || len(state.HostAddresses) != 0 || len(state.PhysicalMembers) != 0 {
 		t.Fatalf("exact bridge state = %#v", state)

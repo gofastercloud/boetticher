@@ -100,7 +100,7 @@ Host speedtest helper; it does not depend on Blinkt or StreamDeck hardware.
 The current 4E status layout, viewed from the operator side, is:
 
 ```text
-CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES
+CTL HOST NETWORK VPN TAILNET NET CTRL-UPDATES HOST-UPDATES
 ```
 
 DHCP/NTP and independent DNS detail remain available through the existing
@@ -124,8 +124,10 @@ before Standard status resumes. Display notifications remain best-effort and
 never affect the command result.
 
 `CTL` is local Controller health and `HOST` is the enrolled Proxmox Host.
-`FW` is the firewall capability's native status result; `DHCP/NTP` is the
-shared client-service native status result. `Tailnet` is the fixed
+`NETWORK` is green only when the firewall, DNS, and DHCP/NTP checks are all
+healthy; a failed or down member makes it red, while checking or unconfigured
+members remain visible as non-green states. `VPN` is the VPN capability's
+native status result. `Tailnet` is the fixed
 subnet-router's native local status; it does not represent remote packet
 qualification. Amber means action
 required, blue means configuration staged or an operation is in progress, and
@@ -182,9 +184,11 @@ When a StreamDeck is attached to the Controller, it is owned by the same
 `boetticher-status.service` daemon as Blinkt. The home screen is a detailed,
 read-only view of the enrolled Host. Its five-key rows are Proxmox health
 (`PVE`, CPU, RAM, DATA, NET), five VM/LXC guests sorted by VMID, and core
-services (`FW`, VPN, TAILNET, SCROLL, REFRESH). DATA follows fresh/stale Host
-telemetry; VPN currently renders `OFF` because the status snapshot has no VPN
-mapping, which is a display gap rather than proof that VPN is absent. SCROLL cycles
+services (`NETWORK`, VPN, TAILNET, SCROLL, REFRESH). DATA follows fresh/stale Host
+telemetry. NETWORK aggregates firewall, DNS, and DHCP/NTP; its detail page also
+shows each member. The VPN and TAILNET home buttons open read-only detail pages
+with their current state and available status detail; no uptime is inferred when
+the native report does not provide one. SCROLL cycles
 through guests five at a time. Each guest tile uses `VM<id>` or `CT<id>` on
 the first line, the hostname on the second, and its runtime status on the
 third.
@@ -373,13 +377,17 @@ sudo boetticher host apply --adopt-existing-network --yes
 sudo boetticher host status
 ```
 
-`host status` is read-only. `host apply` adds an absent `vmbr1` stanza with VLAN
-awareness and no address or gateway. The accepted physical binding is the
-verified `nic1` MAC `a0:ce:c8:a2:b2:10`, restricted to tagged VLAN 20/40 with
-untagged ingress rejected. It never rewrites `vmbr0`, changes `192.168.4.5`,
-changes the default route, creates host VLAN subinterfaces, enables forwarding,
-or configures DHCP, DNS, firewall, guests, or switches. An unknown or
-conflicting `vmbr1` or physical binding is reported and not adopted.
+`host status` is read-only. `host apply` adds or adopts the virtual `vmbr1`
+stanza with VLAN awareness and no address or gateway, and establishes the
+owned `vmbr1.99` management leg at `10.10.99.5/24`. The historical enrollment
+attachment path also persists that same management leg through the supported
+Proxmox network API before reloading the node; the narrow LAB routes are then
+verified by the existing Host management-network contract. The accepted
+physical binding is the verified `nic1` MAC `a0:ce:c8:a2:b2:10`, restricted to
+tagged VLAN 20/40 with untagged ingress rejected. It never rewrites `vmbr0`,
+changes `192.168.4.5`, changes the default route, enables forwarding, or
+configures DHCP, DNS, firewall, guests, or switches. An unknown or conflicting
+`vmbr1`, `vmbr1.99`, or physical binding is reported and not adopted.
 
 A compatible existing bridge requires explicit adoption:
 

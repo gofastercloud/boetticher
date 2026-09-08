@@ -159,12 +159,12 @@ func sameManagementPath(left, right controllerhost.ManagementPath) bool {
 func renderNetworkPlan(out io.Writer, plan controllerhost.NetworkPlan) {
 	fmt.Fprintln(out, "Host network configuration")
 	fmt.Fprintf(out, "\nProtected HOME management\n  Address:        %s\n  Bridge:         %s\n  Physical path:  %s\n  Default route:  %s via %s\n", plan.Management.Address, plan.Management.Bridge, strings.Join(plan.Management.Members, ", "), plan.Management.EgressDevice, plan.Management.Gateway)
-	fmt.Fprintln(out, "\nDesired bridge state:\n  Bridge:         vmbr1\n  VLAN aware:     yes\n  Host address:   none\n  Host IPv6:      disabled\n  Physical ports: none")
+	fmt.Fprintln(out, "\nDesired bridge state:\n  Bridge:         vmbr1\n  VLAN aware:     yes\n  Host address:   none\n  Internal mgmt:  vmbr1.99 10.10.99.5/24 via 10.10.99.1\n  Host IPv6:      disabled\n  Physical ports: none")
 	fmt.Fprintln(out, "\nLogical VLANs:\n  5   TRANSIT\n  10  INFRA\n  20  SERVERS\n  30  TRUSTED\n  40  SANDBOX\n  99  MGMT")
 	fmt.Fprintln(out, "\nWill NOT change:\n  vmbr0\n  HOME address\n  HOME default route\n  physical NIC membership\n  guests\n  storage\n  firewall rules")
 	if plan.State == "adoptable" {
 		fmt.Fprintf(out, "\nExisting internal bridge found: vmbr1\n  VLAN aware:       yes\n  Physical members: none\n  Configured IP:    none\n  Runtime address:  %s\n  Gateway:          none\n", strings.Join(plan.Bridge.HostAddresses, ", "))
-		fmt.Fprintln(out, "Boetticher can adopt this bridge and disable Host IPv6 on vmbr1.\nRequires --adopt-existing-network and approval.\nWill change:\n  Persist Boetticher ownership of vmbr1\n  Disable the Proxmox Host IPv6 stack on vmbr1")
+		fmt.Fprintln(out, "Boetticher can adopt this bridge and add the owned vmbr1.99 internal management path.\nRequires --adopt-existing-network and approval.\nWill change:\n  Persist Boetticher ownership of vmbr1\n  Add vmbr1.99 at 10.10.99.5/24 with LAB routes via 10.10.99.1\n  Disable the Proxmox Host IPv6 stack on vmbr1")
 	}
 	if plan.State == "conflict" {
 		fmt.Fprintf(out, "\nNetwork state: conflict — %s\n", plan.Detail)
@@ -188,6 +188,8 @@ func renderNetworkStatus(out io.Writer, plan controllerhost.NetworkPlan) error {
 		fmt.Fprintln(out, "PASS  Host IP           none")
 		fmt.Fprintln(out, "PASS  Host IPv6         disabled (persistent and live)")
 		fmt.Fprintln(out, "PASS  Physical member   none")
+		fmt.Fprintf(out, "PASS  Internal mgmt     %s via %s\n", controllerhost.InternalManagementAddress, controllerhost.InternalManagementGateway)
+		fmt.Fprintf(out, "PASS  LAB routes        %s\n", strings.Join(controllerhost.InternalManagementRoutes, ", "))
 		fmt.Fprintln(out, "Logical VLANs:\n  5,10,20,30,40,99")
 		fmt.Fprintln(out, "\nInternal network: PASS")
 		return nil

@@ -85,6 +85,9 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 		state.DHCP = append(state.DHCP, dnsRecordSections(site, normalized.DNS.Records)...)
 		state.Stubby = stubbySections(upstreams)
 	}
+	if normalized.Observability != nil && clientservices.ValidPublicDomain(normalized.Observability.PublicDomain) {
+		state.DHCP = append(state.DHCP, observabilityDNSSections(normalized.Observability.PublicDomain)...)
+	}
 	// Appliance upstream time is independent of client-facing DHCP/NTP. Once
 	// the service contract is applied, retain the exact native time settings.
 	ntpUpstreams := clientservices.DefaultTimeUpstreams()
@@ -101,6 +104,16 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
 	return state, nil
+}
+
+func observabilityDNSSections(publicDomain string) []Section {
+	names := []string{"observability", "status", "ingest", "metrics"}
+	sections := make([]Section, 0, len(names))
+	for _, name := range names {
+		fqdn := name + "." + publicDomain
+		sections = append(sections, Section{Name: "boetticher_observability_record_" + nativeRecordSuffix(fqdn), Type: "hostrecord", Options: map[string]string{"name": fqdn, "ip": "10.10.10.20"}, Lists: map[string][]string{}})
+	}
+	return sections
 }
 
 func dnsmasqSections(site model.Site, modules clientservices.Modules) []Section {

@@ -52,9 +52,12 @@ type StreamDeckFactory func(context.Context) (StreamDeck, error)
 type StreamDeckView string
 
 const (
-	StreamDeckHome        StreamDeckView = "home"
-	StreamDeckHostDetail  StreamDeckView = "host"
-	StreamDeckGuestDetail StreamDeckView = "guest"
+	StreamDeckHome          StreamDeckView = "home"
+	StreamDeckHostDetail    StreamDeckView = "host"
+	StreamDeckGuestDetail   StreamDeckView = "guest"
+	StreamDeckNetworkDetail StreamDeckView = "network"
+	StreamDeckVPNDetail     StreamDeckView = "vpn"
+	StreamDeckTailnetDetail StreamDeckView = "tailnet"
 )
 
 type StreamDeckRenderer struct{}
@@ -87,6 +90,12 @@ func (StreamDeckRenderer) RenderAt(snapshot StatusSnapshot, telemetry ProxmoxSna
 		return renderHostDetail(keys, snapshot, telemetry, now)
 	case StreamDeckGuestDetail:
 		return renderGuestDetail(keys, telemetry, guestIndex, now)
+	case StreamDeckNetworkDetail:
+		return renderNetworkDetail(keys, snapshot, now)
+	case StreamDeckVPNDetail:
+		return renderCapabilityDetail(keys, "VPN", snapshot.VPN, now)
+	case StreamDeckTailnetDetail:
+		return renderCapabilityDetail(keys, "TAILNET", snapshot.Tailnet, now)
 	default:
 		return renderHome(keys, snapshot, telemetry, operation, page, now)
 	}
@@ -137,10 +146,32 @@ func renderHome(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnaps
 		guest := telemetry.Guests[start+slot]
 		keys[5+slot] = renderGuestKeyAt(guest, now)
 	}
-	keys[10] = renderDeckKey("FW", stateLabel(snapshot.Firewall.State), "MODULE", snapshot.Firewall.State)
+	network := networkComponent(snapshot)
+	keys[10] = renderDeckKey("NETWORK", stateLabel(network.State), "MODULE", network.State)
 	keys[11] = renderDeckKey("VPN", stateLabel(snapshot.VPN.State), "MODULE", snapshot.VPN.State)
 	keys[12] = renderDeckKey("TAILNET", stateLabel(snapshot.Tailnet.State), "MODULE", snapshot.Tailnet.State)
 	keys[13] = renderDeckKey("SCROLL", fmt.Sprintf("%d/%d", page+1, pageCount), "GUESTS", Off)
+	keys[14] = renderDeckKey("REFRESH", "READ", "STATUS", Off)
+	return keys
+}
+
+func renderNetworkDetail(keys []KeyImage, snapshot StatusSnapshot, now time.Time) []KeyImage {
+	network := networkComponent(snapshot)
+	keys[0] = renderDeckKey("NETWORK", stateLabel(network.State), "AGGREGATE", network.State)
+	keys[1] = renderDeckKey("FIREWALL", stateLabel(displayComponentState(snapshot.Firewall)), "NETWORK", displayComponentState(snapshot.Firewall))
+	keys[2] = renderDeckKey("DNS", stateLabel(displayComponentState(snapshot.DNS)), "NETWORK", displayComponentState(snapshot.DNS))
+	keys[3] = renderDeckKey("DHCP/NTP", stateLabel(displayComponentState(snapshot.DHCPNTP)), "NETWORK", displayComponentState(snapshot.DHCPNTP))
+	keys[4] = renderDeckKeyAt("DETAIL", network.Detail, "NETWORK", network.State, now, true)
+	keys[13] = renderDeckKey("BACK", "HOME", "NAV", Off)
+	keys[14] = renderDeckKey("REFRESH", "READ", "STATUS", Off)
+	return keys
+}
+
+func renderCapabilityDetail(keys []KeyImage, title string, component Component, now time.Time) []KeyImage {
+	state := displayComponentState(component)
+	keys[0] = renderDeckKey(title, stateLabel(state), "STATUS", state)
+	keys[1] = renderDeckKeyAt("DETAIL", component.Detail, title, state, now, true)
+	keys[13] = renderDeckKey("BACK", "HOME", "NAV", Off)
 	keys[14] = renderDeckKey("REFRESH", "READ", "STATUS", Off)
 	return keys
 }
