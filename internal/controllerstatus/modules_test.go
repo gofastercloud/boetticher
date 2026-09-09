@@ -170,7 +170,7 @@ func TestDaemonGivesSequentialModuleChecksTheirBoundedBudget(t *testing.T) {
 	d.refresh(context.Background())
 
 	remaining := time.Until(deadline)
-	if deadline.IsZero() || remaining < 15*time.Second || remaining > moduleCheckTimeout {
+	if deadline.IsZero() || remaining < 40*time.Second || remaining > moduleCheckTimeout {
 		t.Fatalf("module check deadline = %v from now, want a bounded %s budget", remaining, moduleCheckTimeout)
 	}
 }

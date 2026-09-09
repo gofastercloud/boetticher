@@ -31,6 +31,26 @@ func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 				t.Fatalf("reservation-only scope has no valid static-only range: %#v", section)
 			}
 		}
+		if strings.HasPrefix(section.Name, "boetticher_dhcp_") {
+			gateway := ""
+			for _, option := range section.Lists["dhcp_option"] {
+				if strings.HasPrefix(option, "3,") {
+					gateway = strings.TrimPrefix(option, "3,")
+				}
+			}
+			if gateway == "" {
+				t.Fatalf("%s omitted the legacy default gateway option: %#v", section.Name, section.Lists["dhcp_option"])
+			}
+			foundRoute := false
+			for _, option := range section.Lists["dhcp_option"] {
+				if option == "121,10.10.0.0/16,"+gateway+",0.0.0.0/0,"+gateway {
+					foundRoute = true
+				}
+			}
+			if !foundRoute {
+				t.Fatalf("%s did not advertise LAB aggregate and default route: %#v", section.Name, section.Lists["dhcp_option"])
+			}
+		}
 		if section.Name == "boetticher_dhcp_sandbox" && (section.Options["networkid"] != "boetticher_sandbox" || len(section.Lists["tag"]) != 0) {
 			t.Fatalf("sandbox suppression did not preserve a usable tagged range: %#v", section)
 		}

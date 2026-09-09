@@ -164,6 +164,9 @@ func dnsmasqSections(site model.Site, modules clientservices.Modules) []Section 
 		lists := map[string][]string{
 			"dhcp_option": {
 				"3," + zone.Gateway,
+				// RFC 3442 option 121 clients ignore option 3, so include
+				// both the LAB aggregate and the ordinary default route.
+				"121,10.10.0.0/16," + zone.Gateway + ",0.0.0.0/0," + zone.Gateway,
 				"6," + zone.Gateway,
 				"15," + site.Network.Domain,
 				"42," + zone.Gateway,

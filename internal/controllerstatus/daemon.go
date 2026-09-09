@@ -93,7 +93,10 @@ type throughputResult struct {
 // firewall status commands each perform their own authenticated provider or
 // Host checks. Keep the shorter budget for local Controller/Host checks, but
 // do not turn normal sequential module observations into false failures.
-const moduleCheckTimeout = 20 * time.Second
+// Module status invokes five authenticated, multi-hop native commands in
+// sequence. Keep enough bounded time for the slowest measured lab round while
+// still preventing a hung provider from blocking the status daemon forever.
+const moduleCheckTimeout = 45 * time.Second
 
 func NewDaemon(settings Settings, driver Driver) *Daemon {
 	if settings.Interval <= 0 {
