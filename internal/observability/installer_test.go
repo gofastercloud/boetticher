@@ -73,7 +73,7 @@ func TestProviderInstallerStagesGatusAssetsAndOrdersAccountBeforeOwnership(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"https://observability.davebarton.cc/api/health", "https://status.davebarton.cc/health", "https://metrics.davebarton.cc/lab-monitor-01/metrics", "query-name: observability.davebarton.cc", "tcp://10.10.99.5:9100", "tcp://10.10.20.10:9100", "[DNS_RCODE] == NOERROR", "[CONNECTED] == true", "[STATUS] == 401"} {
+	for _, required := range []string{"https://observability.davebarton.cc/api/health", "https://status.davebarton.cc/health", "https://metrics.davebarton.cc/lab-monitor-01/metrics", "query-name: observability.davebarton.cc", "tcp://10.10.99.5:9100", "tcp://10.10.20.10:9100", "[DNS_RCODE] == NOERROR", "[CONNECTED] == true", "[STATUS] == 200", "[STATUS] == 401"} {
 		if !strings.Contains(string(config), required) {
 			t.Errorf("Gatus public outcome check missing %q: %s", required, config)
 		}
@@ -441,6 +441,11 @@ func TestProviderInstallerUsesCaddyFrontendAsset(t *testing.T) {
 			t.Errorf("Caddy frontend asset is missing %q", required)
 		}
 	}
+	for _, forbidden := range []string{"LoadCredential=statuspage-password", "BOETTICHER_STATUS_PASSWORD_HASH", "statuspage-password"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("Caddy frontend asset retains status password handling %q", forbidden)
+		}
+	}
 }
 
 func TestProviderInstallerStagesInternalOnlyCaddyConfig(t *testing.T) {
@@ -489,6 +494,9 @@ func TestProviderInstallerStagesInternalOnlyCaddyConfig(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Errorf("Caddy config missing %q: %s", required, text)
 		}
+	}
+	if strings.Contains(text, "BOETTICHER_STATUS_PASSWORD_HASH") || strings.Contains(text, "statuspage-password") {
+		t.Fatalf("Caddy status route retains password authentication: %s", text)
 	}
 	if strings.Contains(text, "bind 0.0.0.0") || strings.Contains(text, "http://") {
 		t.Fatalf("Caddy config exposes an unapproved public or unresolved route: %s", text)
@@ -577,7 +585,7 @@ func mustReadFile(t *testing.T, path string) []byte {
 func TestProviderInstallerTerminatesCredentialHashInput(t *testing.T) {
 	script := mustReadFile(t, "../../scripts/install-observability-providers.sh")
 	text := string(script)
-	for _, credential := range []string{"statuspage-password.cred", "node-exporter-read-token.cred"} {
+	for _, credential := range []string{"node-exporter-read-token.cred"} {
 		if !strings.Contains(text, "cat /var/lib/boetticher/credentials/"+credential+"; printf '\\n'") {
 			t.Fatalf("credential %s is not terminated before Caddy hashing", credential)
 		}

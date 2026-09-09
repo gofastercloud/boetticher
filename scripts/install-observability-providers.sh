@@ -407,7 +407,6 @@ install_caddy_files() {
   ingest_sources=${BOETTICHER_OBSERVABILITY_INGEST_SOURCES:-}
   [ -x "$caddy_source" ] || die "packaged Caddy binary is missing: $caddy_source"
   [ -s "$(root_path /var/lib/boetticher/credentials/cloudflare-dns-token.cred)" ] || die 'Cloudflare DNS credential is missing before Caddy activation'
-  [ -s "$(root_path /var/lib/boetticher/credentials/statuspage-password.cred)" ] || die 'status page password credential is missing before Caddy activation'
   for address in "$metrics_controller" "$metrics_host" "$metrics_runtime"; do
     case "$address" in ''|*[!0-9.]*) die 'Caddy metrics target address is invalid' ;; esac
     printf '%s\n' "$address" | awk -F. 'NF == 4 { for (i = 1; i <= 4; i++) if ($i < 0 || $i > 255) exit 1; exit 0 } { exit 1 }' || die 'Caddy metrics target address is invalid'
@@ -446,9 +445,6 @@ https://status.$public_domain {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     propagation_delay 30s
     propagation_timeout -1
-  }
-  basic_auth {
-    status {\$BOETTICHER_STATUS_PASSWORD_HASH}
   }
   reverse_proxy 127.0.0.1:8080
 }
@@ -520,10 +516,9 @@ https://ingest.$public_domain {
 EOF
   target=$(root_path /etc/boetticher/caddy/Caddyfile)
   if [ "$root" = / ]; then
-    status_hash=$({ cat /var/lib/boetticher/credentials/statuspage-password.cred; printf '\n'; } | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy status password hash generation failed'
     node_hash=$({ cat /var/lib/boetticher/credentials/node-exporter-read-token.cred; printf '\n'; } | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy metrics password hash generation failed'
-    CLOUDFLARE_API_TOKEN=$(cat /var/lib/boetticher/credentials/cloudflare-dns-token.cred) BOETTICHER_STATUS_PASSWORD_HASH="$status_hash" BOETTICHER_METRICS_PASSWORD_HASH="$node_hash" "$caddy_source" validate --config "$work/Caddyfile" --adapter caddyfile >/dev/null || die 'Caddy configuration validation failed'
-    unset status_hash node_hash
+    CLOUDFLARE_API_TOKEN=$(cat /var/lib/boetticher/credentials/cloudflare-dns-token.cred) BOETTICHER_METRICS_PASSWORD_HASH="$node_hash" "$caddy_source" validate --config "$work/Caddyfile" --adapter caddyfile >/dev/null || die 'Caddy configuration validation failed'
+    unset node_hash
   fi
   install_atomic 0640 "$work/Caddyfile" "$target"
   chown_root_group "$target" caddy
@@ -707,7 +702,7 @@ case "$provider" in
           print "    url: https://status." domain "/health"
           print "    interval: 30s"
           print "    conditions:"
-          print "      - \"[STATUS] == 401\""
+          print "      - \"[STATUS] == 200\""
           print "  - name: caddy-metrics"
           print "    group: observability"
           print "    url: https://metrics." domain "/lab-monitor-01/metrics"

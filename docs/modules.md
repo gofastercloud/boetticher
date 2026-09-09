@@ -225,10 +225,13 @@ the command reports every missing name without starting a partial runtime:
 
 ```text
 boetticher module observability secrets set grafana-admin-password
-boetticher module observability secrets set statuspage-password
 boetticher module observability secrets set cloudflare-dns-token
 boetticher module observability apply --public-domain davebarton.cc --yes
 ```
+
+The Gatus status page uses HTTPS without a password prompt inside the existing
+network access boundary. Grafana sign-in and private metrics authentication
+remain enabled; no status-page password is required for a fresh deployment.
 
 To opt into Holmes/Bifrost, also set `holmes-client-token` and
 `openrouter-api-key`, then apply with the explicit provider model:

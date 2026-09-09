@@ -48,7 +48,7 @@ func TestMissingObservabilitySecretsListsRequiredNamesWithoutValues(t *testing.T
 	enabled := true
 	modules := clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, PublicDomain: "davebarton.cc"}}
 	missing := missingObservabilitySecrets(modules, map[string][]byte{})
-	if strings.Join(missing, ",") != "cloudflare-dns-token,grafana-admin-password,statuspage-password" {
+	if strings.Join(missing, ",") != "cloudflare-dns-token,grafana-admin-password" {
 		t.Fatalf("missing secret set = %#v", missing)
 	}
 }

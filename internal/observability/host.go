@@ -737,7 +737,7 @@ func BifrostConfig(modules clientservices.Modules) (bifrost.Config, error) {
 }
 
 func RequiredSecretNames(modules clientservices.Modules) []string {
-	names := []string{"grafana-admin-password", "statuspage-password"}
+	names := []string{"grafana-admin-password"}
 	if modules.AIOps != nil && modules.AIOps.Holmes != nil {
 		names = append(names, modules.AIOps.Holmes.Bifrost.ClientCredential)
 		for _, upstream := range modules.AIOps.Holmes.Bifrost.Upstreams {
