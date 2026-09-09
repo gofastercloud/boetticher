@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -527,6 +528,9 @@ func runVPNApply(ctx context.Context, serviceContext clientServiceContext, opts 
 		fmt.Fprintln(out, "Configuration saved; application failed.")
 		return fmt.Errorf("reconcile VPN configuration: %w", err)
 	}
+	if err := provider.ReloadInterface(ctx, "airvpn"); err != nil {
+		return fmt.Errorf("activate changed AirVPN profile: %w", err)
+	}
 	if _, err := verifyVPN(ctx, provider, serviceContext, modules, state, out); err != nil {
 		return err
 	}
@@ -592,6 +596,13 @@ func verifyVPN(ctx context.Context, provider *openwrt.Client, serviceContext cli
 	if age := time.Since(runtime.LatestHandshake); age > 10*time.Minute {
 		fmt.Fprintln(out, "Connection: stale\nEnforcement: present; protected clients remain blocked")
 		return runtime, errors.New("VPN peer handshake is stale; protected clients remain blocked")
+	}
+	if serviceContext.VPNProfile != nil {
+		endpoint, endpointErr := firewallmodule.VPNEndpointViaHost(ctx, serviceContext.Host)
+		want := serviceContext.VPNProfile.EndpointHost + ":" + strconv.Itoa(serviceContext.VPNProfile.EndpointPort)
+		if endpointErr != nil || endpoint != want {
+			return runtime, fmt.Errorf("VPN active endpoint does not match retained profile")
+		}
 	}
 	if pendingAdditions {
 		return runtime, pendingVPNStatusError{}

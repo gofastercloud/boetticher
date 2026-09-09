@@ -280,6 +280,21 @@ func (c *Client) ServiceConfigChange(ctx context.Context, service string) error 
 	return nil
 }
 
+// ReloadInterface explicitly reactivates one managed interface after a
+// profile change. A network config reload alone may leave an already-up
+// WireGuard interface using its old peer endpoint.
+func (c *Client) ReloadInterface(ctx context.Context, name string) error {
+	if name != "airvpn" {
+		return errors.New("unsupported interface reload")
+	}
+	for _, method := range []string{"down", "up"} {
+		if _, err := c.callWithSession(ctx, "network.interface", method, map[string]any{"interface": name}); err != nil {
+			return fmt.Errorf("%s AirVPN interface: %w", method, err)
+		}
+	}
+	return nil
+}
+
 // ReloadFirewall invokes only the packaged fw4 reload action through rpcd.
 // The command and argument vector are fixed; callers cannot append lifecycle
 // actions or execute an arbitrary provider command.
