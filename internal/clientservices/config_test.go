@@ -67,6 +67,47 @@ func TestPushoverIntentRoundTripsWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestObservabilityCollectionBindingsRoundTripAndClone(t *testing.T) {
+	enabled := true
+	modules := Modules{Observability: &ObservabilityConfig{
+		Enabled: &enabled,
+		Collection: ObservabilityCollectionBindings{
+			Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20",
+		},
+	}}
+	data, err := yaml.Marshal(modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Modules
+	if err := yaml.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Observability == nil || roundTrip.Observability.Collection != modules.Observability.Collection {
+		t.Fatalf("collection bindings did not round-trip: %#v", roundTrip)
+	}
+	clone := modules.Clone()
+	clone.Observability.Collection.Controller = "10.10.20.11"
+	if modules.Observability.Collection.Controller != "10.10.20.10" {
+		t.Fatal("Clone aliases collection bindings")
+	}
+}
+
+func TestObservabilityCollectionBindingsRejectNonCanonicalAndDuplicateAddresses(t *testing.T) {
+	for _, bindings := range []ObservabilityCollectionBindings{
+		{Controller: "10.10.20.010", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20"},
+		{Controller: "10.10.20.10", ProxmoxHost: "10.10.20.10", Runtime: "10.10.10.20"},
+		{Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5"},
+	} {
+		if err := Validate(Modules{Observability: &ObservabilityConfig{Collection: bindings}}, testSite()); err == nil {
+			t.Fatalf("invalid collection bindings accepted: %#v", bindings)
+		}
+	}
+	if err := Validate(Modules{Observability: &ObservabilityConfig{}}, testSite()); err != nil {
+		t.Fatalf("unset collection bindings should be allowed before first apply: %v", err)
+	}
+}
+
 func TestModulesRoundTripPreservesTailnetAndVPNIntent(t *testing.T) {
 	enabled := true
 	modules := Modules{

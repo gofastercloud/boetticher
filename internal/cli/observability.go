@@ -245,6 +245,11 @@ func applyObservability(b observability.Binding, yes bool, publicDomain, holmesM
 	if collectionErr != nil {
 		return collectionErr
 	}
+	config.Modules.Observability.Collection = clientservices.ObservabilityCollectionBindings{
+		Controller:  collectionAddressForTarget(collection, observability.TargetController),
+		ProxmoxHost: collectionAddressForTarget(collection, observability.TargetHost),
+		Runtime:     collectionAddressForTarget(collection, observability.TargetRuntime),
+	}
 	if observability.Enabled(config.Modules) && observation.State == "owned" {
 		desiredDigest, digestErr := observabilityDigest(config.Modules, secrets, payloadDigest, collection)
 		servicesHealthy := true
@@ -289,6 +294,15 @@ func applyObservability(b observability.Binding, yes bool, publicDomain, holmesM
 	}
 	fmt.Fprintln(out, "Module observability: PASS (guest reconciled and provider healthy)")
 	return nil
+}
+
+func collectionAddressForTarget(config observability.CollectionConfig, kind observability.TargetKind) string {
+	for _, target := range config.Targets {
+		if target.Kind == kind {
+			return target.Address
+		}
+	}
+	return ""
 }
 
 func reconcileObservabilityDependencies(ctx context.Context, config controllerhost.LabConfig) error {

@@ -123,6 +123,27 @@ func TestCollectionConfigAcceptsIntentRetentionAndRejectsInvalidRange(t *testing
 	}
 }
 
+func TestCollectionConfigUsesAndChecksPersistedRoleBindings(t *testing.T) {
+	enabled := true
+	config := controllerhost.LabConfig{
+		Proxmox: controllerhost.ProxmoxConfig{Address: "192.0.2.10"},
+		Modules: clientservices.Modules{Observability: &clientservices.ObservabilityConfig{
+			Enabled: &enabled,
+			Collection: clientservices.ObservabilityCollectionBindings{
+				Controller: "10.10.20.10", ProxmoxHost: model.ProxmoxManagementAddress, Runtime: binding.Address,
+			},
+		}},
+	}
+	collection, err := CollectionConfigForLab(config, "10.10.20.10")
+	if err != nil || collection.Targets[0].Address != "10.10.20.10" || collection.Targets[2].Address != binding.Address {
+		t.Fatalf("persisted bindings rejected or ignored: %#v %v", collection, err)
+	}
+	config.Modules.Observability.Collection.Runtime = "10.10.10.21"
+	if _, err := CollectionConfigForLab(config, "10.10.20.10"); err == nil {
+		t.Fatal("mismatched persisted runtime binding accepted")
+	}
+}
+
 func TestObservedControllerIPUsesAuthenticatedConnectionThenLocalRoute(t *testing.T) {
 	previous := LocalRouteLookup
 	t.Cleanup(func() { LocalRouteLookup = previous })

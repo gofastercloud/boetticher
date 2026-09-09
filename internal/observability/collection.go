@@ -61,11 +61,24 @@ func CollectionConfigForLab(config controllerhost.LabConfig, controllerAddress s
 	if _, err := collectionIPv4(config.Proxmox.Address); err != nil {
 		return CollectionConfig{}, errors.New("Proxmox collection address is invalid")
 	}
+	addresses := clientservices.ObservabilityCollectionBindings{
+		Controller:  controllerAddress,
+		ProxmoxHost: model.ProxmoxManagementAddress,
+		Runtime:     binding.Address,
+	}
+	if config.Modules.Observability != nil {
+		persisted := config.Modules.Observability.Collection
+		if persisted.Controller != "" || persisted.ProxmoxHost != "" || persisted.Runtime != "" {
+			if persisted != addresses {
+				return CollectionConfig{}, errors.New("observability collection bindings do not match verified lab identities")
+			}
+		}
+	}
 	result := CollectionConfig{
 		Targets: []Target{
-			{Name: "controller", Hostname: "controller", Address: controllerAddress, Kind: TargetController, Arch: "arm64", Port: NodeExporterPort},
-			{Name: "proxmox-host", Hostname: "proxmox-host", Address: model.ProxmoxManagementAddress, Kind: TargetHost, Arch: "amd64", Port: NodeExporterPort},
-			{Name: "lab-monitor-01", Hostname: "lab-monitor-01", Address: "10.10.10.20", Kind: TargetRuntime, VMID: model.MonitorVMID, Arch: "amd64", Port: NodeExporterPort},
+			{Name: "controller", Hostname: "controller", Address: addresses.Controller, Kind: TargetController, Arch: "arm64", Port: NodeExporterPort},
+			{Name: "proxmox-host", Hostname: "proxmox-host", Address: addresses.ProxmoxHost, Kind: TargetHost, Arch: "amd64", Port: NodeExporterPort},
+			{Name: "lab-monitor-01", Hostname: "lab-monitor-01", Address: addresses.Runtime, Kind: TargetRuntime, VMID: model.MonitorVMID, Arch: "amd64", Port: NodeExporterPort},
 		},
 		MetricsRetentionDays: collectionRetention(config.Modules, true),
 		LogsRetentionDays:    collectionRetention(config.Modules, false),
@@ -146,7 +159,7 @@ func (c CollectionConfig) Validate() error {
 		if err != nil {
 			return fmt.Errorf("collection target %s has invalid IPv4 address", target.Name)
 		}
-		if target.Kind == TargetRuntime && (target.VMID != model.MonitorVMID || target.Address != "10.10.10.20") {
+		if target.Kind == TargetRuntime && (target.VMID != model.MonitorVMID || target.Address != binding.Address) {
 			return fmt.Errorf("collection runtime target has an unexpected VMID or address")
 		}
 		if target.Kind != TargetRuntime && target.VMID != 0 {

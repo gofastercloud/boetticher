@@ -1,8 +1,10 @@
 package firewallmodule
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
+	"github.com/gofastercloud/boetticher/internal/tailnet"
 )
 
 const (
@@ -111,7 +114,86 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	state.System = append(state.System, ntpSections(site, ntpUpstreams, ntpServe)...)
 	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
+	observabilityFirewall, err := observabilityFirewallSections(site, normalized)
+	if err != nil {
+		return ServiceState{}, err
+	}
+	state.Firewall = append(state.Firewall, observabilityFirewall...)
 	return state, nil
+}
+
+const (
+	observabilityControllerExporterRule = "boetticher_observability_controller_exporter"
+	observabilityHostExporterRule       = "boetticher_observability_host_exporter"
+	observabilityControllerIngressRule  = "boetticher_observability_controller_ingress"
+	observabilityHostIngressRule        = "boetticher_observability_host_ingress"
+	observabilityRuntimeIngressRule     = "boetticher_observability_runtime_ingress"
+	observabilityTrustedIngressRule     = "boetticher_observability_trusted_ingress"
+	observabilityTailnetIngressRule     = "boetticher_observability_tailnet_ingress"
+)
+
+func observabilityFirewallSections(site model.Site, modules clientservices.Modules) ([]Section, error) {
+	if modules.Observability == nil || !clientservices.Enabled(modules.Observability.Enabled) {
+		return nil, nil
+	}
+	b := modules.Observability.Collection
+	if b.Controller == "" || b.ProxmoxHost == "" || b.Runtime == "" {
+		return nil, errors.New("enabled observability requires complete collection bindings")
+	}
+	roles := []struct {
+		name, address, zone string
+	}{
+		{"controller", b.Controller, "SERVERS"},
+		{"proxmox host", b.ProxmoxHost, "MGMT"},
+		{"runtime", b.Runtime, "INFRA"},
+	}
+	for _, role := range roles {
+		address, err := netip.ParseAddr(role.address)
+		zone, ok := zoneByName(site, role.zone)
+		if !ok {
+			return nil, fmt.Errorf("%s zone is required for observability firewall projection", role.zone)
+		}
+		prefix, prefixErr := netip.ParsePrefix(zone.Network)
+		if err != nil || !address.Is4() || prefixErr != nil || !prefix.Contains(address) {
+			return nil, fmt.Errorf("observability %s binding is outside %s", role.name, role.zone)
+		}
+	}
+	address := func(value string) string { return value + "/32" }
+	rule := func(name, src, srcIP, dest, destIP, port string) Section {
+		return Section{Name: name, Type: "rule", Options: map[string]string{
+			"name": "Boetticher Observability " + name[len("boetticher_observability_"):], "src": src, "src_ip": srcIP,
+			"dest": dest, "dest_ip": destIP, "proto": "tcp", "dest_port": port, "family": "ipv4", "target": "ACCEPT",
+		}, Lists: map[string][]string{}}
+	}
+	sections := []Section{
+		rule(observabilityControllerExporterRule, "infra", address(b.Runtime), "servers", address(b.Controller), "9100"),
+		rule(observabilityHostExporterRule, "infra", address(b.Runtime), "mgmt", address(b.ProxmoxHost), "9100"),
+		rule(observabilityControllerIngressRule, "servers", address(b.Controller), "infra", address(b.Runtime), "443"),
+		rule(observabilityHostIngressRule, "mgmt", address(b.ProxmoxHost), "infra", address(b.Runtime), "443"),
+		rule(observabilityRuntimeIngressRule, "infra", address(b.Runtime), "infra", address(b.Runtime), "443"),
+	}
+	trusted, ok := zoneByName(site, "TRUSTED")
+	if !ok {
+		return nil, errors.New("TRUSTED zone is required for observability firewall projection")
+	}
+	sections = append(sections, rule(observabilityTrustedIngressRule, "trusted", trusted.Network, "infra", address(b.Runtime), "443"))
+	if modules.Tailnet != nil && modules.Tailnet.Enabled && hasExactTailnetReservation(modules) {
+		sections = append(sections, rule(observabilityTailnetIngressRule, "transit", address(tailnet.GuestAddress), "infra", address(b.Runtime), "443"))
+		sections[len(sections)-1].Options["src_mac"] = tailnet.GuestMAC
+	}
+	return sections, nil
+}
+
+func hasExactTailnetReservation(modules clientservices.Modules) bool {
+	if modules.DHCP == nil {
+		return false
+	}
+	for _, reservation := range modules.DHCP.Reservations {
+		if reservation.Name == tailnet.GuestName && reservation.Zone == "TRANSIT" && strings.EqualFold(reservation.MAC, tailnet.GuestMAC) && reservation.Address == tailnet.GuestAddress {
+			return true
+		}
+	}
+	return false
 }
 
 func observabilityDNSSections(publicDomain string) []Section {

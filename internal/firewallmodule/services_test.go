@@ -7,6 +7,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
+	"github.com/gofastercloud/boetticher/internal/tailnet"
 )
 
 func TestObservabilityDNSSectionsUseOwnedPublicNamesAndMonitorAddress(t *testing.T) {
@@ -83,6 +84,82 @@ func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 	}
 	if !strings.Contains(sectionNames(state.Firewall), "external_dns") || !strings.Contains(sectionNames(state.Firewall), "_ntp") {
 		t.Fatalf("service-specific firewall policy was not composed: %s", sectionNames(state.Firewall))
+	}
+}
+
+func TestObservabilityFirewallProjectionUsesPersistedRoleBindings(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	enabled := true
+	modules := clientservices.Modules{Observability: &clientservices.ObservabilityConfig{
+		Enabled:    &enabled,
+		Collection: clientservices.ObservabilityCollectionBindings{Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20"},
+	}}
+	state, err := ServiceStateFromModules(site, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	find := func(name string) Section {
+		for _, section := range state.Firewall {
+			if section.Name == name {
+				return section
+			}
+		}
+		t.Fatalf("missing firewall section %s", name)
+		return Section{}
+	}
+	rule := find(observabilityControllerExporterRule)
+	if rule.Options["src"] != "infra" || rule.Options["src_ip"] != "10.10.10.20/32" || rule.Options["dest"] != "servers" || rule.Options["dest_ip"] != "10.10.20.10/32" || rule.Options["dest_port"] != "9100" {
+		t.Fatalf("controller exporter rule is not exact: %#v", rule.Options)
+	}
+	trusted := find(observabilityTrustedIngressRule)
+	if trusted.Options["src"] != "trusted" || trusted.Options["src_ip"] != "10.10.30.0/24" || trusted.Options["dest_ip"] != "10.10.10.20/32" || trusted.Options["dest_port"] != "443" {
+		t.Fatalf("trusted observability rule is not exact: %#v", trusted.Options)
+	}
+}
+
+func TestObservabilityFirewallProjectionTailnetRequiresExactReservation(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	enabled := true
+	modules := clientservices.Modules{Tailnet: &clientservices.TailnetConfig{Enabled: true}, Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, Collection: clientservices.ObservabilityCollectionBindings{Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20"}}, DNS: &clientservices.DNSConfig{Enabled: &enabled}, DHCP: &clientservices.DHCPConfig{Enabled: &enabled, Reservations: []clientservices.Reservation{{Name: tailnet.GuestName, Zone: "TRANSIT", MAC: "02:00:00:00:05:11", Address: tailnet.GuestAddress}}}}
+	state, err := ServiceStateFromModules(site, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, section := range state.Firewall {
+		if section.Name == observabilityTailnetIngressRule {
+			t.Fatal("spoofed Tailnet MAC produced observability rule")
+		}
+	}
+	modules.DHCP.Reservations[0].MAC = tailnet.GuestMAC
+	state, err = ServiceStateFromModules(site, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, section := range state.Firewall {
+		if section.Name == observabilityTailnetIngressRule {
+			found = true
+			if section.Options["src_mac"] != tailnet.GuestMAC || section.Options["dest_ip"] != "10.10.10.20/32" || section.Options["dest_port"] != "443" {
+				t.Fatalf("Tailnet observability rule is not exact: %#v", section.Options)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("exact Tailnet reservation did not produce observability rule")
+	}
+}
+
+func TestObservabilityFirewallProjectionDisabledAndCleanupScoped(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	disabled := false
+	state, err := ServiceStateFromModules(site, clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &disabled}})
+	if err != nil || len(state.Firewall) != 0 {
+		t.Fatalf("disabled observability projected firewall rules: %#v %v", state.Firewall, err)
+	}
+	name := observabilityRuntimeIngressRule
+	current := map[string]openwrt.UCISection{name: {Type: "rule", Options: map[string]string{"name": "old"}}}
+	if _, ok := FirewallScope(current, nil)[name]; !ok {
+		t.Fatal("observability rule was not retained for exact cleanup")
 	}
 }
 

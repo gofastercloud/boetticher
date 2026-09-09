@@ -19,8 +19,7 @@
   <rect x="390" y="185" width="225" height="66" class="card" fill="#fff"/><text x="410" y="211" class="l">Operator Mac</text><text x="410" y="233" class="b">192.168.4.20 current</text>
   <rect x="710" y="185" width="260" height="66" class="card" fill="#fff"/><text x="730" y="211" class="l">Companion Pi · eth0</text><text x="730" y="233" class="b">192.168.4.6 current · default route</text>
   <rect x="1065" y="185" width="260" height="66" class="card" fill="#fff"/><text x="1085" y="211" class="l">Proxmox · vmbr0 / nic0</text><text x="1085" y="233" class="b">192.168.4.5 current · default route</text>
-  <path d="M295 218H390M615 218H710M970 218H1065" class="soft"/>
-  <text x="1328" y="211" class="tiny">HOME connections beyond these<br/>known endpoints: unknown</text>
+  <path d="M192 265H1195M192 251V265M502 251V265M840 251V265M1195 251V265" class="soft"/>
 
   <!-- physical hardware -->
   <rect x="55" y="320" width="420" height="620" class="zone" fill="#fff" stroke="#94a3b8"/>
@@ -32,7 +31,7 @@
   <rect x="90" y="757" width="350" height="135" class="card" fill="#fefce8"/>
   <text x="112" y="787" class="l">lab-companion</text><text x="112" y="810" class="b">USB eth1 a 6c:1f:f7:d2:5d:97 → SERVERS</text><text x="112" y="831" class="b">10.10.20.10 · route 10.10.0.0/16 via 10.10.20.1</text><text x="112" y="852" class="b">Blinkt (8 LEDs) + USB StreamDeck: recovered</text><text x="112" y="873" class="tiny">Wi-Fi 192.168.4.7 reserved; radio off / break-glass</text>
   <path d="M265 530V580" class="line"/><text x="281" y="560" class="tiny">tagged trunk (port 5)</text>
-  <path d="M265 706V757" class="line"/><text x="281" y="738" class="tiny">SERVERS access zone; exact port/cable unverified</text>
+  <path d="M90 470H70V824H90" class="line"/><text x="80" y="735" class="tiny">port 6 · SERVERS</text>
 
   <!-- logical fabric -->
   <rect x="515" y="320" width="1030" height="620" class="zone" fill="#f8fafc" stroke="#94a3b8"/>
@@ -43,8 +42,8 @@
   <text x="860" y="434" class="l">AirVPN WireGuard</text><text x="860" y="456" class="b">airvpn 10.132.148.135 current</text><text x="860" y="478" class="b">Europe provider endpoint</text><text x="860" y="501" class="b">Protected clients: VPN only; no WAN fallback</text>
   <rect x="1135" y="405" width="350" height="125" class="card" fill="#ecfeff"/>
   <text x="1155" y="434" class="l">Tailnet gateway · CT 200</text><text x="1155" y="456" class="b">lab-tailnet-01 · TRANSIT 10.10.5.10</text><text x="1155" y="478" class="b">Tailscale 100.88.228.46 · advertises 10.10.0.0/16</text><text x="1155" y="501" class="b">source SNAT 10.10.5.10 · HOME denied</text>
-  <path d="M775 468H840" class="line"/><path d="M1135 468H1070" class="line"/>
-  <text x="790" y="448" class="tiny">protected egress</text><text x="1085" y="448" class="tiny">remote access</text>
+  <path d="M775 468H840" class="line"/><path d="M1310 405V390H662V405" class="line"/>
+  <text x="790" y="448" class="tiny">protected egress</text><text x="950" y="386" class="tiny">remote access</text>
 
   <!-- zones -->
   <g>

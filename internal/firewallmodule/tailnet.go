@@ -48,6 +48,14 @@ func FirewallScope(current map[string]openwrt.UCISection, desired []Section) map
 	for _, s := range serviceFirewallSections(reference, true, true, true) {
 		owned[s.Name] = true
 	}
+	for _, name := range []string{
+		observabilityControllerExporterRule, observabilityHostExporterRule,
+		observabilityControllerIngressRule, observabilityHostIngressRule,
+		observabilityRuntimeIngressRule, observabilityTrustedIngressRule,
+		observabilityTailnetIngressRule,
+	} {
+		owned[name] = true
+	}
 	result := map[string]openwrt.UCISection{}
 	for name, s := range current {
 		if managedVPNFirewallSection(name, s) {
