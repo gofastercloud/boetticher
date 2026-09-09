@@ -1,0 +1,16 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v1.13.2
+    container_name: boetticher-homepage
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: ${HOMEPAGE_ALLOWED_HOSTS:?set the Caddy hostname}
+      HOMEPAGE_AUTH_ENABLED: "true"
+      HOMEPAGE_AUTH_SECRET: ${HOMEPAGE_AUTH_SECRET:?set a random 32+ character secret}
+      HOMEPAGE_AUTH_PASSWORD: ${HOMEPAGE_AUTH_PASSWORD:?set a strong local password}
+      HOMEPAGE_EXTERNAL_URL: https://${HOMEPAGE_ALLOWED_HOSTS}
+    volumes:
+      - /var/lib/boetticher/homepage/config:/app/config
+      - /var/lib/boetticher/homepage/config/images:/app/public/images:ro
