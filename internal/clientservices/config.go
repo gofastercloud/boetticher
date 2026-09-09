@@ -422,6 +422,11 @@ func (m Modules) Clone() Modules {
 
 func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
+	for _, system := range normalized.Systems {
+		if system.Monitoring && (normalized.Observability == nil || !Enabled(normalized.Observability.Enabled)) {
+			return errors.New("monitored systems require enabled observability")
+		}
+	}
 	if err := validateObservability(normalized); err != nil {
 		return err
 	}
