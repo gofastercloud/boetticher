@@ -138,6 +138,13 @@ basic_auth_users:
   boetticher: $read_token_hash
 EOF
 install -m 0640 "$work/web.yml" "$web_config.new"
+if [ "$root" = / ]; then
+  chown "root:$service_user" "$web_config.new"
+else
+  service_gid=$(awk -F: -v account="$service_user" '$1 == account { print $4; exit }' "$passwd_file")
+  [ -n "$service_gid" ] || die 'staged exporter service group is missing'
+  chown "0:$service_gid" "$web_config.new"
+fi
 mv -f "$web_config.new" "$web_config"
 cat > "$work/unit" <<EOF
 # Boetticher observability collection
@@ -147,8 +154,7 @@ After=network-online.target
 [Service]
 User=$service_user
 Group=$service_user
-LoadCredential=node-exporter-web:$guest_web_config
-ExecStart=$guest_binary --web.listen-address=$listen_address:9100 --web.config.file=/run/credentials/boetticher-node-exporter.service/node-exporter-web
+ExecStart=$guest_binary --web.listen-address=$listen_address:9100 --web.config.file=$guest_web_config
 Restart=on-failure
 NoNewPrivileges=true
 ProtectSystem=strict

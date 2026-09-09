@@ -497,7 +497,7 @@ func TestCollectionInstallerPinsTargetsAndKeepsTLSOutOfArguments(t *testing.T) {
 	if strings.Contains(text, "--key ") || strings.Contains(text, "--password ") {
 		t.Fatal("collection installer passes private material as an argument")
 	}
-	for _, required := range []string{"TrustedCertificateFile=/etc/ssl/certs/ca-certificates.crt", "LoadCredential=node-exporter-web:$guest_web_config", "--web.config.file=/run/credentials/boetticher-node-exporter.service/node-exporter-web", "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --save-state=/var/lib/systemd/journal-upload/state", "Restart=on-failure", "RestartSec=10s", "systemctl restart systemd-journal-upload.service"} {
+	for _, required := range []string{"TrustedCertificateFile=/etc/ssl/certs/ca-certificates.crt", "chown \"root:$service_user\" \"$web_config.new\"", "--web.config.file=$guest_web_config", "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --save-state=/var/lib/systemd/journal-upload/state", "Restart=on-failure", "RestartSec=10s", "systemctl restart systemd-journal-upload.service"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("collection TLS permission contract missing %q", required)
 		}
@@ -541,6 +541,10 @@ func TestCollectionInstallerExecutesAgainstStagedRoot(t *testing.T) {
 	cmd.Env = env
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("staged collection installer failed: %v\n%s", err, output)
+	}
+	webInfo, err := os.Stat(filepath.Join(root, "etc", "boetticher", "observability", "node-exporter-web.yml"))
+	if err != nil || webInfo.Mode().Perm() != 0640 {
+		t.Fatalf("exporter authentication configuration must remain private: %v", err)
 	}
 	unit := string(mustReadFile(t, filepath.Join(root, "etc", "systemd", "system", "systemd-journal-upload.service.d", "boetticher.conf")))
 	if !strings.Contains(unit, "--save-state=/var/lib/systemd/journal-upload/state") || strings.Contains(unit, "$tls_dir") {

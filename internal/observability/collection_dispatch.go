@@ -156,7 +156,7 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 	if err != nil {
 		return err
 	}
-	configCommand := fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue("set -eu; install -d -m 0750 /etc/boetticher/observability; chown root:victoriametrics /etc/boetticher/observability; tmp=$(mktemp /etc/boetticher/observability/.collection.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; cat >\"$tmp\"; chmod 0640 \"$tmp\"; chown root:victoriametrics \"$tmp\"; mv -f \"$tmp\" "+CollectionConfigPath))
+	configCommand := fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue("set -eu; install -d -m 0755 /etc/boetticher/observability; tmp=$(mktemp /etc/boetticher/observability/.collection.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; cat >\"$tmp\"; chmod 0640 \"$tmp\"; chown root:root \"$tmp\"; mv -f \"$tmp\" "+CollectionConfigPath))
 	if _, err := host.RunWithStdin(ctx, configCommand, bytes.NewReader([]byte(configText))); err != nil {
 		return fmt.Errorf("install collection scrape configuration: %w", err)
 	}

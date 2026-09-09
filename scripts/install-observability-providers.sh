@@ -633,6 +633,12 @@ case "$provider" in
     install_atomic 0755 "$work/victoria-logs.ready" "$(root_path /usr/local/bin/victoria-logs)"
     ;;
   victoriametrics)
+    # Account creation above precedes ownership, including the first install.
+    collection_config=$(root_path /etc/boetticher/observability/collection.yml)
+    [ -f "$collection_config" ] || die 'metrics collection configuration is missing'
+    install -d -m 0755 "$(dirname "$collection_config")"
+    chown_root_group "$collection_config" victoriametrics
+    chmod 0640 "$collection_config"
     extract_tar_binary "$work/$archive_name" victoria-metrics-prod "$work/victoria-metrics"
     install_atomic 0755 "$work/victoria-metrics.ready" "$(root_path /usr/local/bin/victoria-metrics)"
     ;;
