@@ -87,6 +87,29 @@ The helper refuses symlinked or non-root-owned releases and never removes
 downloads can be reported with `--cache-root`; no live deletion happens without
 `--yes`. On a Mac, point `--cache-root` at the task-local controller cache.
 
+### Keeping the Mac workspace tidy
+
+The local builder leaves generated output under `generated/`. Keep
+`generated/artifacts`, provenance, and evidence: those are the useful receipts
+for active work. The separate local helper only considers directly named stale
+trees (`artifacts-stale-*`, `boetticher-build-*`, and
+`boetticher-download-*`). It reports first and keeps the newest two trees:
+
+```sh
+make local-cleanup
+```
+
+To approve removal after reviewing the report, choose the age and root
+explicitly:
+
+```sh
+sh scripts/cleanup-local-storage.sh --root generated --keep 2 --max-age-days 30 --yes
+```
+
+It refuses symlinks, unexpected names, and paths not owned by the current Mac
+user. This does not remove the existing `generated/artifacts` tree or anything
+outside the selected root.
+
 ## Bootstrap and status
 
 ```sh
