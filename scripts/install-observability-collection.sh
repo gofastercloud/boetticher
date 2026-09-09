@@ -147,7 +147,8 @@ After=network-online.target
 [Service]
 User=$service_user
 Group=$service_user
-ExecStart=$guest_binary --web.listen-address=$listen_address:9100 --web.config.file=$guest_web_config
+LoadCredential=node-exporter-web:$guest_web_config
+ExecStart=$guest_binary --web.listen-address=$listen_address:9100 --web.config.file=/run/credentials/boetticher-node-exporter.service/node-exporter-web
 Restart=on-failure
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -179,7 +180,7 @@ printf '%s\n' 'owned' > "$marker.new"
 mv -f "$marker.new" "$marker"
 
 if [ "$root" = / ]; then
-  chown "$service_user:$service_user" "$binary_path" "$web_config"
+  chown "$service_user:$service_user" "$binary_path"
   systemctl daemon-reload
   systemctl enable boetticher-node-exporter.service
   systemctl restart boetticher-node-exporter.service
