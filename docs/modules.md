@@ -145,11 +145,10 @@ unconfigured VPN.
 
 Native observations and regressions are bounded: VPN failure is not `OFF`, and
 healthy DHCP plus failed DNS is not `healthy`. Keep the Blinkt mapping fixed at
-eight pixels: `CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES`.
-DHCP/NTP detail remains in StreamDeck host detail and CLI status. Keep the
-existing StreamDeck home `FW`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH` area;
-use its existing detail navigation for DHCP/NTP and DNS. Add no display stack,
-hardware, or framework.
+eight pixels: `CTL HOST NETWORK VPN TAILNET SPEEDTEST CTRL-UPDATES HOST-UPDATES`.
+The StreamDeck home shows the Host summary, speedtest `NET`, guest pages,
+`NETWORK`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH`; its detail views expose
+Firewall, DNS, and DHCP/NTP state. Add no display stack, hardware, or framework.
 
 Keep cleanup narrow: delete only proven obsolete reachable network callers and
 docs, preserve security tests, and add regressions for changed behaviour. NET
