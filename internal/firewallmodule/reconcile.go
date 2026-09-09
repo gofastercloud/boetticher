@@ -129,6 +129,19 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 }
 
 func managedRuleIdentity(name string, options map[string]string) bool {
+	if strings.HasPrefix(name, "boetticher_system_") {
+		parts := strings.Split(name, "_")
+		if len(parts) < 4 || (parts[len(parts)-1] != "trusted" && parts[len(parts)-1] != "monitoring") {
+			return false
+		}
+		if options["name"] == "" || !strings.HasPrefix(options["name"], "Boetticher system ") || options["dest"] != "servers" || options["proto"] != "tcp" || options["family"] != "ipv4" || options["target"] != "ACCEPT" || options["dest_ip"] == "" || options["dest_port"] == "" {
+			return false
+		}
+		if parts[len(parts)-1] == "trusted" {
+			return options["src"] == "trusted" && options["src_ip"] == ""
+		}
+		return options["src"] == "infra" && options["src_ip"] == "10.10.10.20"
+	}
 	if strings.HasPrefix(name, "boetticher_tailnet_") {
 		id := strings.TrimPrefix(name, "boetticher_tailnet_")
 		expectedName, ok := map[string]string{

@@ -89,6 +89,9 @@ reference topology is `vmbr0` for management and a VLAN-aware `vmbr1` for VLANs
 5, 10, 20, 30, 40, and 99. Physical LAB networking is later Host configuration;
 it is not a Module.
 
+For existing user guests, see [operator-managed systems](operator-systems.md)
+for registration, bounded SERVERS policy, and recovery behavior.
+
 ## Host teardown and rebuild
 
 Teardown removes exact Boetticher-owned Host configuration while preserving the

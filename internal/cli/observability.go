@@ -262,8 +262,13 @@ func applyObservability(b observability.Binding, yes bool, publicDomain, holmesM
 		}
 		runtimeDigest, runtimeErr := client.RuntimeDigest(ctx, b)
 		if servicesHealthy && digestErr == nil && runtimeErr == nil && runtimeDigest == desiredDigest {
-			fmt.Fprintln(out, "Module observability: PASS (already configured and healthy)")
-			return nil
+			if ready, checkErr := client.GatusSystemsHealthy(ctx, config.Modules.Systems); checkErr != nil || !ready {
+				// Continue through normal reconciliation so the current systems
+				// projection is repaired atomically with observability.
+			} else {
+				fmt.Fprintln(out, "Module observability: PASS (already configured and healthy)")
+				return nil
+			}
 		}
 	}
 	if !yes && !affirm(input, out, "Apply the observability guest and provider? [y/N] ") {

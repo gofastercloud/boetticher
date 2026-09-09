@@ -33,6 +33,29 @@ func TestObservabilityDNSSectionsUseOwnedPublicNamesAndMonitorAddress(t *testing
 	}
 }
 
+func TestRegisteredSystemFirewallRulesAreOwnedAndPruned(t *testing.T) {
+	current := map[string]openwrt.UCISection{
+		"boetticher_system_print-server_trusted": {Type: "rule", Options: map[string]string{"name": "Boetticher system print-server trusted", "src": "trusted", "dest": "servers", "dest_ip": "10.10.20.61", "proto": "tcp", "dest_port": "631", "family": "ipv4", "target": "ACCEPT"}},
+		"user_rule":                              {Type: "rule", Options: map[string]string{"name": "user rule", "src": "trusted", "dest": "servers", "dest_ip": "10.10.20.62", "proto": "tcp", "dest_port": "8080", "family": "ipv4", "target": "ACCEPT"}},
+	}
+	changes, err := DiffFirewall(current, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDelete := false
+	for _, change := range changes {
+		if change.Kind == MutationDelete && change.Section.Name == "boetticher_system_print-server_trusted" {
+			foundDelete = true
+		}
+		if change.Section.Name == "user_rule" {
+			t.Fatal("unowned user firewall rule was selected")
+		}
+	}
+	if !foundDelete {
+		t.Fatal("owned registered-system rule was not pruned")
+	}
+}
+
 func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	enabled := true

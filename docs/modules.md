@@ -33,7 +33,6 @@ boetticher module tailnet apply --auth-key-file /secure/path/key --yes
 boetticher module vpn status
 boetticher module monitoring status
 boetticher module statuspage status
-boetticher module printer status
 ```
 
 DHCP-derived DNS and client-facing NTP are supporting behaviour of the peer
@@ -331,7 +330,7 @@ Keep these concepts separate:
 
 | Concept | Meaning | Examples |
 | --- | --- | --- |
-| Capability | What the operator manages | firewall, DHCP, DNS, VPN, monitoring, status page, printer |
+| Capability | What the operator manages | firewall, DHCP, DNS, VPN, monitoring, status page |
 | Provider | Software or appliance implementing a capability | gateway appliance, DNS resolver, monitoring service, status-page server |
 | Runtime | Where the provider executes | a gateway VM, a monitoring VM/LXC, or the Controller |
 
