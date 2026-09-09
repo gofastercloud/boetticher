@@ -534,7 +534,7 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 		return err
 	}
 	policyUnit := "[Unit]\nDescription=Boetticher arrstack fail-closed firewall\nBefore=docker.service\nAfter=network-online.target nftables.service\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=" + GuestPolicyPath + "\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n"
-	policyInstall := "command -v docker >/dev/null; docker compose version >/dev/null; install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policy + "\nARRSTACK_POLICY\ncat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
+	policyInstall := "command -v docker >/dev/null; docker compose version >/dev/null; install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policyHeredoc(policy) + "cat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
 	dockerDropinInstall := "install -d -m 0755 /etc/systemd/system/docker.service.d; cat > /etc/systemd/system/docker.service.d/boetticher-arrstack-firewall.conf <<'DOCKER_DROPIN'\n[Unit]\nRequires=boetticher-arrstack-firewall.service\nAfter=boetticher-arrstack-firewall.service\nDOCKER_DROPIN\n"
 	policyInstall = dockerDropinInstall + strings.Replace(policyInstall, "systemctl start docker;", "systemctl enable docker.service; systemctl start docker;", 1)
 	if err := guestExecJSON(ctx, host, policyInstall); err != nil {
@@ -568,6 +568,8 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	}
 	return nil
 }
+
+func policyHeredoc(policy string) string { return policy + "ARRSTACK_POLICY\n" }
 
 func installerGuardCommand(command string, timeoutSeconds int) string {
 	return "flock -n /run/boetticher/arrstack-install.lock timeout --signal TERM --kill-after 30s " + strconv.Itoa(timeoutSeconds) + "s sh -c " + shellQuote(command)
