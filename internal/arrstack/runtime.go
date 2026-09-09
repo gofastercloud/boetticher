@@ -25,22 +25,23 @@ import (
 )
 
 const (
-	BuilderPath        = "/opt/boetticher/current/controller/proxmox/libexec/boetticher-build-arrstack-vm"
-	AdapterPath        = "/opt/boetticher/current/bin/arrstack"
-	GuestAdapterPath   = "/usr/local/libexec/boetticher-arrstack"
-	GuestPolicyPath    = "/usr/local/sbin/boetticher-arrstack-firewall"
-	GuestPolicyReceipt = "/run/boetticher/arrstack/policy-receipt"
-	ImagePath          = "/var/lib/boetticher/arrstack-image/debian-13-arrstack-amd64.qcow2"
-	GuestInstallDir    = "/opt/arrstack"
-	GuestComposePath   = GuestInstallDir + "/docker-compose.yml"
-	GuestMediaRoot     = "/var/lib/arrstack/media"
-	GuestOwnerTag      = "boetticher-module-arrstack"
-	GuestVLAN          = 20
-	GuestGateway       = "10.10.20.1"
-	GuestPrefix        = 24
-	GuestRootDisk      = "scsi0"
-	GuestMediaDisk     = "scsi1"
-	GuestAgentTimeout  = 90 * time.Second
+	BuilderPath          = "/opt/boetticher/current/controller/proxmox/libexec/boetticher-build-arrstack-vm"
+	AdapterPath          = "/opt/boetticher/current/bin/arrstack"
+	GuestAdapterPath     = "/usr/local/libexec/boetticher-arrstack"
+	GuestPolicyPath      = "/usr/local/sbin/boetticher-arrstack-firewall"
+	GuestPolicyReceipt   = "/run/boetticher/arrstack/policy-receipt"
+	ImagePath            = "/var/lib/boetticher/arrstack-image/debian-13-arrstack-amd64.qcow2"
+	GuestInstallDir      = "/opt/arrstack"
+	GuestComposePath     = GuestInstallDir + "/docker-compose.yml"
+	GuestMediaRoot       = "/var/lib/arrstack/media"
+	GuestOwnerTag        = "boetticher-module-arrstack"
+	GuestMediaPendingTag = "boetticher-arrstack-media-pending"
+	GuestVLAN            = 20
+	GuestGateway         = "10.10.20.1"
+	GuestPrefix          = 24
+	GuestRootDisk        = "scsi0"
+	GuestMediaDisk       = "scsi1"
+	GuestAgentTimeout    = 90 * time.Second
 )
 
 type GuestFacts struct {
@@ -322,7 +323,7 @@ func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, m
 	if _, err := host.Run(ctx, "sh "+shellQuote(remoteImage)+" "+shellQuote(ImagePath)); err != nil {
 		return fmt.Errorf("build pinned arrstack VM image: %w", err)
 	}
-	command := "set -eu; test -r " + shellQuote(ImagePath) + "; image=" + shellQuote(ImagePath) + "; qm create " + strconv.Itoa(GuestVMID) + " --name " + shellQuote(GuestName) + " --memory " + strconv.Itoa(MemoryMiB) + " --cores " + strconv.Itoa(CPUs) + " --ostype l26 --onboot 0 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+GuestOwnerTag) + " --net0 " + shellQuote("virtio="+GuestMAC+",bridge=vmbr1,tag="+strconv.Itoa(GuestVLAN)+",firewall=1") + " --ipconfig0 " + shellQuote("ip="+GuestAddress+"/24,gw="+GuestGateway) + " --nameserver " + shellQuote(GuestGateway) + " --ide2 " + shellQuote(StorageID+":cloudinit") + "; qm importdisk " + strconv.Itoa(GuestVMID) + " \"$image\" " + shellQuote(StorageID) + " --format raw >/dev/null; disk=$(qm config " + strconv.Itoa(GuestVMID) + " | awk -F': ' '/^unused[0-9]+:/ {print $2; exit}'); test -n \"$disk\"; case \"$disk\" in " + shellQuote(StorageID+":vm-290-disk-") + "*) ;; *) echo 'unexpected arrstack root disk identity' >&2; exit 1 ;; esac; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestRootDisk + " \"$disk,ssd=1\"; qm resize " + strconv.Itoa(GuestVMID) + " " + GuestRootDisk + " " + strconv.Itoa(RootDiskGiB) + "G; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestMediaDisk + " " + shellQuote(StorageID+":"+strconv.Itoa(mediaGiB)+",format=raw,ssd=1") + ""
+	command := "set -eu; test -r " + shellQuote(ImagePath) + "; image=" + shellQuote(ImagePath) + "; qm create " + strconv.Itoa(GuestVMID) + " --name " + shellQuote(GuestName) + " --memory " + strconv.Itoa(MemoryMiB) + " --cores " + strconv.Itoa(CPUs) + " --ostype l26 --onboot 0 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+GuestOwnerTag+";"+GuestMediaPendingTag) + " --net0 " + shellQuote("virtio="+GuestMAC+",bridge=vmbr1,tag="+strconv.Itoa(GuestVLAN)+",firewall=1") + " --ipconfig0 " + shellQuote("ip="+GuestAddress+"/24,gw="+GuestGateway) + " --nameserver " + shellQuote(GuestGateway) + " --ide2 " + shellQuote(StorageID+":cloudinit") + "; qm importdisk " + strconv.Itoa(GuestVMID) + " \"$image\" " + shellQuote(StorageID) + " --format raw >/dev/null; disk=$(qm config " + strconv.Itoa(GuestVMID) + " | awk -F': ' '/^unused[0-9]+:/ {print $2; exit}'); test -n \"$disk\"; case \"$disk\" in " + shellQuote(StorageID+":vm-290-disk-") + "*) ;; *) echo 'unexpected arrstack root disk identity' >&2; exit 1 ;; esac; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestRootDisk + " \"$disk,ssd=1\"; qm resize " + strconv.Itoa(GuestVMID) + " " + GuestRootDisk + " " + strconv.Itoa(RootDiskGiB) + "G; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestMediaDisk + " " + shellQuote(StorageID+":"+strconv.Itoa(mediaGiB)+",format=raw,ssd=1") + ""
 	if _, err := host.Run(ctx, command); err != nil {
 		return fmt.Errorf("create arrstack VM: %w", err)
 	}
@@ -371,7 +372,7 @@ func recoveryCommand(config map[string]string, mediaGiB int) string {
 	}
 	command += "qm resize " + strconv.Itoa(GuestVMID) + " " + GuestRootDisk + " " + strconv.Itoa(RootDiskGiB) + "G; "
 	if !hasMedia {
-		command += "qm set " + strconv.Itoa(GuestVMID) + " --" + GuestMediaDisk + " " + shellQuote(StorageID+":"+strconv.Itoa(mediaGiB)+",format=raw,ssd=1") + "; "
+		command += "tags=$(qm config " + strconv.Itoa(GuestVMID) + " | awk -F': ' '$1 == \"tags\" {print $2}'); case \";$tags;\" in *\";" + GuestMediaPendingTag + ";\"*) ;; *) echo 'arrstack media allocation is not marked pending' >&2; exit 1 ;; esac; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestMediaDisk + " " + shellQuote(StorageID+":"+strconv.Itoa(mediaGiB)+",format=raw,ssd=1") + "; "
 	}
 	return command
 }
@@ -440,15 +441,11 @@ func copyAssetToHost(ctx context.Context, host firewallmodule.HostClient, source
 	return remote, cleanup, nil
 }
 
-func InstallRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, mediaSizes ...int) error {
-	return installRuntime(ctx, host, peerPort, false, nil, mediaSizes...)
+func InstallRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, mediaSizes ...int) error {
+	return installRuntime(ctx, host, peerPort, cloudflareToken, mediaSizes...)
 }
 
-func InstallRuntimeWithNewMedia(ctx context.Context, host firewallmodule.HostClient, peerPort int, newMedia bool, cloudflareToken []byte, mediaSizes ...int) error {
-	return installRuntime(ctx, host, peerPort, newMedia, cloudflareToken, mediaSizes...)
-}
-
-func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, newMedia bool, cloudflareToken []byte, mediaSizes ...int) error {
+func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, mediaSizes ...int) error {
 	if peerPort < 1 || peerPort > 65535 {
 		return errors.New("arrstack peer port must be 1..65535")
 	}
@@ -463,15 +460,22 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	if !guest.Exists || !guest.Running {
 		return errors.New("arrstack VM must be running before runtime installation")
 	}
-	if err := guestExecJSON(ctx, host, "test -x /usr/bin/qemu-ga; "+mediaMountScript(newMedia)); err != nil {
+	mediaPending := hasTag(guest.Config["tags"], GuestMediaPendingTag)
+	// The VM-owned marker, rather than caller history, authorizes first-use formatting.
+	if err := guestExecJSON(ctx, host, "test -x /usr/bin/qemu-ga; "+mediaMountScript(mediaPending)); err != nil {
 		return fmt.Errorf("prepare arrstack media disk: %w", err)
+	}
+	if mediaPending {
+		if _, err := host.Run(ctx, clearMediaPendingTagCommand()); err != nil {
+			return fmt.Errorf("clear arrstack media pending marker: %w", err)
+		}
 	}
 	policy, err := GuestPolicyScript(peerPort)
 	if err != nil {
 		return err
 	}
 	policyUnit := "[Unit]\nDescription=Boetticher arrstack fail-closed firewall\nBefore=docker.service\nAfter=network-online.target nftables.service\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=" + GuestPolicyPath + "\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n"
-	policyInstall := "install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policy + "\nARRSTACK_POLICY\ncat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable --now boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
+	policyInstall := "install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policy + "\nARRSTACK_POLICY\ncat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
 	if err := guestExecJSON(ctx, host, policyInstall); err != nil {
 		return fmt.Errorf("arrstack guest prerequisites are not ready: %w", err)
 	}
@@ -567,12 +571,16 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) e
 	return nil
 }
 
-func mediaMountScript(newMedia bool) string {
+func mediaMountScript(allowFormat bool) string {
 	format := "test -b \"$device\"; blkid \"$device\" >/dev/null 2>&1"
-	if newMedia {
-		format = "test -b \"$device\"; if ! blkid \"$device\" >/dev/null 2>&1; then mkfs.ext4 -F \"$device\"; fi"
+	if allowFormat {
+		format = "test -b \"$device\"; if ! blkid \"$device\" >/dev/null 2>&1; then test -z \"$(wipefs -n \"$device\" 2>/dev/null)\"; test \"$(dd if=\"$device\" bs=1M count=1 2>/dev/null | wc -c)\" = 0; mkfs.ext4 -F \"$device\"; fi"
 	}
 	return "set -eu; device=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1; " + format + "; test \"$(blkid -o value -s TYPE \"$device\")\" = ext4; uuid=$(blkid -s UUID -o value \"$device\"); test -n \"$uuid\"; install -d -m 0755 /var/lib/arrstack/media; entry=\"UUID=$uuid /var/lib/arrstack/media ext4 noatime,nofail,x-systemd.before=docker.service 0 2\"; existing=$(awk '$2 == \"/var/lib/arrstack/media\" {print}' /etc/fstab 2>/dev/null || true); test -z \"$existing\" || test \"$existing\" = \"$entry\"; if ! findmnt -rn --target /var/lib/arrstack/media >/dev/null 2>&1; then test -n \"$existing\" || printf '%s\\n' \"$entry\" >> /etc/fstab; mount /var/lib/arrstack/media; fi; test \"$(findmnt -rn -o UUID --target /var/lib/arrstack/media)\" = \"$uuid\""
+}
+
+func clearMediaPendingTagCommand() string {
+	return "set -eu; tags=$(qm config " + strconv.Itoa(GuestVMID) + " | awk -F': ' '$1 == \"tags\" {print $2}'); kept=$(printf '%s\\n' \"$tags\" | tr ';' '\\n' | awk '$0 != \"" + GuestMediaPendingTag + "\" && $0 != \"\"' | paste -sd';' -); if [ -n \"$kept\" ]; then qm set " + strconv.Itoa(GuestVMID) + " --tags \"$kept\"; else qm set " + strconv.Itoa(GuestVMID) + " --delete tags; fi"
 }
 
 func Start(ctx context.Context, host firewallmodule.HostClient, mediaSizes ...int) error {
