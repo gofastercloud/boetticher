@@ -95,6 +95,7 @@ s = re.sub(r'\n  // Step 9a: Prepare custom Caddy image.*?\n  // Step 9b:', '\n 
 (root / "src/usecase/install.ts").write_text(s)
 s = caddy.read_text()
 s = s.replace('.filter((svc) => svc.adminPort !== undefined)', '.filter((svc) => svc.adminPort !== undefined && new Set(["radarr", "sonarr", "bazarr", "prowlarr", "trailarr", "qbittorrent", "jellyfin", "jellyseerr"]).has(svc.id))')
+s = s.replace('dns cloudflare {env.CF_API_TOKEN}', 'dns cloudflare {env.CF_API_TOKEN}\\n\\t\\tpropagation_delay 30s\\n\\t\\tpropagation_timeout -1')
 import re
 s = re.sub(r'id: svc\.id,\s*port:', lambda _: 'id: ({radarr: process.env.ARRSTACK_ALIAS_RADARR, sonarr: process.env.ARRSTACK_ALIAS_SONARR, bazarr: process.env.ARRSTACK_ALIAS_BAZARR, prowlarr: process.env.ARRSTACK_ALIAS_PROWLARR, trailarr: process.env.ARRSTACK_ALIAS_TRAILARR} as Record<string, string | undefined>)[svc.id] ?? svc.id,' + chr(10) + '      port:', s, count=1)
 caddy.write_text(s)

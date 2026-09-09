@@ -78,13 +78,13 @@ modules:
   media:
     enabled: true
     media_gib: 500 # reference installation override; choose explicitly for other sites
-    application_domain: media.example.com
+    application_domain: davebarton.cc
     aliases:
-      radarr: radarr
-      sonarr: sonarr
-      bazarr: bazarr
-      prowlarr: prowlarr
-      trailarr: trailarr
+      radarr: oscar
+      sonarr: emmy
+      bazarr: tony
+      prowlarr: peabody
+      trailarr: clio
   vpn:
     clients: [lab-media-01]
     forwards:

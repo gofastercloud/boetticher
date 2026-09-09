@@ -182,11 +182,11 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	}
 	if !yes {
 		if input == nil {
-			return errors.New("module arrstack apply requires --yes or confirmation")
+			return errors.New("module media apply requires --yes or confirmation")
 		}
-		ok, promptErr := promptYesNo(bufio.NewReader(input), out, "Enable arrstack and reconcile the Host VM? [y/N]: ", false)
+		ok, promptErr := promptYesNo(bufio.NewReader(input), out, "Enable media and reconcile the Host VM? [y/N]: ", false)
 		if promptErr != nil || !ok {
-			return errors.New("module arrstack apply cancelled")
+			return errors.New("module media apply cancelled")
 		}
 	}
 	var cloudflareToken []byte
