@@ -8,11 +8,17 @@ import (
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 )
 
+func TestMediaApplyRetainsInstallerAndTransportTimeoutMargins(t *testing.T) {
+	if mediaApplyTransportTimeout != 21*time.Minute {
+		t.Fatalf("media apply transport timeout = %s, want 21m", mediaApplyTransportTimeout)
+	}
+}
+
 func TestMediaApplyUsesFullParentTransportBudget(t *testing.T) {
 	sc := clientServiceContext{}
 	sc.Host.Transport.Timeout = 10 * time.Minute
 	sc.Host.Transport.Timeout = mediaApplyTransportTimeout
-	if sc.Host.Transport.Timeout != 20*time.Minute {
+	if sc.Host.Transport.Timeout != 21*time.Minute {
 		t.Fatalf("media apply transport timeout = %s", sc.Host.Transport.Timeout)
 	}
 }
