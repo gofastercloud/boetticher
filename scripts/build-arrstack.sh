@@ -43,6 +43,22 @@ replacement = needle + '''
     }'''
 if needle not in s: raise SystemExit("install action anchor missing")
 cli.write_text(s.replace(needle, replacement, 1))
+jellyfin = root / "src/wiring/jellyfin.ts"
+s = jellyfin.read_text()
+needle = '''        "X-Emby-Authorization": authHeader,
+      },'''
+replacement = '''        "X-Emby-Authorization": authHeader,
+        "Authorization": authHeader,
+      },'''
+if needle not in s: raise SystemExit("Jellyfin authentication header anchor missing")
+s = s.replace(needle, replacement, 1)
+needle = '''    "X-Emby-Authorization": `${auth.authHeader}, Token="${auth.token}"`,
+  };'''
+replacement = '''    "X-Emby-Authorization": `${auth.authHeader}, Token="${auth.token}"`,
+    "Authorization": `${auth.authHeader}, Token="${auth.token}"`,
+  };'''
+if needle not in s: raise SystemExit("Jellyfin token header anchor missing")
+jellyfin.write_text(s.replace(needle, replacement, 1))
 s = (root / "src/usecase/install.ts").read_text()
 # Headless Controller installs provide a bounded remaining operation budget for
 # image pulls; interactive upstream installs retain their 10-minute default.
@@ -194,8 +210,9 @@ PY
 
 mkdir -p "$(dirname "$output")"
 (cd "$root" && bun install --save-text-lockfile --frozen-lockfile)
-cp internal/arrstack/adapter-contract.test.ts "$root/src/boetticher-adapter-contract.test.ts"
-(cd "$root" && bun test src/boetticher-adapter-contract.test.ts && bun run typecheck && bun run build)
+  cp internal/arrstack/adapter-contract.test.ts "$root/src/boetticher-adapter-contract.test.ts"
+  cp internal/arrstack/jellyfin-auth-contract.test.ts "$root/src/boetticher-jellyfin-auth-contract.test.ts"
+  (cd "$root" && bun test src/boetticher-adapter-contract.test.ts src/boetticher-jellyfin-auth-contract.test.ts && bun run typecheck && bun run build)
 if [ -n "${ARRSTACK_LOCK_OUTPUT:-}" ]; then lock=$(find "$root" -maxdepth 1 -name 'bun.lock*' -print -quit); [ -n "$lock" ] && cp "$lock" "$ARRSTACK_LOCK_OUTPUT"; fi
 cp "$root/dist/arrstack-${target#bun-linux-}" "$output"
 chmod 0755 "$output"
