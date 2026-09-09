@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
 
+if [ "${BOETTICHER_BUILD_TEMP_ACTIVE:-0}" != 1 ] || [ ! -f "${BOETTICHER_BUILD_TEMP_DIR:-}/.boetticher-build-token" ] || [ ! -f "${BOETTICHER_BUILD_TEMP_LOCK:-}" ] || ! grep -F -x -q -- "${BOETTICHER_BUILD_TEMP_TOKEN:-}" "${BOETTICHER_BUILD_TEMP_DIR:-}/.boetticher-build-token"; then
+  keep_flag=
+  if [ "${1:-}" = --keep-build-files ]; then
+    keep_flag=--keep-build-files
+    shift
+  fi
+  script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+  exec python3 "$script_dir/build-temp.py" run "${BOETTICHER_BUILD_TEMP_ROOT:-${TMPDIR:-/var/tmp}/boetticher-builds}" $keep_flag -- "$0" "$@"
+fi
+
 main() {
   build_id=${1:?Usage: package-controller.sh BUILD_ID}
   case "$build_id" in
@@ -13,26 +23,23 @@ main() {
   go_bin=${BOETTICHER_GO_BIN:-$(command -v go || true)}
   [ -n "$go_bin" ] && [ -x "$go_bin" ] || { echo 'Go toolchain is unavailable; set BOETTICHER_GO_BIN to Go 1.26.6' >&2; exit 1; }
   "$go_bin" version | grep -Eq 'go1\.26\.6([[:space:]]|$)' || { echo 'Controller packaging requires Go 1.26.6; set BOETTICHER_GO_BIN' >&2; exit 1; }
-  go_cache=${GOCACHE:-/tmp/boetticher-gocache}
-  go_mod_cache=${GOMODCACHE:-/tmp/boetticher-gomodcache}
-  export GOCACHE="$go_cache" GOMODCACHE="$go_mod_cache"
+  export GOCACHE="${GOCACHE:-/Users/dave/Library/Caches/go-build}" GOMODCACHE="${GOMODCACHE:-/Users/dave/go/pkg/mod}"
 
-  # shellcheck disable=SC1007
-  repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-  cd "$repo_root"
-  stage=$(mktemp -d /tmp/boetticher-controller-package.XXXXXX)
-  trap 'rm -rf "$stage"' EXIT HUP INT TERM
+  stage="$BOETTICHER_BUILD_TEMP_DIR/controller-package"
+  mkdir -m 0700 "$stage"
   mkdir -p "$stage/bin" "dist/controller"
 
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    "$go_bin" build -trimpath -o "$stage/bin/boetticher" ./cmd/boetticher
+    go build -trimpath -o "$stage/bin/boetticher" ./cmd/boetticher
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    "$go_bin" build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
+    go build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
   chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status"
   cp -R controller "$stage/controller"
   mkdir -p "$stage/controller/proxmox/libexec"
   cp scripts/build-openwrt-firewall.sh "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
   cp scripts/build-tailnet.sh "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
+  cp scripts/build-temp.py "$stage/controller/proxmox/libexec/build-temp.py"
+  chmod 0755 "$stage/controller/proxmox/libexec/build-temp.py"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
 
@@ -62,14 +69,11 @@ main() {
   mkdir -p "$gatus_source"
   tar -tzf "$gatus_archive" | awk 'BEGIN { bad=0 } { raw=$0; sub(/\/$/,"",raw); if (raw == "" || raw ~ /^\// || raw ~ /(^|\/)\.\.($|\/)/ || raw ~ /\\/) { print "unsafe gatus source member: " $0 > "/dev/stderr"; bad=1 } } END { exit bad }'
   tar -xzf "$gatus_archive" -C "$gatus_source" --strip-components=1 --no-same-owner --no-same-permissions
-  (cd "$gatus_source" && GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOCACHE="$go_cache" GOMODCACHE="$go_mod_cache" \
-    "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/gatus" .)
+  (cd "$gatus_source" && GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOCACHE="$GOCACHE" GOMODCACHE="$GOMODCACHE" "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/gatus" .)
   chmod 0755 "$stage/controller/observability/bin/gatus"
-  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/bifrost" ./cmd/boetticher-bifrost
+  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/bifrost" ./cmd/boetticher-bifrost
   chmod 0755 "$stage/controller/observability/bin/bifrost"
-  (cd "$stage/controller/observability/caddy" && GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/caddy" .)
+  (cd "$stage/controller/observability/caddy" && GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/caddy" .)
   chmod 0755 "$stage/controller/observability/bin/caddy"
   cp -R internal/observability/assets "$stage/controller/observability/"
   mkdir -p "$stage/controller/observability/holmes"
@@ -84,11 +88,11 @@ main() {
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-install-observability-collection"
   mkdir -p "$stage/controller/observability/base"
   cp images/base/debian.yaml "$stage/controller/observability/base/debian.yaml"
-  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    "$go_bin" build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-host-speedtest" ./cmd/boetticher-host-speedtest
-  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    "$go_bin" build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-firewall-test-host" ./cmd/boetticher-firewall-test-host
-  chmod 0755 "$stage/controller/proxmox/libexec/boetticher-host-speedtest" "$stage/controller/proxmox/libexec/boetticher-firewall-test-host"
+	GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+	  go build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-host-speedtest" ./cmd/boetticher-host-speedtest
+	GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+	  go build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-firewall-test-host" ./cmd/boetticher-firewall-test-host
+	chmod 0755 "$stage/controller/proxmox/libexec/boetticher-host-speedtest" "$stage/controller/proxmox/libexec/boetticher-firewall-test-host"
   printf '%s\n' "$build_id" >"$stage/BUILD_ID"
 
     COPYFILE_DISABLE=1 tar -C "$stage" -czf dist/controller/boetticher-controller-linux-arm64.tar.gz \

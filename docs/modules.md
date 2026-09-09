@@ -101,7 +101,9 @@ Application networking keeps ordinary existing calls with narrow ingress,
 egress, and identity names; do not add a generic schema. Stage 5 uses the
 public Caddy DNS-01 frontend and native journal upload with system trust. The
 Host-owned `vmbr1.99` path is `10.10.99.5/24` with LAB routes via `10.10.99.1`.
-Stage 5 covers monitoring, logging, statuspage, and AIOps work.
+Stage 5 uses one intentionally integrated `observability` capability. Monitoring,
+logging, and status page are query/status facets of that runtime, not separate
+deployable Modules. AIOps is a separate optional consumer over observability.
 
 The managed firewall keeps inter-zone forwarding disabled for this access. Its
 owned rules allow TCP/22 from TRUSTED and the identity-bound Tailnet router to
@@ -186,11 +188,10 @@ boetticher module observability alerts pushover apply|status|test|remove
 `module observability` creates and reconciles the exact unprivileged
 `lab-monitor-01` LXC (VMID 120, VLAN 10) with retained metrics, logs, and
 observability state volumes. It owns VictoriaMetrics, VictoriaLogs, Grafana,
-Gatus, and the optional explicitly configured Bifrost/Holmes route; the four
-operator capabilities are logging, monitoring, status page, and AIOps. The
-lifecycle and `secrets` operations apply to the whole runtime, while the
-component commands are read-only status and query operations. `module aiops
-ask` is an explicit model operation.
+Gatus, and the optional explicitly configured Bifrost/Holmes route. Monitoring,
+logging, and status page remain read-only facets; they have no independent
+lifecycle or runtime ownership. AIOps is an optional consumer over this runtime,
+and `module aiops ask` is an explicit model operation.
 Teardown stops the whole owned guest and retains its data for a later apply.
 Apply provisions the public Caddy frontend and native collection paths. Live
 Controller/Host acceptance of that path remains `NOT TESTED` in this phase.

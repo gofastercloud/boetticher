@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
@@ -71,7 +72,7 @@ func EnsureImage(ctx context.Context, spec ImageSpec) (Image, error) {
 // Proxmox Host. This is the supported route for an ARM64 Controller: the
 // Controller streams only the password hash over strict SSH stdin and copies
 // the resulting image back over the same Host identity binding.
-func EnsureImageViaHost(ctx context.Context, host HostClient, spec ImageSpec) (Image, error) {
+func EnsureImageViaHost(ctx context.Context, host HostClient, spec ImageSpec) (image Image, retErr error) {
 	path, err := prepareImagePath(spec)
 	if err != nil {
 		return Image{}, err
@@ -79,13 +80,32 @@ func EnsureImageViaHost(ctx context.Context, host HostClient, spec ImageSpec) (I
 	if cached, ok, err := cachedImage(path); err != nil || ok {
 		return cached, err
 	}
-	const remoteScript = "/var/tmp/boetticher-build-openwrt-firewall"
-	const remoteImage = "/var/tmp/boetticher-openwrt-firewall.img"
+	prepare, err := host.Run(ctx, "set -eu; d=$(mktemp -d /var/tmp/boetticher-openwrt-build.XXXXXX); printf '%s\\n' '{\"version\":1,\"outer\":true}' >\"$d/.boetticher-build-owned\"; : >\"$d/.boetticher-build.lock\"; chmod 600 \"$d/.boetticher-build-owned\" \"$d/.boetticher-build.lock\"; printf '%s\\n' \"$d\"")
+	if err != nil {
+		return Image{}, fmt.Errorf("prepare OpenWrt build directory on Host: %w", err)
+	}
+	remote := strings.TrimSpace(string(prepare.Stdout))
+	if remote == "" || strings.ContainsAny(remote, "\r\n\x00") || filepath.Dir(remote) != "/var/tmp" || !strings.HasPrefix(filepath.Base(remote), "boetticher-openwrt-build.") {
+		return Image{}, errors.New("Host returned an unsafe OpenWrt build directory")
+	}
+	remoteScript := remote + "/build-openwrt-firewall.sh"
+	remoteHelper := remote + "/build-temp.py"
+	remoteImage := remote + "/output.img"
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if _, cleanupErr := host.Run(cleanupCtx, "case "+shellQuote(remote)+" in /var/tmp/boetticher-openwrt-build.*) exec 9>"+shellQuote(remote+"/.boetticher-build.lock")+"; flock -n 9; rm -rf -- "+shellQuote(remote)+";; *) exit 1;; esac"); cleanupErr != nil && retErr == nil {
+			retErr = fmt.Errorf("cleanup OpenWrt Host build directory: %w", cleanupErr)
+		}
+	}()
 	if err := host.Copy(ctx, spec.BuilderScript, remoteScript); err != nil {
 		return Image{}, fmt.Errorf("copy pinned OpenWrt builder to Host: %w", err)
 	}
-	defer func() { _, _ = host.Run(ctx, "rm -f "+shellQuote(remoteScript)+" "+shellQuote(remoteImage)) }()
-	command := "set -eu; chmod 700 " + shellQuote(remoteScript) + "; /bin/sh " + shellQuote(remoteScript) + " " + shellQuote(remoteImage) + " " + shellQuote(spec.ManagementAddress) + " " + shellQuote(spec.ManagementNetmask) + " " + shellQuote(spec.ManagementGateway) + " " + shellQuote(spec.ControllerAddress)
+	helper := filepath.Join(filepath.Dir(spec.BuilderScript), "build-temp.py")
+	if err := host.Copy(ctx, helper, remoteHelper); err != nil {
+		return Image{}, fmt.Errorf("copy build temporary helper to Host: %w", err)
+	}
+	command := "set -eu; exec 9>" + shellQuote(remote+"/.boetticher-build.lock") + "; flock -n 9; chmod 700 " + shellQuote(remoteScript) + " " + shellQuote(remoteHelper) + "; /bin/sh " + shellQuote(remoteScript) + " " + shellQuote(remoteImage) + " " + shellQuote(spec.ManagementAddress) + " " + shellQuote(spec.ManagementNetmask) + " " + shellQuote(spec.ManagementGateway) + " " + shellQuote(spec.ControllerAddress)
 	result, err := host.RunWithStdin(ctx, command, strings.NewReader(spec.PasswordHash+"\n"))
 	if err != nil {
 		detail := strings.TrimSpace(string(result.Stderr))
@@ -104,7 +124,7 @@ func EnsureImageViaHost(ctx context.Context, host HostClient, spec ImageSpec) (I
 	if err := host.CopyFromHost(ctx, remoteImage, temporary); err != nil {
 		return Image{}, fmt.Errorf("copy OpenWrt image from Host: %w", err)
 	}
-	image, err := imageFromPath(temporary)
+	image, err = imageFromPath(temporary)
 	if err != nil {
 		return Image{}, err
 	}

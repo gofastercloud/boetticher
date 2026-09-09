@@ -3,6 +3,7 @@ package firewallmodule
 import (
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
 
@@ -42,6 +43,19 @@ func TestDiffFirewallIgnoresForeignSafetyIPSet(t *testing.T) {
 	}
 }
 
+func TestTailnetProxmoxSSHRuleIsExact(t *testing.T) {
+	for _, section := range tailnetFirewallSections("192.168.4.0/22") {
+		if section.Name != "boetticher_tailnet_proxmox_ssh" {
+			continue
+		}
+		if section.Options["dest"] != "mgmt" || section.Options["dest_ip"] != model.ProxmoxManagementAddress+"/32" || section.Options["proto"] != "tcp" || section.Options["dest_port"] != "22" {
+			t.Fatalf("Tailnet Proxmox SSH rule is broader than required: %#v", section.Options)
+		}
+		return
+	}
+	t.Fatal("Tailnet Proxmox SSH rule missing")
+}
+
 func TestTailnetTransportAllowsControlFallbackPorts(t *testing.T) {
 	for _, section := range tailnetFirewallSections("192.168.4.0/22") {
 		if section.Name == "boetticher_tailnet_transport_tcp" {
@@ -57,7 +71,7 @@ func TestTailnetTransportAllowsControlFallbackPorts(t *testing.T) {
 func TestTailnetSSHToManagementIsNarrowAndIdentityBound(t *testing.T) {
 	sections := tailnetFirewallSections("192.168.4.0/22")
 	for _, section := range sections {
-		if section.Name != "boetticher_tailnet_mgmt_ssh" {
+		if section.Name != "boetticher_tailnet_proxmox_ssh" {
 			continue
 		}
 		if section.Options["src"] != "transit" || section.Options["src_ip"] != "10.10.5.10/32" || section.Options["src_mac"] != "02:00:00:00:05:10" || section.Options["dest"] != "mgmt" || section.Options["proto"] != "tcp" || section.Options["dest_port"] != "22" {

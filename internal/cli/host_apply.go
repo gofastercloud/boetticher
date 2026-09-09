@@ -22,11 +22,16 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 	yes := fs.Bool("yes", false, "approve ordinary Host changes")
 	dataDisk := fs.String("data-disk", "", "exact stable /dev/disk/by-id device for dedicated data storage")
 	adoptNetwork := fs.Bool("adopt-existing-network", false, "approve adoption of a compatible existing internal bridge")
+	adoptVMBr1 := fs.Bool("adopt-vmbr1", false, "approve adoption of the recognised existing vmbr1 bridge")
+	physicalTrunk := fs.String("physical-trunk", "", "explicit physical Ethernet interface for the six-VLAN Host trunk")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: boetticher host apply [--data-disk /dev/disk/by-id/DEVICE] [--adopt-existing-network] [--yes]")
+		return errors.New("usage: boetticher host apply [--data-disk /dev/disk/by-id/DEVICE] [--physical-trunk IFACE] [--adopt-existing-network] [--yes]")
+	}
+	if *adoptVMBr1 {
+		*adoptNetwork = true
 	}
 	if err := requireControllerReady(); err != nil {
 		return err
@@ -47,6 +52,24 @@ func runHostApply(args []string, input io.Reader, out, errOut io.Writer) (err er
 		display.End(err)
 	}()
 	ctx := context.Background()
+	if *physicalTrunk != "" {
+		selected, selectErr := controllerhost.SelectPhysicalTrunk(ctx, transport, *physicalTrunk)
+		if selectErr != nil {
+			return selectErr
+		}
+		if config.Network != nil && config.Network.PhysicalTrunk != "" && (config.Network.PhysicalTrunk != selected.PhysicalTrunk || config.Network.PhysicalTrunkMAC != selected.PhysicalTrunkMAC) {
+			return errors.New("--physical-trunk does not match the persisted Host trunk binding")
+		}
+		if config.Network != nil {
+			selected.VLANs = config.Network.VLANs
+			selected.Domain = config.Network.Domain
+			selected.ProtectedRanges = config.Network.ProtectedRanges
+		}
+		config.Network = &selected
+		if err := controllerhost.SaveConfig(config); err != nil {
+			return fmt.Errorf("save approved physical trunk binding before Host reconcile: %w", err)
+		}
+	}
 	var promptReader *bufio.Reader
 	prompt := func(message string) error {
 		if *yes {

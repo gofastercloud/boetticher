@@ -154,7 +154,7 @@ scan_one() {
   cleanup_scan_root
   module=${name#boetticher-}
   [ "$module" = dns-blocky ] && module=dns
-  if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
+  if ! GOCACHE=${GOCACHE:-$(go env GOCACHE)} GOMODCACHE=${GOMODCACHE:-$(go env GOMODCACHE)} go run ./cmd/qualify-artifact \
     -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
     -smoke "$smoke" $provenance_arg \
     -evidence-root "$evidence_root" -module "$module"; then
