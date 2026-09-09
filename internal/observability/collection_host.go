@@ -40,15 +40,17 @@ func (c HostClient) TeardownMediaCollection(ctx context.Context, b Binding) erro
 	if _, err := c.GuestConfig(ctx, b); err != nil {
 		return err
 	}
+	// The receiver job belongs to the observability guest and must be removed
+	// even when the media guest is already absent or stopped.
+	if err := c.removeMediaScrapeJob(ctx, b); err != nil {
+		return err
+	}
 	guest, err := inspectMediaGuestFacts(ctx, c.Transport)
 	if err != nil {
 		return err
 	}
 	if !guest.Exists || !guest.Running {
 		return nil
-	}
-	if err := c.removeMediaScrapeJob(ctx, b); err != nil {
-		return err
 	}
 	host, ok := c.Transport.(StdinRunner)
 	if !ok {

@@ -32,6 +32,9 @@ func (r *lifecycleRunner) Run(_ context.Context, command string) (controllerhost
 		}
 		return controllerhost.Result{Stdout: []byte(r.config)}, nil
 	}
+	if strings.Contains(command, "cat /etc/boetticher/observability/collection.yml") {
+		return controllerhost.Result{Stdout: []byte("scrape_configs: []\n")}, nil
+	}
 	if strings.Contains(command, "cat '/etc/boetticher/gatus/config.yaml'") {
 		return controllerhost.Result{Stdout: []byte("endpoints: []\n")}, nil
 	}
