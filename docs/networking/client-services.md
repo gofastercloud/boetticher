@@ -41,6 +41,15 @@ be made stable before a reservation can match.
 HOME is outside LAB DHCP. Boetticher never replaces HOME DHCP, adds a HOME
 route, or gives a managed guest a second management NIC.
 
+Each LAB DHCP scope also advertises the aggregate route `10.10.0.0/16` via
+that scope's `.1` gateway using RFC 3442 option 121. The option 121 payload
+includes `0.0.0.0/0` via the same gateway because clients that understand
+classless routes ignore option 3; this preserves ordinary default routing.
+This is client forwarding metadata only and does not alter AirVPN policy
+routing, Tailnet route approval, or their fail-closed firewall rules. The
+Companion Pi remains dual-homed with HOME on `eth0` as its default route and
+LAB on `eth1` with `ipv4.never-default=true`.
+
 ## Supported commands
 
 ```text

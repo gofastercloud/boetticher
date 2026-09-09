@@ -34,7 +34,7 @@ The Controller does not need a Host selector in the supported single-Host UX.
 Multi-Host support is deliberately not implemented in this phase.
 
 The Controller's fixed Blinkt layout is
-`CTL HOST FW DHCP/NTP DNS NET CTRL-UPDATES HOST-UPDATES`.
+`CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES`.
 It is rendered by the local status daemon as a lightweight convenience; it is
 not a monitoring or qualification system. Blinkt, StreamDeck, display, and
 kiosk behavior remain Controller implementation details rather than Module
@@ -173,7 +173,7 @@ leftovers without provider credentials. The suite is operational acceptance,
 not `status`: it uses six temporary LAB namespaces and fixed gateway, egress,
 inter-zone, HOME, and administration journeys, then requires exact cleanup.
 The existing status monitor consumes the same native capability status facts
-for the fixed `FW`, `DHCP/NTP`, and `DNS` slots. Unconfigured client services
+for the fixed `FW`, `VPN`, and `TAILNET` slots. Unconfigured client services
 are off rather than permanent faults; configured-but-unavailable services are
 failed. VPN, physical trunking, and
 external-switch management are later phases.

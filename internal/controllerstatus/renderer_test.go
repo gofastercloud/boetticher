@@ -147,7 +147,7 @@ func TestStreamDeckRendererBuildsHomeAndDetailViews(t *testing.T) {
 		t.Fatalf("home status keys = %#v %#v %#v %#v %#v %#v", home[0], home[3], home[4], home[5], home[10], home[12])
 	}
 	host := renderer.Render(snapshot, telemetry, nil, StreamDeckHostDetail, 0, -1)
-	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].Title != "TAILNET" || host[10].State != Failed || host[11].Title != "DNS" || host[11].State != Healthy || host[13].Title != "BACK" {
+	if host[0].Title != "NODE" || host[6].Title != "UPDATES" || host[7].Value != "OK" || host[8].Title != "FW" || host[8].State != Healthy || host[9].State != Failed || host[10].Title != "VPN" || host[10].State != Failed || host[11].Title != "TAILNET" || host[11].State != Failed || host[12].Title != "DNS" || host[12].State != Healthy || host[13].Title != "BACK" {
 		t.Fatalf("host detail keys = %#v", host)
 	}
 	guest := renderer.Render(snapshot, telemetry, nil, StreamDeckGuestDetail, 0, 0)

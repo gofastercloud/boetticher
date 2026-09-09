@@ -62,7 +62,7 @@ test "$(uname -m)" = x86_64
 
 files="$work/files"
 mkdir -p "$files/etc/uci-defaults" "$files/usr/share/rpcd/acl.d" "$files/etc/boetticher" \
-    "$files/etc/sysctl.d" "$files/etc/init.d" "$files/etc/rc.d" \
+    "$files/etc/sysctl.d" "$files/etc/init.d" "$files/etc/rc.d" "$files/etc/hotplug.d/iface" \
     "$files/usr/libexec/boetticher" "$files/usr/share/nftables.d/chain-pre/input" \
     "$files/usr/share/nftables.d/chain-pre/forward" "$files/usr/share/nftables.d/chain-pre/output" \
     "$files/usr/share/nftables.d/ruleset-pre" "$files/lib/preinit"
@@ -166,6 +166,20 @@ start() {
 EOF
 chmod 0755 "$files/etc/init.d/boetticher-safety"
 ln -sf ../init.d/boetticher-safety "$files/etc/rc.d/S09boetticher-safety"
+
+# netifd applies the managed WireGuard interface after the base safety sysctls
+# load. Reapply the IPv6-off invariant after logical interface configuration.
+cat >"$files/etc/hotplug.d/iface/99-boetticher-vpn-safety" <<'EOF'
+#!/bin/sh
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifupdate ] || exit 0
+[ "$INTERFACE" = airvpn ] || exit 0
+sysctl -q -w \
+    net.ipv6.conf.airvpn.disable_ipv6=1 \
+    net.ipv6.conf.airvpn.autoconf=0 \
+    net.ipv6.conf.airvpn.accept_ra=0 \
+    net.ipv6.conf.airvpn.forwarding=0
+EOF
+chmod 0755 "$files/etc/hotplug.d/iface/99-boetticher-vpn-safety"
 
 # fw4 is retained as the native launcher. The packaged gate only serializes
 # and validates start/reload; it rejects flush/stop so an unsafe path cannot
