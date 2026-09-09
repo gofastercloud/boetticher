@@ -244,6 +244,24 @@ func TestPolicyReceiptCaptureAndProbeBindTheInstalledScriptAndRules(t *testing.T
 	}
 }
 
+func TestPolicyReceiptPersistsAcrossBootWhileScratchIsRuntimeOwned(t *testing.T) {
+	unit, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(unit)
+	if !strings.Contains(text, "RuntimeDirectory=boetticher/arrstack") {
+		t.Fatal("policy service does not recreate its runtime scratch directory")
+	}
+	if !strings.Contains(text, "GuestPolicyReceipt   = \"/var/lib/boetticher/arrstack/policy-receipt\"") {
+		t.Fatal("policy receipt is still stored in volatile /run")
+	}
+	capture := policyReceiptCaptureCommand()
+	if !strings.Contains(capture, "mktemp /var/lib/boetticher/arrstack/policy.XXXXXX") || !strings.Contains(capture, "mv -f") {
+		t.Fatal("persistent policy receipt is not written atomically in its destination directory")
+	}
+}
+
 func TestPolicyReceiptIsCapturedOnlyAfterTheInstallerSucceeds(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {

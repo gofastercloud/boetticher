@@ -30,7 +30,7 @@ const (
 	AdapterPath          = "/opt/boetticher/current/bin/arrstack"
 	GuestAdapterPath     = "/usr/local/libexec/boetticher-arrstack"
 	GuestPolicyPath      = "/usr/local/sbin/boetticher-arrstack-firewall"
-	GuestPolicyReceipt   = "/run/boetticher/arrstack/policy-receipt"
+	GuestPolicyReceipt   = "/var/lib/boetticher/arrstack/policy-receipt"
 	ImagePath            = "/var/lib/boetticher/arrstack-image/debian-13-arrstack-amd64.qcow2"
 	GuestInstallDir      = "/opt/arrstack"
 	GuestComposePath     = GuestInstallDir + "/docker-compose.yml"
@@ -533,7 +533,7 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	if err != nil {
 		return err
 	}
-	policyUnit := "[Unit]\nDescription=Boetticher arrstack fail-closed firewall\nBefore=docker.service\nAfter=network-online.target nftables.service\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=" + GuestPolicyPath + "\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n"
+	policyUnit := "[Unit]\nDescription=Boetticher arrstack fail-closed firewall\nBefore=docker.service\nAfter=network-online.target nftables.service\nWants=network-online.target\n\n[Service]\nType=oneshot\nRuntimeDirectory=boetticher/arrstack\nExecStart=" + GuestPolicyPath + "\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n"
 	policyInstall := "command -v docker >/dev/null; docker compose version >/dev/null; install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policyHeredoc(policy) + "cat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
 	dockerDropinInstall := "install -d -m 0755 /etc/systemd/system/docker.service.d; cat > /etc/systemd/system/docker.service.d/boetticher-arrstack-firewall.conf <<'DOCKER_DROPIN'\n[Unit]\nRequires=boetticher-arrstack-firewall.service\nAfter=boetticher-arrstack-firewall.service\nDOCKER_DROPIN\n"
 	policyInstall = dockerDropinInstall + strings.Replace(policyInstall, "systemctl start docker;", "systemctl enable docker.service; systemctl start docker;", 1)
@@ -604,7 +604,7 @@ func installerTimeoutSeconds(ctx context.Context) (int, error) {
 }
 
 func policyReceiptCaptureCommand() string {
-	return "set -eu; install -d -m 0700 /run/boetticher/arrstack; receipt=" + shellQuote(GuestPolicyReceipt) + "; tmp=$(mktemp /run/boetticher/arrstack/policy.XXXXXX); rules=$(mktemp /run/boetticher/arrstack/rules.XXXXXX); trap 'rm -f \"$tmp\" \"$rules\"' EXIT HUP INT TERM; script_sha=$(sha256sum " + shellQuote(GuestPolicyPath) + " | awk '{print $1}'); nft --stateless list table inet boetticher_arrstack >\"$rules\"; iptables -S DOCKER-USER >>\"$rules\"; iptables -S FORWARD >>\"$rules\"; grep -Fx -- '-A FORWARD -j DOCKER-USER' \"$rules\" >/dev/null; rules_sha=$(sha256sum \"$rules\" | awk '{print $1}'); printf 'script_sha256=%s\\nrules_sha256=%s\\n' \"$script_sha\" \"$rules_sha\" >\"$tmp\"; chmod 0600 \"$tmp\"; mv -f \"$tmp\" \"$receipt\""
+	return "set -eu; install -d -m 0700 /var/lib/boetticher/arrstack /run/boetticher/arrstack; receipt=" + shellQuote(GuestPolicyReceipt) + "; tmp=$(mktemp /var/lib/boetticher/arrstack/policy.XXXXXX); rules=$(mktemp /run/boetticher/arrstack/rules.XXXXXX); trap 'rm -f \"$tmp\" \"$rules\"' EXIT HUP INT TERM; script_sha=$(sha256sum " + shellQuote(GuestPolicyPath) + " | awk '{print $1}'); nft --stateless list table inet boetticher_arrstack >\"$rules\"; iptables -S DOCKER-USER >>\"$rules\"; iptables -S FORWARD >>\"$rules\"; grep -Fx -- '-A FORWARD -j DOCKER-USER' \"$rules\" >/dev/null; rules_sha=$(sha256sum \"$rules\" | awk '{print $1}'); printf 'script_sha256=%s\\nrules_sha256=%s\\n' \"$script_sha\" \"$rules_sha\" >\"$tmp\"; chmod 0600 \"$tmp\"; mv -f \"$tmp\" \"$receipt\""
 }
 
 func policyAgreementCommand(peerPort int) string {
