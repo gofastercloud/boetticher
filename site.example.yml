@@ -11,8 +11,7 @@ gateway:
   upstream:
     mode: dhcp
     mac: 02:00:00:00:01:01
-modules:
-  # Reference installation example; choose your own domain and labels.
+modules: {}
 physical_network:
   mode: virtual-only
 tested_versions:
