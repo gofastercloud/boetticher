@@ -129,16 +129,6 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	return state, nil
 }
 
-const (
-	observabilityControllerExporterRule = "boetticher_observability_controller_exporter"
-	observabilityHostExporterRule       = "boetticher_observability_host_exporter"
-	observabilityControllerIngressRule  = "boetticher_observability_controller_ingress"
-	observabilityHostIngressRule        = "boetticher_observability_host_ingress"
-	observabilityRuntimeIngressRule     = "boetticher_observability_runtime_ingress"
-	observabilityTrustedIngressRule     = "boetticher_observability_trusted_ingress"
-	observabilityTailnetIngressRule     = "boetticher_observability_tailnet_ingress"
-)
-
 func observabilityFirewallSections(site model.Site, modules clientservices.Modules) ([]Section, error) {
 	if modules.Observability == nil || !clientservices.Enabled(modules.Observability.Enabled) {
 		return nil, nil
