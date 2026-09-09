@@ -317,6 +317,9 @@ func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadR
 		if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct push %d %s %s", b.VMID, shellQuoteValue(binary.host), shellQuoteValue(binary.guest))); err != nil {
 			return err
 		}
+		if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- chmod 0755 %s", b.VMID, shellQuoteValue(binary.guest))); err != nil {
+			return fmt.Errorf("set executable mode on observability binary: %w", err)
+		}
 	}
 	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
 		config, err := BifrostConfig(modules)

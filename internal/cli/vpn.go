@@ -482,6 +482,7 @@ func verifyVPN(ctx context.Context, provider *openwrt.Client, serviceContext cli
 	if err != nil {
 		return firewallmodule.VPNRuntimeStatus{}, err
 	}
+	pendingAdditions := false
 	for _, item := range []struct {
 		name    string
 		desired []firewallmodule.Section
@@ -498,6 +499,19 @@ func verifyVPN(ctx context.Context, provider *openwrt.Client, serviceContext cli
 			return firewallmodule.VPNRuntimeStatus{}, err
 		}
 		if len(mutations) > 0 {
+			if item.name == "dhcp" {
+				benign := true
+				for _, mutation := range mutations {
+					if mutation.Kind != firewallmodule.MutationCreate || !(strings.HasPrefix(mutation.Section.Name, "boetticher_record_") || strings.HasPrefix(mutation.Section.Name, "boetticher_observability_record_") || strings.HasPrefix(mutation.Section.Name, "boetticher_host_")) {
+						benign = false
+						break
+					}
+				}
+				if benign {
+					pendingAdditions = true
+					continue
+				}
+			}
 			return firewallmodule.VPNRuntimeStatus{}, fmt.Errorf("provider %s configuration is not at the desired VPN state", item.name)
 		}
 	}
@@ -521,7 +535,16 @@ func verifyVPN(ctx context.Context, provider *openwrt.Client, serviceContext cli
 		fmt.Fprintln(out, "Connection: stale\nEnforcement: present; protected clients remain blocked")
 		return runtime, errors.New("VPN peer handshake is stale; protected clients remain blocked")
 	}
+	if pendingAdditions {
+		return runtime, pendingVPNStatusError{}
+	}
 	return runtime, nil
+}
+
+type pendingVPNStatusError struct{}
+
+func (pendingVPNStatusError) Error() string {
+	return "VPN status has pending additive DNS or reservation intent"
 }
 
 func runVPNStatus(ctx context.Context, serviceContext clientServiceContext, opts vpnOptions, out io.Writer) error {
@@ -558,6 +581,11 @@ func runVPNStatus(ctx context.Context, serviceContext clientServiceContext, opts
 		return err
 	}
 	if _, err := verifyVPN(ctx, provider, serviceContext, serviceContext.Config.Modules, state, out); err != nil {
+		var pending pendingVPNStatusError
+		if errors.As(err, &pending) {
+			fmt.Fprintln(out, "VPN: CHECKING\nConnection: available\nEnforcement: verified\nReason: additive DNS or reservation intent is pending provider reconciliation")
+			return nil
+		}
 		if opts.details {
 			fmt.Fprintf(out, "Location: %s\nClients: %d\n", vpn.Location, len(vpn.Clients))
 		}

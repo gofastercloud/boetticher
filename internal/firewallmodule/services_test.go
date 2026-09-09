@@ -144,6 +144,35 @@ func TestNativeHostSectionNamesAcceptDNSHyphensWithoutCollisions(t *testing.T) {
 	}
 }
 
+func TestInfrastructureDNSHasOnePTROwnerPerAddressAndStableAliases(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	site.Components[0].DNSAliases = []string{"pve"}
+	sections, err := bindingDNSSections(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostrecords, cnames := 0, 0
+	for _, section := range sections {
+		switch section.Type {
+		case "hostrecord":
+			hostrecords++
+		case "cname":
+			cnames++
+		}
+	}
+	if hostrecords != len(site.Components)+len(site.Network.Zones)+1 || cnames != 1 {
+		t.Fatalf("unexpected infrastructure DNS projection: hostrecords=%d cnames=%d", hostrecords, cnames)
+	}
+}
+
+func TestInfrastructureDNSRejectsNameCollision(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	site.Components = append(site.Components, model.Component{Hostname: "servers-gateway", Address: "10.10.99.8"})
+	if _, err := InfrastructureDNSRecords(site); err == nil {
+		t.Fatal("conflicting infrastructure DNS name was accepted")
+	}
+}
+
 func TestServiceStateUsesNativeGlobalSectionsAndDisablesServing(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	disabled := false

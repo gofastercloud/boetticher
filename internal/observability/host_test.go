@@ -131,6 +131,9 @@ func TestReconcileCreatesOwnedGuestAndRetriesWithoutRecreating(t *testing.T) {
 	if countCallContains(runner.calls, "sh /root/boetticher-install-observability-providers") != 6 {
 		t.Fatalf("atomic reconciliation did not select all providers: %v", runner.calls)
 	}
+	if countCallContains(runner.calls, "pct exec 120 -- chmod 0755") != 3 {
+		t.Fatalf("provider binaries were not made executable after push: %v", runner.calls)
+	}
 	if !containsCall(runner.calls, "install -d -o root -g root -m 0755 /var/lib/boetticher/observability") || !containsCall(runner.calls, "chmod 0600 /var/lib/boetticher/observability/boetticher-config.digest") {
 		t.Fatalf("shared observability state parent or digest permissions are unsafe: %v", runner.calls)
 	}

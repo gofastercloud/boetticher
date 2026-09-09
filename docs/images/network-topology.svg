@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1180" viewBox="0 0 1600 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Boetticher reference lab network topology</title>
+  <desc id="desc">Physical and logical topology showing HOME, the Proxmox Host, VLAN-aware LAB trunk, Companion Pi, deployed firewall and Tailnet, and planned observability and media workloads.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/></marker>
+    <marker id="plannedArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/></marker>
+    <style>
+      text{font-family:Inter,Arial,sans-serif;fill:#172033} .h{font-weight:700;font-size:25px}.s{font-size:15px;fill:#475569}.l{font-size:14px;font-weight:700}.b{font-size:13px}.tiny{font-size:11px;fill:#475569}.card{stroke:#cbd5e1;stroke-width:1.5;rx:14}.line{stroke:#334155;stroke-width:2;fill:none;marker-end:url(#arrow)}.dash{stroke:#7c3aed;stroke-width:2.5;stroke-dasharray:9 7;fill:none;marker-end:url(#plannedArrow)}.soft{stroke:#94a3b8;stroke-width:1.5;fill:none}.zone{stroke-width:2;rx:13}.tag{font-size:11px;font-weight:700;letter-spacing:.4px}.pill{rx:8}
+    </style>
+  </defs>
+  <rect width="1600" height="1180" fill="#f8fafc"/>
+  <text x="60" y="55" class="h">Boetticher reference lab — physical + logical topology</text>
+  <text x="60" y="80" class="s">Current installation view · 9 September 2026 · addresses marked “current” are observed, not durable intent</text>
+
+  <!-- HOME -->
+  <rect x="55" y="110" width="1490" height="170" class="zone" fill="#eff6ff" stroke="#60a5fa"/>
+  <text x="80" y="142" class="l" fill="#1d4ed8">HOME · 192.168.4.0/22</text><text x="80" y="163" class="tiny">Management / upstream network. Gateway 192.168.4.1.</text>
+  <rect x="90" y="185" width="205" height="66" class="card" fill="#fff"/><text x="110" y="211" class="l">Eero gateway</text><text x="110" y="233" class="b">192.168.4.1 · WAN / Internet</text>
+  <rect x="390" y="185" width="225" height="66" class="card" fill="#fff"/><text x="410" y="211" class="l">Operator Mac</text><text x="410" y="233" class="b">192.168.4.20 current</text>
+  <rect x="710" y="185" width="260" height="66" class="card" fill="#fff"/><text x="730" y="211" class="l">Companion Pi · eth0</text><text x="730" y="233" class="b">192.168.4.6 current · default route</text>
+  <rect x="1065" y="185" width="260" height="66" class="card" fill="#fff"/><text x="1085" y="211" class="l">Proxmox · vmbr0 / nic0</text><text x="1085" y="233" class="b">192.168.4.5 current · default route</text>
+  <path d="M295 218H390M615 218H710M970 218H1065" class="soft"/>
+  <text x="1328" y="211" class="tiny">HOME connections beyond these<br/>known endpoints: unknown</text>
+
+  <!-- physical hardware -->
+  <rect x="55" y="320" width="420" height="620" class="zone" fill="#fff" stroke="#94a3b8"/>
+  <text x="80" y="355" class="l">Physical hardware + peripherals</text><text x="80" y="376" class="tiny">Solid edges are observed/configured physical links.</text>
+  <rect x="90" y="410" width="350" height="120" class="card" fill="#f0fdf4"/>
+  <text x="112" y="440" class="l">Managed VLAN switch</text><text x="112" y="464" class="b">Ports 1–4 HOME: VLAN 1 untagged</text><text x="112" y="484" class="b">Port 5: trunk VLANs 5 / 10 / 20 / 30 / 40 / 99</text><text x="112" y="504" class="b">6 SERVERS · 7 TRUSTED · 8 SANDBOX (untagged)</text>
+  <rect x="90" y="580" width="350" height="126" class="card" fill="#fff7ed"/>
+  <text x="112" y="610" class="l">lab-proxmox-01</text><text x="112" y="633" class="b">nic1 a0:ce:c8:a2:b2:10 → vmbr1</text><text x="112" y="654" class="b">VLAN-aware; host has no vmbr1 L3/default route</text><text x="112" y="677" class="b">USB Timetec MS21 ≈954 GiB: boetticher-data</text>
+  <rect x="90" y="757" width="350" height="135" class="card" fill="#fefce8"/>
+  <text x="112" y="787" class="l">lab-companion</text><text x="112" y="810" class="b">USB eth1 a 6c:1f:f7:d2:5d:97 → SERVERS</text><text x="112" y="831" class="b">10.10.20.10 · route 10.10.0.0/16 via 10.10.20.1</text><text x="112" y="852" class="b">Blinkt (8 LEDs) + USB StreamDeck: recovered</text><text x="112" y="873" class="tiny">Wi-Fi 192.168.4.7 reserved; radio off / break-glass</text>
+  <path d="M265 530V580" class="line"/><text x="281" y="560" class="tiny">tagged trunk (port 5)</text>
+  <path d="M265 706V757" class="line"/><text x="281" y="738" class="tiny">SERVERS access zone; exact port/cable unverified</text>
+
+  <!-- logical fabric -->
+  <rect x="515" y="320" width="1030" height="620" class="zone" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="540" y="355" class="l">Logical LAB fabric · IPv4 view</text><text x="540" y="376" class="tiny">All six VLANs use the shared OpenWrt gateway. This diagram does not prove IPv6 isolation.</text>
+  <rect x="550" y="405" width="225" height="125" class="card" fill="#e0f2fe"/>
+  <text x="570" y="434" class="l">OpenWrt firewall</text><text x="570" y="456" class="b">lab-firewall-01 · VM 280</text><text x="570" y="478" class="b">FW / DNS / DHCP + supporting NTP</text><text x="570" y="501" class="b">WAN eth0: 192.168.4.28 current</text>
+  <rect x="840" y="405" width="230" height="125" class="card" fill="#ede9fe"/>
+  <text x="860" y="434" class="l">AirVPN WireGuard</text><text x="860" y="456" class="b">airvpn 10.132.148.135 current</text><text x="860" y="478" class="b">Europe provider endpoint</text><text x="860" y="501" class="b">Protected clients: VPN only; no WAN fallback</text>
+  <rect x="1135" y="405" width="350" height="125" class="card" fill="#ecfeff"/>
+  <text x="1155" y="434" class="l">Tailnet gateway · CT 200</text><text x="1155" y="456" class="b">lab-tailnet-01 · TRANSIT 10.10.5.10</text><text x="1155" y="478" class="b">Tailscale 100.88.228.46 · advertises 10.10.0.0/16</text><text x="1155" y="501" class="b">source SNAT 10.10.5.10 · HOME denied</text>
+  <path d="M775 468H840" class="line"/><path d="M1135 468H1070" class="line"/>
+  <text x="790" y="448" class="tiny">protected egress</text><text x="1085" y="448" class="tiny">remote access</text>
+
+  <!-- zones -->
+  <g>
+    <rect x="550" y="585" width="145" height="95" class="card" fill="#f1f5f9"/><text x="568" y="613" class="l">VLAN 5</text><text x="568" y="635" class="b">TRANSIT</text><text x="568" y="657" class="tiny">10.10.5.1 gateway</text>
+    <rect x="715" y="585" width="145" height="95" class="card" fill="#e0f2fe"/><text x="733" y="613" class="l">VLAN 10</text><text x="733" y="635" class="b">INFRA</text><text x="733" y="657" class="tiny">10.10.10.1 gateway</text>
+    <rect x="880" y="585" width="145" height="95" class="card" fill="#ecfdf5"/><text x="898" y="613" class="l">VLAN 20</text><text x="898" y="635" class="b">SERVERS</text><text x="898" y="657" class="tiny">10.10.20.1 gateway</text>
+    <rect x="1045" y="585" width="145" height="95" class="card" fill="#fef3c7"/><text x="1063" y="613" class="l">VLAN 30</text><text x="1063" y="635" class="b">TRUSTED</text><text x="1063" y="657" class="tiny">10.10.30.1 gateway</text>
+    <rect x="1210" y="585" width="145" height="95" class="card" fill="#ffe4e6"/><text x="1228" y="613" class="l">VLAN 40</text><text x="1228" y="635" class="b">SANDBOX</text><text x="1228" y="657" class="tiny">10.10.40.1 gateway</text>
+    <rect x="1375" y="585" width="145" height="95" class="card" fill="#f3e8ff"/><text x="1393" y="613" class="l">VLAN 99</text><text x="1393" y="635" class="b">MGMT</text><text x="1393" y="657" class="tiny">10.10.99.1 gateway</text>
+  </g>
+  <path d="M662 530V570M787 530V570M912 530V570M1077 530V570M1242 530V570M1407 530V570" class="soft"/>
+  <rect x="550" y="735" width="425" height="155" class="card" fill="#faf5ff" stroke="#7c3aed" stroke-dasharray="7 5"/>
+  <text x="570" y="765" class="l" fill="#6d28d9">DEPLOYING / partial · PR 120</text><text x="570" y="789" class="b">lab-monitor-01 · unprivileged CT 120 · INFRA 10.10.10.20</text><text x="570" y="812" class="b">VictoriaMetrics / Logs, Grafana, Gatus, Caddy</text><text x="570" y="835" class="b">Collection: Controller 20.10 + Host 99.5 + runtime 10.20</text><text x="570" y="858" class="tiny">CT running; provider install partial; Gatus permissions fix pending.</text>
+  <rect x="1020" y="735" width="465" height="155" class="card" fill="#faf5ff" stroke="#7c3aed" stroke-dasharray="7 5"/>
+  <text x="1040" y="765" class="l" fill="#6d28d9">PLANNED · PR 121 media capability</text><text x="1040" y="789" class="b">lab-media-01 · VM 290 · SERVERS 10.10.20.230</text><text x="1040" y="812" class="b">Docker: qBittorrent / *arr / Jellyfin / Jellyseerr + Caddy</text><text x="1040" y="835" class="b">Protected VPN required · web: TRUSTED + Tailnet only</text><text x="1040" y="858" class="tiny">Port 35796 allocation and torrent / fail-closed tests: pending.</text>
+  <path d="M787 680V735" class="dash"/><path d="M952 680V705H1250V735" class="dash"/>
+  <text x="800" y="718" class="tiny" fill="#6d28d9">planned collection</text><text x="1080" y="698" class="tiny" fill="#6d28d9">planned protected workload</text>
+
+  <!-- access and legend -->
+  <rect x="55" y="980" width="1490" height="150" class="zone" fill="#fff" stroke="#cbd5e1"/>
+  <text x="80" y="1013" class="l">Operator paths, state key, and scope</text>
+  <path d="M90 1045H170" class="line"/><text x="185" y="1050" class="b">Observed or configured link / permitted path</text>
+  <path d="M90 1080H170" class="dash"/><text x="185" y="1085" class="b">Planned or in-progress, not deployed</text>
+  <rect x="500" y="1034" width="22" height="18" fill="#e0f2fe" rx="4"/><text x="534" y="1049" class="b">Deployed service / management</text>
+  <rect x="500" y="1069" width="22" height="18" fill="#faf5ff" stroke="#7c3aed" stroke-dasharray="4 3" rx="4"/><text x="534" y="1084" class="b">Planned workload or endpoint</text>
+  <text x="875" y="1047" class="b">Preferred interactive SSH: LAB via Pi’s SERVERS link.</text><text x="875" y="1072" class="b">Automated Controller-to-Host transport remains enrolled HOME SSH.</text><text x="875" y="1098" class="tiny">Tailnet permits LAB and specified management/observability flows; this is not a firewall rule inventory or IPv6 proof.</text>
+</svg>

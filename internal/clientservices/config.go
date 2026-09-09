@@ -109,9 +109,10 @@ type TailnetConfig struct {
 }
 
 type DNSConfig struct {
-	Enabled   *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Upstreams []DNSUpstream `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Records   []DNSRecord   `yaml:"records,omitempty" json:"records,omitempty"`
+	Enabled        *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Upstreams      []DNSUpstream `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Records        []DNSRecord   `yaml:"records,omitempty" json:"records,omitempty"`
+	Infrastructure []DNSRecord   `yaml:"infrastructure,omitempty" json:"infrastructure,omitempty"`
 }
 
 type DNSUpstream struct {
@@ -208,6 +209,7 @@ func (m Modules) Normalize() Modules {
 		}
 		copyDNS.Upstreams = append([]DNSUpstream(nil), result.DNS.Upstreams...)
 		copyDNS.Records = append([]DNSRecord(nil), result.DNS.Records...)
+		copyDNS.Infrastructure = append([]DNSRecord(nil), result.DNS.Infrastructure...)
 		if Enabled(copyDNS.Enabled) && len(copyDNS.Upstreams) == 0 {
 			copyDNS.Upstreams = DefaultDNSUpstreams()
 		}
@@ -268,6 +270,7 @@ func (m Modules) Clone() Modules {
 		}
 		copyDNS.Upstreams = append([]DNSUpstream(nil), m.DNS.Upstreams...)
 		copyDNS.Records = append([]DNSRecord(nil), m.DNS.Records...)
+		copyDNS.Infrastructure = append([]DNSRecord(nil), m.DNS.Infrastructure...)
 		result.DNS = &copyDNS
 	}
 	if m.DHCP != nil {
