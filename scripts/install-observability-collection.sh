@@ -173,6 +173,8 @@ cat > "$work/journal-dropin" <<EOF
 [Service]
 ExecStart=
 ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --save-state=/var/lib/systemd/journal-upload/state
+Restart=on-failure
+RestartSec=10s
 EOF
 install -m 0644 "$work/journal-dropin" "$journal_dropin.new"
 mv -f "$journal_dropin.new" "$journal_dropin"
