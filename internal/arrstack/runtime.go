@@ -487,15 +487,11 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 		if len(cloudflareToken) > 16<<10 {
 			return errors.New("Cloudflare token exceeds the bounded credential size")
 		}
-		if _, err := guestExecWithStdinJSON(ctx, host, "cat > /run/boetticher-cloudflare-token", bytes.NewReader(cloudflareToken)); err != nil {
-			return errors.New("stage Cloudflare token in guest failed")
+		command = "tmp=$(mktemp /run/boetticher-cloudflare-token.XXXXXX); trap 'rm -f \"$tmp\"' EXIT HUP INT TERM; chmod 0600 \"$tmp\"; cat >\"$tmp\"; CF_API_TOKEN=\"$(cat \"$tmp\")\" " + command
+		if _, err := guestExecWithStdinJSON(ctx, host, command, bytes.NewReader(cloudflareToken)); err != nil {
+			return errors.New("run headless arrstack installer with Cloudflare token: guest command failed")
 		}
-		command = "token=$(cat /run/boetticher-cloudflare-token); rm -f /run/boetticher-cloudflare-token; CF_API_TOKEN=\"$token\" " + command
-	}
-	if err := guestExecJSON(ctx, host, command); err != nil {
-		if len(cloudflareToken) > 0 {
-			_, _ = guestExecOutput(context.Background(), host, "rm -f /run/boetticher-cloudflare-token")
-		}
+	} else if err := guestExecJSON(ctx, host, command); err != nil {
 		return fmt.Errorf("run headless arrstack installer: %w", err)
 	}
 	if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {
@@ -574,9 +570,21 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) e
 func mediaMountScript(allowFormat bool) string {
 	format := "test -b \"$device\"; blkid \"$device\" >/dev/null 2>&1"
 	if allowFormat {
-		format = "test -b \"$device\"; if ! blkid \"$device\" >/dev/null 2>&1; then test -z \"$(wipefs -n \"$device\" 2>/dev/null)\"; test \"$(dd if=\"$device\" bs=1M count=1 2>/dev/null | wc -c)\" = 0; mkfs.ext4 -F \"$device\"; fi"
+		format = "test -b \"$device\"; " + mediaFormatCommand("\"$device\"")
 	}
-	return "set -eu; device=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1; " + format + "; test \"$(blkid -o value -s TYPE \"$device\")\" = ext4; uuid=$(blkid -s UUID -o value \"$device\"); test -n \"$uuid\"; install -d -m 0755 /var/lib/arrstack/media; entry=\"UUID=$uuid /var/lib/arrstack/media ext4 noatime,nofail,x-systemd.before=docker.service 0 2\"; existing=$(awk '$2 == \"/var/lib/arrstack/media\" {print}' /etc/fstab 2>/dev/null || true); test -z \"$existing\" || test \"$existing\" = \"$entry\"; if ! findmnt -rn --target /var/lib/arrstack/media >/dev/null 2>&1; then test -n \"$existing\" || printf '%s\\n' \"$entry\" >> /etc/fstab; mount /var/lib/arrstack/media; fi; test \"$(findmnt -rn -o UUID --target /var/lib/arrstack/media)\" = \"$uuid\""
+	return "set -eu; device=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1; " + format + "; test \"$(blkid -o value -s TYPE \"$device\")\" = ext4; uuid=$(blkid -s UUID -o value \"$device\"); test -n \"$uuid\"; install -d -m 0755 /var/lib/arrstack/media; entry=\"UUID=$uuid /var/lib/arrstack/media ext4 noatime,nofail,x-systemd.before=docker.service 0 2\"; existing=$(awk '$2 == \"/var/lib/arrstack/media\" {print}' /etc/fstab 2>/dev/null || true); test -z \"$existing\" || test \"$existing\" = \"$entry\"; if ! findmnt -rn --mountpoint /var/lib/arrstack/media >/dev/null 2>&1; then test -n \"$existing\" || printf '%s\\n' \"$entry\" >> /etc/fstab; mount /var/lib/arrstack/media; fi; " + mediaMountUUIDCheckCommand("$uuid")
+}
+
+func mediaBlankCheckCommand(device string) string {
+	return "signatures=$(wipefs -n " + device + " 2>/dev/null); test -z \"$signatures\"; cmp -n 1048576 " + device + " /dev/zero >/dev/null"
+}
+
+func mediaFormatCommand(device string) string {
+	return "if ! blkid " + device + " >/dev/null 2>&1; then " + mediaBlankCheckCommand(device) + "; mkfs.ext4 -F " + device + "; fi"
+}
+
+func mediaMountUUIDCheckCommand(uuid string) string {
+	return "test \"$(findmnt -rn -o UUID --mountpoint /var/lib/arrstack/media)\" = \"" + uuid + "\""
 }
 
 func clearMediaPendingTagCommand() string {
@@ -677,7 +685,25 @@ func runtimeProbeCommand(peerPort int) string {
 	}
 	services := strings.Join(serviceImages, " ")
 	compose := shellQuote(GuestComposePath)
-	return "systemctl is-active --quiet qemu-guest-agent; systemctl is-active --quiet docker && printf '%s\\n' DOCKER_READY || true; test -x " + shellQuote(GuestAdapterPath) + " && test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + " && printf '%s\\n' APP_STATE_READY || true; if " + policyAgreementCommand(peerPort) + "; then printf '%s\\n' POLICY_READY; fi; if test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + "; then for expectation in " + services + "; do service=${expectation%%=*}; expected=${expectation#*=}; cid=$(docker compose -f " + compose + " ps -q \"$service\"); test -n \"$cid\"; state=$(docker inspect -f '{{.State.Status}}' \"$cid\"); test \"$state\" = running || test \"$service\" = recyclarr; health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \"$cid\"); test \"$health\" = healthy || test \"$health\" = none || test \"$service\" = recyclarr; image=$(docker inspect -f '{{.Config.Image}}' \"$cid\"); test \"$image\" = \"$expected\"; done; printf '%s\\n' APP_READY; fi; if ss -lnt | grep -F -- '10.10.20.230:443' >/dev/null && docker compose -f " + compose + " exec -T caddy caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 && curl --fail --silent --show-error --connect-timeout 3 --resolve oscar.davebarton.cc:443:10.10.20.230 https://oscar.davebarton.cc/ -o /dev/null; then printf '%s\\n' CADDY_TLS_READY; fi"
+	qbit := qbitReadinessCommand(peerPort, compose)
+	return "systemctl is-active --quiet qemu-guest-agent; systemctl is-active --quiet docker && printf '%s\\n' DOCKER_READY || true; test -x " + shellQuote(GuestAdapterPath) + " && test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + " && printf '%s\\n' APP_STATE_READY || true; if sh -ec " + shellQuote(policyAgreementCommand(peerPort)) + "; then printf '%s\\n' POLICY_READY; fi; if test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + "; then for expectation in " + services + "; do service=${expectation%%=*}; expected=${expectation#*=}; cid=$(docker compose -f " + compose + " ps -q \"$service\"); test -n \"$cid\"; state=$(docker inspect -f '{{.State.Status}}' \"$cid\"); test \"$state\" = running || test \"$service\" = recyclarr; health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \"$cid\"); test \"$health\" = healthy || test \"$health\" = none || test \"$service\" = recyclarr; image=$(docker inspect -f '{{.Config.Image}}' \"$cid\"); test \"$image\" = \"$expected\"; done; " + qbit + "; printf '%s\\n' APP_READY; fi; if ss -lnt | grep -F -- '10.10.20.230:443' >/dev/null && docker compose -f " + compose + " exec -T caddy caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 && curl --fail --silent --show-error --connect-timeout 3 --resolve oscar.davebarton.cc:443:10.10.20.230 https://oscar.davebarton.cc/ -o /dev/null; then printf '%s\\n' CADDY_TLS_READY; fi"
+}
+
+func qbitReadinessCommand(peerPort int, compose string) string {
+	port := strconv.Itoa(peerPort)
+	config := shellQuote("/config/qBittorrent/qBittorrent.conf")
+	prefs := "grep -Fx " + shellQuote("Connection\\PortRangeMin="+port) + " " + config + " && grep -Fx " + shellQuote("Connection\\PortRangeMax="+port) + " " + config
+	sockets := qbitSocketReadinessCommand(peerPort)
+	return "qbit=$(docker compose -f " + compose + " ps -q qbittorrent); test -n \"$qbit\"; test \"$(docker port \"$qbit\" " + shellQuote(port+"/tcp") + ")\" = \"10.10.20.230:" + port + "\"; test \"$(docker port \"$qbit\" " + shellQuote(port+"/udp") + ")\" = \"10.10.20.230:" + port + "\"; docker compose -f " + compose + " exec -T qbittorrent sh -c " + shellQuote("set -eu; "+sockets+"; "+prefs)
+}
+
+func qbitSocketReadinessCommand(peerPort int) string {
+	return qbitSocketReadinessCommandForPaths(peerPort, "/proc/net/tcp", "/proc/net/udp")
+}
+
+func qbitSocketReadinessCommandForPaths(peerPort int, tcpPath, udpPath string) string {
+	hexPort := fmt.Sprintf("%04X", peerPort)
+	return "hex=" + shellQuote(hexPort) + "; awk -v suffix=\":$hex\" '$2 ~ suffix\"$\" && $4 == \"0A\" {found=1} END {exit !found}' " + shellQuote(tcpPath) + "; awk -v suffix=\":$hex\" '$2 ~ suffix\"$\" && $4 == \"07\" {found=1} END {exit !found}' " + shellQuote(udpPath)
 }
 
 // HasRetainedCaddyCredential checks only presence and private permissions; it
