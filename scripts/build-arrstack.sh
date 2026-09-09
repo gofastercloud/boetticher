@@ -29,6 +29,7 @@ import sys
 import json
 cli, caddy, compose, catalog, template, manifest = map(Path, sys.argv[1:])
 root = cli.parent.parent
+caddy_template = root / "templates/Caddyfile.hbs"
 headless = Path("internal/arrstack/headless.ts").read_text()
 headless = headless.replace('"./upstream/src/', '"./')
 (cli.parent / "headless.ts").write_text(headless)
@@ -95,10 +96,12 @@ s = re.sub(r'\n  // Step 9a: Prepare custom Caddy image.*?\n  // Step 9b:', '\n 
 (root / "src/usecase/install.ts").write_text(s)
 s = caddy.read_text()
 s = s.replace('.filter((svc) => svc.adminPort !== undefined)', '.filter((svc) => svc.adminPort !== undefined && new Set(["radarr", "sonarr", "bazarr", "prowlarr", "trailarr", "qbittorrent", "jellyfin", "jellyseerr"]).has(svc.id))')
-s = s.replace('dns cloudflare {env.CF_API_TOKEN}', 'dns cloudflare {env.CF_API_TOKEN}\\n\\t\\tpropagation_delay 30s\\n\\t\\tpropagation_timeout -1')
 import re
 s = re.sub(r'id: svc\.id,\s*port:', lambda _: 'id: ({radarr: process.env.ARRSTACK_ALIAS_RADARR, sonarr: process.env.ARRSTACK_ALIAS_SONARR, bazarr: process.env.ARRSTACK_ALIAS_BAZARR, prowlarr: process.env.ARRSTACK_ALIAS_PROWLARR, trailarr: process.env.ARRSTACK_ALIAS_TRAILARR} as Record<string, string | undefined>)[svc.id] ?? svc.id,' + chr(10) + '      port:', s, count=1)
 caddy.write_text(s)
+template_text = caddy_template.read_text()
+template_text = template_text.replace('dns cloudflare {env.CF_API_TOKEN}', 'dns cloudflare {env.CF_API_TOKEN}' + chr(10) + chr(9) + chr(9) + 'propagation_delay 30s' + chr(10) + chr(9) + chr(9) + 'propagation_timeout -1')
+caddy_template.write_text(template_text)
 s = compose.read_text().replace('`0.0.0.0:${p}:${p}`', '`${svc.id === "caddy" ? "10.10.20.230" : "127.0.0.1"}:${p}:${p}`')
 s = s.replace('return {\n    image: CADDY_PREBUILT_IMAGE,\n    tag: CADDY_PREBUILT_TAG,\n    build: svc.build,\n  };', 'return { image: svc.image, tag: svc.tag, build: svc.build };')
 s = s.replace('const CADDY_PREBUILT_IMAGE = "ghcr.io/lavx/arrstack-caddy";\nconst CADDY_PREBUILT_TAG = "latest";\n', '')
