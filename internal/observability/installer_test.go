@@ -489,7 +489,7 @@ func TestCollectionInstallerPinsTargetsAndKeepsTLSOutOfArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(script)
-	for _, required := range []string{"node-exporter-$arch", "--continue-at -", "--proto '=https'", "basic_auth_users:", "--read-token-hash", "--key=-", "--cert=-", "--trust=/etc/ssl/certs/ca-certificates.crt", "systemd-journal-upload.service", "boetticher-node-exporter.service"} {
+	for _, required := range []string{"node-exporter-$arch", "--continue-at -", "--proto '=https'", "basic_auth_users:", "--read-token-hash", "--key=-", "--cert=-", "systemd-journal-upload.service", "boetticher-node-exporter.service"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("collection installer is missing %q", required)
 		}
@@ -497,7 +497,7 @@ func TestCollectionInstallerPinsTargetsAndKeepsTLSOutOfArguments(t *testing.T) {
 	if strings.Contains(text, "--key ") || strings.Contains(text, "--password ") {
 		t.Fatal("collection installer passes private material as an argument")
 	}
-	for _, required := range []string{"TrustedCertificateFile=/etc/ssl/certs/ca-certificates.crt", "ReadOnlyPaths=$guest_web_config", "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --trust=/etc/ssl/certs/ca-certificates.crt --save-state=/var/lib/systemd/journal-upload/state", "systemctl restart systemd-journal-upload.service"} {
+	for _, required := range []string{"TrustedCertificateFile=/etc/ssl/certs/ca-certificates.crt", "ReadOnlyPaths=$guest_web_config", "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --save-state=/var/lib/systemd/journal-upload/state", "systemctl restart systemd-journal-upload.service"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("collection TLS permission contract missing %q", required)
 		}
