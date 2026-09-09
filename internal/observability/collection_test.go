@@ -2,6 +2,7 @@ package observability
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,6 +10,20 @@ import (
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
+
+func TestDefaultControllerIdentityUsesObservabilityRoute(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$ROUTE_ARGS\"\nprintf '2: eth1 inet 10.10.20.10/24 scope global eth1\\n'\n"), 0755); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(filepath.Join(bin, "cat"), []byte("#!/bin/sh\nprintf '6c:1f:f7:d2:5d:97\\n'\n"), 0755); err != nil { t.Fatal(err) }
+	args := filepath.Join(bin, "args")
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	t.Setenv("ROUTE_ARGS", args)
+	got, err := defaultLocalControllerIdentityLookup()
+	if err != nil || len(got) != 1 || got[0].Interface != "eth1" || got[0].Address != "10.10.20.10" || got[0].MAC != "6c:1f:f7:d2:5d:97" { t.Fatalf("identity = %#v, %v", got, err) }
+	routeArgs, err := os.ReadFile(args)
+	if err != nil { t.Fatal(err) }
+	if strings.TrimSpace(string(routeArgs)) != "-o -4 addr show up" { t.Fatalf("interface lookup = %q", routeArgs) }
+}
 
 func TestCollectionConfigRejectsUnknownAndMismatchedTargets(t *testing.T) {
 	base := DefaultCollectionConfig()
@@ -27,8 +42,8 @@ func TestCollectionConfigRejectsUnknownAndMismatchedTargets(t *testing.T) {
 func TestControllerCollectionAddressMatchesLocalMACToSERVERSReservation(t *testing.T) {
 	previous := LocalControllerIdentityLookup
 	defer func() { LocalControllerIdentityLookup = previous }()
-	LocalControllerIdentityLookup = func() (ControllerIdentity, error) {
-		return ControllerIdentity{Address: "10.10.20.10", MAC: "dc:a6:32:e9:dd:82"}, nil
+	LocalControllerIdentityLookup = func() ([]ControllerIdentity, error) {
+		return []ControllerIdentity{{Address: "10.10.20.10", MAC: "dc:a6:32:e9:dd:82"}}, nil
 	}
 	enabled := true
 	config := controllerhost.LabConfig{Modules: clientservices.Modules{DHCP: &clientservices.DHCPConfig{Enabled: &enabled, Reservations: []clientservices.Reservation{{Name: "lab-companion", Zone: "SERVERS", MAC: "dc:a6:32:e9:dd:82", Address: "10.10.20.10"}}}}}
@@ -43,6 +58,19 @@ func TestControllerCollectionAddressMatchesLocalMACToSERVERSReservation(t *testi
 	config.Modules.DHCP.Reservations = nil
 	if _, err := ControllerCollectionAddress(config); err == nil {
 		t.Fatal("unreserved Controller interface accepted")
+	}
+}
+
+func TestControllerCollectionAddressRejectsAmbiguousSERVERSInterfaces(t *testing.T) {
+	previous := LocalControllerIdentityLookup
+	defer func() { LocalControllerIdentityLookup = previous }()
+	LocalControllerIdentityLookup = func() ([]ControllerIdentity, error) {
+		return []ControllerIdentity{{Address: "10.10.20.10", MAC: "aa:aa:aa:aa:aa:01"}, {Address: "10.10.20.11", MAC: "aa:aa:aa:aa:aa:02"}}, nil
+	}
+	enabled := true
+	config := controllerhost.LabConfig{Modules: clientservices.Modules{DHCP: &clientservices.DHCPConfig{Enabled: &enabled, Reservations: []clientservices.Reservation{{Zone: "SERVERS", MAC: "aa:aa:aa:aa:aa:01", Address: "10.10.20.10"}, {Zone: "SERVERS", MAC: "aa:aa:aa:aa:aa:02", Address: "10.10.20.11"}}}}}
+	if _, err := ControllerCollectionAddress(config); err == nil || !strings.Contains(err.Error(), "multiple") {
+		t.Fatalf("ambiguous Controller interfaces accepted: %v", err)
 	}
 }
 
