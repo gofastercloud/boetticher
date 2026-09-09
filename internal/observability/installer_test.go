@@ -52,7 +52,7 @@ func TestProviderInstallerStagesGatusAssetsAndOrdersAccountBeforeOwnership(t *te
 		"TEST_CALL_LOG="+logPath,
 		"BOETTICHER_OBSERVABILITY_ASSETS="+filepath.Join(filepath.Dir(installerPath(t)), "..", "internal", "observability", "assets"),
 		"BOETTICHER_OBSERVABILITY_GATUS_BINARY="+gatusBinary,
-		"BOETTICHER_OBSERVABILITY_PUBLIC_DOMAIN=davebarton.cc",
+		"BOETTICHER_OBSERVABILITY_PUBLIC_DOMAIN=example.com",
 		"BOETTICHER_OBSERVABILITY_METRICS_CONTROLLER=10.10.20.10",
 		"BOETTICHER_OBSERVABILITY_METRICS_HOST=10.10.99.5",
 	)
@@ -73,7 +73,7 @@ func TestProviderInstallerStagesGatusAssetsAndOrdersAccountBeforeOwnership(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"https://observability.davebarton.cc/api/health", "https://status.davebarton.cc/health", "https://metrics.davebarton.cc/lab-monitor-01/metrics", "query-name: observability.davebarton.cc", "tcp://10.10.99.5:9100", "tcp://10.10.20.10:9100", "[DNS_RCODE] == NOERROR", "[CONNECTED] == true", "[STATUS] == 200", "[STATUS] == 401"} {
+	for _, required := range []string{"https://observability.example.com/api/health", "https://status.example.com/health", "https://metrics.example.com/lab-monitor-01/metrics", "query-name: observability.example.com", "tcp://10.10.99.5:9100", "tcp://10.10.20.10:9100", "[DNS_RCODE] == NOERROR", "[CONNECTED] == true", "[STATUS] == 200", "[STATUS] == 401"} {
 		if !strings.Contains(string(config), required) {
 			t.Errorf("Gatus public outcome check missing %q: %s", required, config)
 		}
@@ -478,7 +478,7 @@ func TestProviderInstallerStagesInternalOnlyCaddyConfig(t *testing.T) {
 		}
 	}
 	env := append([]string(nil), os.Environ()...)
-	env = append(env, "PATH="+fakeBin+":"+os.Getenv("PATH"), "BOETTICHER_OBSERVABILITY_ASSETS="+assetRoot, "BOETTICHER_OBSERVABILITY_CADDY_BINARY="+caddyBinary, "BOETTICHER_OBSERVABILITY_PUBLIC_DOMAIN=davebarton.cc", "BOETTICHER_OBSERVABILITY_METRICS_CONTROLLER=10.10.10.21", "BOETTICHER_OBSERVABILITY_METRICS_HOST=10.10.10.22", "BOETTICHER_OBSERVABILITY_METRICS_RUNTIME=10.10.10.20", "BOETTICHER_OBSERVABILITY_INGEST_SOURCES=10.10.10.21 10.10.10.22 10.10.10.20")
+	env = append(env, "PATH="+fakeBin+":"+os.Getenv("PATH"), "BOETTICHER_OBSERVABILITY_ASSETS="+assetRoot, "BOETTICHER_OBSERVABILITY_CADDY_BINARY="+caddyBinary, "BOETTICHER_OBSERVABILITY_PUBLIC_DOMAIN=example.com", "BOETTICHER_OBSERVABILITY_METRICS_CONTROLLER=10.10.10.21", "BOETTICHER_OBSERVABILITY_METRICS_HOST=10.10.10.22", "BOETTICHER_OBSERVABILITY_METRICS_RUNTIME=10.10.10.20", "BOETTICHER_OBSERVABILITY_INGEST_SOURCES=10.10.10.21 10.10.10.22 10.10.10.20")
 	cmd := exec.Command("sh", installerPath(t), "caddy", "--root", root)
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
@@ -490,7 +490,7 @@ func TestProviderInstallerStagesInternalOnlyCaddyConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(config)
-	for _, required := range []string{"admin unix//run/caddy/admin.sock", "auto_https disable_redirects", "bind 10.10.10.20", "https://observability.davebarton.cc", "https://status.davebarton.cc", "https://metrics.davebarton.cc", "https://ingest.davebarton.cc", "basic_auth", "BOETTICHER_METRICS_PASSWORD_HASH", "remote_ip 10.10.10.20", "remote_ip 10.10.10.21 10.10.10.22 10.10.10.20", "respond 403"} {
+	for _, required := range []string{"admin unix//run/caddy/admin.sock", "auto_https disable_redirects", "bind 10.10.10.20", "https://observability.example.com", "https://status.example.com", "https://metrics.example.com", "https://ingest.example.com", "basic_auth", "BOETTICHER_METRICS_PASSWORD_HASH", "remote_ip 10.10.10.20", "remote_ip 10.10.10.21 10.10.10.22 10.10.10.20", "respond 403"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("Caddy config missing %q: %s", required, text)
 		}
@@ -558,7 +558,7 @@ func TestCollectionInstallerExecutesAgainstStagedRoot(t *testing.T) {
 	env := append([]string(nil), os.Environ()...)
 	env = append(env, "PATH="+fakeBin+":"+os.Getenv("PATH"), "TEST_NODE_EXPORTER_ARCHIVE="+archive, "BOETTICHER_OBSERVABILITY_ASSETS="+assetRoot)
 	collectionInstaller := filepath.Join(filepath.Dir(installerPath(t)), "install-observability-collection.sh")
-	cmd = exec.Command("sh", collectionInstaller, "--root", root, "--arch", "amd64", "--name", "proxmox-host", "--address", "10.10.99.5", "--kind", "host", "--collector-url", "https://ingest.davebarton.cc:443", "--read-token-hash", "$2a$10$fixture")
+	cmd = exec.Command("sh", collectionInstaller, "--root", root, "--arch", "amd64", "--name", "proxmox-host", "--address", "10.10.99.5", "--kind", "host", "--collector-url", "https://ingest.example.com:443", "--read-token-hash", "$2a$10$fixture")
 	cmd.Env = env
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("staged collection installer failed: %v\n%s", err, output)

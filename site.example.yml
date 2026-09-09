@@ -4,10 +4,10 @@ schema_version: 3
 storage_profile: single-disk
 gateway:
   mode: managed
-  management_address: 192.168.4.28
-  management_network: 192.168.4.0/22
-  management_gateway: 192.168.4.1
-  controller_address: 192.168.4.6
+  management_address: 192.0.2.28
+  management_network: 192.0.2.0/24
+  management_gateway: 192.0.2.1
+  controller_address: 192.0.2.6
   upstream:
     mode: dhcp
     mac: 02:00:00:00:01:01

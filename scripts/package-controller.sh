@@ -23,7 +23,7 @@ main() {
   go_bin=${BOETTICHER_GO_BIN:-$(command -v go || true)}
   [ -n "$go_bin" ] && [ -x "$go_bin" ] || { echo 'Go toolchain is unavailable; set BOETTICHER_GO_BIN to Go 1.26.6' >&2; exit 1; }
   "$go_bin" version | grep -Eq 'go1\.26\.6([[:space:]]|$)' || { echo 'Controller packaging requires Go 1.26.6; set BOETTICHER_GO_BIN' >&2; exit 1; }
-  export GOCACHE="${GOCACHE:-/Users/dave/Library/Caches/go-build}" GOMODCACHE="${GOMODCACHE:-/Users/dave/go/pkg/mod}"
+  export GOCACHE="${GOCACHE:-${XDG_CACHE_HOME:-/tmp}/boetticher-gocache}" GOMODCACHE="${GOMODCACHE:-${XDG_CACHE_HOME:-/tmp}/boetticher-gomodcache}"
 
   stage="$BOETTICHER_BUILD_TEMP_DIR/controller-package"
   mkdir -m 0700 "$stage"

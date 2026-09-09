@@ -27,7 +27,7 @@ func TestValidateObservabilityContracts(t *testing.T) {
 	if err := Validate(good, testSite()); err != nil {
 		t.Fatalf("valid observability intent rejected: %v", err)
 	}
-	good.Observability.PublicDomain = "davebarton.cc"
+	good.Observability.PublicDomain = "example.com"
 	if err := Validate(good, testSite()); err != nil {
 		t.Fatalf("valid public observability domain rejected: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestValidateObservabilityContracts(t *testing.T) {
 	if err := Validate(good, testSite()); err == nil || !strings.Contains(err.Error(), "public_domain") {
 		t.Fatalf("invalid public observability domain accepted: %v", err)
 	}
-	good.Observability.PublicDomain = "davebarton.cc"
+	good.Observability.PublicDomain = "example.com"
 	good.Observability.Alerts.Pushover = &PushoverConfig{Enabled: &enabled, Title: "Boetticher alerts", Priority: 0}
 	if err := Validate(good, testSite()); err != nil {
 		t.Fatalf("valid Pushover intent rejected: %v", err)

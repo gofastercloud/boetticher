@@ -92,11 +92,11 @@ func TestCollectionConfigUsesOwnedSiteTargetsAndPinnedRetention(t *testing.T) {
 	if len(config.Targets) != 3 || config.MetricsRetentionDays != 30 || config.LogsRetentionDays != 7 {
 		t.Fatalf("unexpected collection defaults: %#v", config)
 	}
-	scrape, err := config.VictoriaMetricsScrapeConfig("davebarton.cc")
+	scrape, err := config.VictoriaMetricsScrapeConfig("example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"scrape_interval: 30s", "scheme: https", "insecure_skip_verify: false", "ca_file: '/etc/ssl/certs/ca-certificates.crt'", "basic_auth:", "password_file: '/run/credentials/victoriametrics.service/node-exporter-read-token'", "server_name: 'metrics.davebarton.cc'", "metrics.davebarton.cc:443", "metrics_path: '/lab-monitor-01/metrics'", "boetticher_host: 'lab-monitor-01'"} {
+	for _, required := range []string{"scrape_interval: 30s", "scheme: https", "insecure_skip_verify: false", "ca_file: '/etc/ssl/certs/ca-certificates.crt'", "basic_auth:", "password_file: '/run/credentials/victoriametrics.service/node-exporter-read-token'", "server_name: 'metrics.example.com'", "metrics.example.com:443", "metrics_path: '/lab-monitor-01/metrics'", "boetticher_host: 'lab-monitor-01'"} {
 		if !strings.Contains(scrape, required) {
 			t.Errorf("scrape config missing %q: %s", required, scrape)
 		}

@@ -14,7 +14,7 @@ go run ./labviewer --lab /etc/boetticher/lab.yml --listen 127.0.0.1:8090
 ```
 
 Put Caddy in front of the listener at a private hostname such as
-`labviewer.davebarton.cc`. The process never writes `lab.yml` and has no
+`labviewer.example.com`. The process never writes `lab.yml` and has no
 mutation endpoints.
 
 For Homepage-backed deployment, run the binary with
@@ -38,7 +38,7 @@ Optional explicit publications:
 control_surfaces:
   - name: Firewall
     description: OpenWrt administration
-    url: https://fw-admin.davebarton.cc
+    url: https://fw-admin.example.com
     group: Operate
     icon: ⌁
 ```

@@ -11,11 +11,11 @@ import (
 )
 
 func TestObservabilityDNSSectionsUseOwnedPublicNamesAndMonitorAddress(t *testing.T) {
-	sections := observabilityDNSSections("davebarton.cc")
+	sections := observabilityDNSSections("example.com")
 	if len(sections) != 4 {
 		t.Fatalf("observability DNS section count = %d", len(sections))
 	}
-	for _, name := range []string{"observability.davebarton.cc", "status.davebarton.cc", "ingest.davebarton.cc", "metrics.davebarton.cc"} {
+	for _, name := range []string{"observability.example.com", "status.example.com", "ingest.example.com", "metrics.example.com"} {
 		found := false
 		for _, section := range sections {
 			if section.Options["name"] == name && section.Options["ip"] == "10.10.10.20" && strings.HasPrefix(section.Name, "boetticher_observability_record_") {

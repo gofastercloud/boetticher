@@ -49,7 +49,7 @@ func TestReconcileCollectionStagesConfigHelperAndExecutesOwnedGuest(t *testing.T
 	binding, _ := BindingFor("observability")
 	runner := &collectionRunner{guestConfig: "hostname: " + binding.Hostname + "\ntags: boetticher;managed;module-observability;boetticher-module-observability\nnet0: name=eth0,bridge=vmbr1,tag=10,ip=10.10.10.20/24\n"}
 	local := &collectionRunner{}
-	if err := (HostClient{Transport: runner, LocalRunner: local}).ReconcileCollection(context.Background(), binding, payload, "davebarton.cc", DefaultCollectionConfig()); err != nil {
+	if err := (HostClient{Transport: runner, LocalRunner: local}).ReconcileCollection(context.Background(), binding, payload, "example.com", DefaultCollectionConfig()); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.calls) < 9 || len(local.calls) < 3 {
@@ -62,7 +62,7 @@ func TestReconcileCollectionStagesConfigHelperAndExecutesOwnedGuest(t *testing.T
 		t.Fatalf("scrape config was not staged in owned guest: %v", runner.calls)
 	}
 	joined := strings.Join(append(append([]string(nil), runner.calls...), local.calls...), "\n")
-	for _, required := range []string{"https://ingest.davebarton.cc:443", "--read-token-hash"} {
+	for _, required := range []string{"https://ingest.example.com:443", "--read-token-hash"} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("collection dispatch missing %q: %s", required, joined)
 		}
@@ -99,7 +99,7 @@ func TestReconcileCollectionRejectsForeignRuntimeBeforeAnyWrite(t *testing.T) {
 	}
 	runner := &collectionRunner{guestConfig: "hostname: foreign\ntags: unrelated\nnet0: name=eth0,bridge=vmbr1,tag=10,ip=10.10.10.20/24\n"}
 	local := &collectionRunner{}
-	if err := (HostClient{Transport: runner, LocalRunner: local}).ReconcileCollection(context.Background(), binding, payload, "davebarton.cc", DefaultCollectionConfig()); err == nil {
+	if err := (HostClient{Transport: runner, LocalRunner: local}).ReconcileCollection(context.Background(), binding, payload, "example.com", DefaultCollectionConfig()); err == nil {
 		t.Fatal("foreign runtime was accepted")
 	}
 	if len(runner.calls) != 1 || len(local.calls) != 0 {

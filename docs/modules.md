@@ -299,7 +299,7 @@ the command reports every missing name without starting a partial runtime:
 ```text
 boetticher module observability secrets set grafana-admin-password
 boetticher module observability secrets set cloudflare-dns-token
-boetticher module observability apply --public-domain davebarton.cc --yes
+boetticher module observability apply --public-domain example.com --yes
 ```
 
 The Gatus status page uses HTTPS without a password prompt inside the existing
@@ -312,7 +312,7 @@ To opt into Holmes/Bifrost, also set `holmes-client-token` and
 ```text
 boetticher module observability secrets set holmes-client-token
 boetticher module observability secrets set openrouter-api-key
-boetticher module observability apply --public-domain davebarton.cc --holmes-model openai/gpt-4.1-mini --yes
+boetticher module observability apply --public-domain example.com --holmes-model openai/gpt-4.1-mini --yes
 ```
 
 Apply creates only an absent exact guest, refuses foreign or mismatched
