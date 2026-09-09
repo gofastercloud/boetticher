@@ -13,16 +13,26 @@ import (
 
 func TestDefaultControllerIdentityUsesObservabilityRoute(t *testing.T) {
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$ROUTE_ARGS\"\nprintf '2: eth1 inet 10.10.20.10/24 scope global eth1\\n'\n"), 0755); err != nil { t.Fatal(err) }
-	if err := os.WriteFile(filepath.Join(bin, "cat"), []byte("#!/bin/sh\nprintf '6c:1f:f7:d2:5d:97\\n'\n"), 0755); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$ROUTE_ARGS\"\nprintf '2: eth1 inet 10.10.20.10/24 scope global eth1\\n'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "cat"), []byte("#!/bin/sh\nprintf '6c:1f:f7:d2:5d:97\\n'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	args := filepath.Join(bin, "args")
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 	t.Setenv("ROUTE_ARGS", args)
 	got, err := defaultLocalControllerIdentityLookup()
-	if err != nil || len(got) != 1 || got[0].Interface != "eth1" || got[0].Address != "10.10.20.10" || got[0].MAC != "6c:1f:f7:d2:5d:97" { t.Fatalf("identity = %#v, %v", got, err) }
+	if err != nil || len(got) != 1 || got[0].Interface != "eth1" || got[0].Address != "10.10.20.10" || got[0].MAC != "6c:1f:f7:d2:5d:97" {
+		t.Fatalf("identity = %#v, %v", got, err)
+	}
 	routeArgs, err := os.ReadFile(args)
-	if err != nil { t.Fatal(err) }
-	if strings.TrimSpace(string(routeArgs)) != "-o -4 addr show up" { t.Fatalf("interface lookup = %q", routeArgs) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(routeArgs)) != "-o -4 addr show up" {
+		t.Fatalf("interface lookup = %q", routeArgs)
+	}
 }
 
 func TestCollectionConfigRejectsUnknownAndMismatchedTargets(t *testing.T) {

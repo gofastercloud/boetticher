@@ -300,7 +300,13 @@ func reconcileObservabilityDependencies(ctx context.Context, config controllerho
 	if err != nil {
 		return err
 	}
-	serviceContext := clientServiceContext{Config: config, Site: current, Desired: desired, Host: host}
+	serviceContext, err := loadClientServiceContext()
+	if err != nil {
+		return err
+	}
+	// The caller's config is the just-prepared observability intent; retain the
+	// loaded VPN projection from the normal client-service context.
+	serviceContext.Config = config
 	if _, _, err := reconcileClientServices(ctx, provider, serviceContext, config.Modules); err != nil {
 		return err
 	}

@@ -43,6 +43,15 @@ func TestRuntimeReadyStatePreservesHostTransportFailure(t *testing.T) {
 	}
 }
 
+func TestRuntimeReadyStateDoesNotClassifyTimeoutAsGuestDrift(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := RuntimeReadyState(ctx, fixedRunner{result: controllerhost.Result{ExitCode: 1}, err: context.Canceled})
+	if err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("canceled readiness probe = %v, want transport/context error", err)
+	}
+}
+
 func TestRuntimeReadyStateReportsHealthyGuest(t *testing.T) {
 	ready, err := RuntimeReadyState(context.Background(), fixedRunner{})
 	if err != nil || !ready {

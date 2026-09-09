@@ -50,8 +50,8 @@ const (
 
 type ControllerIdentity struct {
 	Interface string
-	Address string
-	MAC     string
+	Address   string
+	MAC       string
 }
 
 func CollectionConfigForLab(config controllerhost.LabConfig, controllerAddress string) (CollectionConfig, error) {
