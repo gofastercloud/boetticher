@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-	image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-gatus|image-network-probe|images) ;;
+	image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-gatus|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-printer image-network-probe"
+default_image_targets="image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-network-probe"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-	  image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-gatus|image-network-probe) ;;
+	  image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-gatus|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
@@ -661,24 +661,6 @@ build_bifrost() {
   package_lxc boetticher-bifrost
 }
 
-build_printer() {
-  printf '%s\n' 'boetticher build stage: printer'
-  rootfs=$(prepare_rootfs boetticher-printer)
-  install_packages "$rootfs" python3=3.13.5-1 python3-venv=3.13.5-1 python3-pip=25.1.1+dfsg-1 python3-dev build-essential nginx=1.26.3-3+deb13u7
-  chroot "$rootfs" groupadd --system --gid 2200 octoprint
-  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/octoprint --create-home --shell /usr/sbin/nologin octoprint
-  chroot "$rootfs" python3 -m venv /opt/octoprint
-  install -D -m 0644 images/printer/runtime/requirements.lock "$rootfs/tmp/octoprint-requirements.lock"
-  pip_install "$rootfs" /opt/octoprint/bin/pip install --require-hashes --requirement /tmp/octoprint-requirements.lock
-  chroot "$rootfs" apt-get purge --yes --auto-remove python3-dev build-essential
-  chroot "$rootfs" apt-get clean
-  rm -rf "$rootfs/var/lib/apt/lists/"*
-  install -D -m 0644 images/printer/runtime/octoprint.service "$rootfs/etc/systemd/system/octoprint.service"
-  rm -f "$rootfs/tmp/octoprint-requirements.lock" "$rootfs/etc/nginx/sites-enabled/default"
-  write_artifact_identity "$rootfs" printer
-  package_lxc boetticher-printer
-}
-
 build_aiops() {
   printf '%s\n' 'boetticher build stage: aiops'
   rootfs=$(prepare_rootfs boetticher-aiops)
@@ -1023,11 +1005,6 @@ build_airvpn_target() {
 build_bifrost_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_bifrost
-}
-
-build_printer_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_printer
 }
 
 build_aiops_target() {
