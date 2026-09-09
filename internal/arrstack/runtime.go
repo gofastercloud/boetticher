@@ -436,13 +436,13 @@ func guestExecWithStdinTimeoutJSON(ctx context.Context, host firewallmodule.Host
 	return parseGuestResponse(result.Stdout)
 }
 
-func guestExecLongJSON(ctx context.Context, host firewallmodule.HostClient, command string) error {
-	_, err := guestExecLongOutput(ctx, host, command)
+func guestExecLongJSON(ctx context.Context, host firewallmodule.HostClient, command string, timeoutSeconds int) error {
+	_, err := guestExecLongOutput(ctx, host, command, timeoutSeconds)
 	return err
 }
 
-func guestExecLongOutput(ctx context.Context, host firewallmodule.HostClient, command string) (string, error) {
-	result, err := host.Run(ctx, guestExecWithTimeout(command, GuestInstallTimeout))
+func guestExecLongOutput(ctx context.Context, host firewallmodule.HostClient, command string, timeoutSeconds int) (string, error) {
+	result, err := host.Run(ctx, guestExecWithTimeout(command, timeoutSeconds))
 	if err != nil {
 		return "", err
 	}
@@ -542,15 +542,19 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 		return err
 	}
 	command := "ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
+	installTimeout, err := installerTimeoutSeconds(ctx)
+	if err != nil {
+		return err
+	}
 	if len(cloudflareToken) > 0 {
 		if len(cloudflareToken) > 16<<10 {
 			return errors.New("Cloudflare token exceeds the bounded credential size")
 		}
 		command = "tmp=$(mktemp /run/boetticher-cloudflare-token.XXXXXX); trap 'rm -f \"$tmp\"' EXIT HUP INT TERM; chmod 0600 \"$tmp\"; cat >\"$tmp\"; CF_API_TOKEN=\"$(cat \"$tmp\")\" " + command
-		if _, err := guestExecWithStdinTimeoutJSON(ctx, host, installerGuardCommand(command), bytes.NewReader(cloudflareToken), GuestInstallTimeout); err != nil {
+		if _, err := guestExecWithStdinTimeoutJSON(ctx, host, installerGuardCommand(command, installTimeout), bytes.NewReader(cloudflareToken), installTimeout); err != nil {
 			return fmt.Errorf("run headless arrstack installer with Cloudflare token: %w", err)
 		}
-	} else if err := guestExecLongJSON(ctx, host, installerGuardCommand(command)); err != nil {
+	} else if err := guestExecLongJSON(ctx, host, installerGuardCommand(command, installTimeout), installTimeout); err != nil {
 		return fmt.Errorf("run headless arrstack installer: %w", err)
 	}
 	if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {
@@ -559,8 +563,25 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	return nil
 }
 
-func installerGuardCommand(command string) string {
-	return "flock -n /run/boetticher/arrstack-install.lock timeout --signal TERM --kill-after 30s 1100s sh -c " + shellQuote(command)
+func installerGuardCommand(command string, timeoutSeconds int) string {
+	return "flock -n /run/boetticher/arrstack-install.lock timeout --signal TERM --kill-after 30s " + strconv.Itoa(timeoutSeconds) + "s sh -c " + shellQuote(command)
+}
+
+func installerTimeoutSeconds(ctx context.Context) (int, error) {
+	const cleanupMargin = 30 * time.Second
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return GuestInstallTimeout, nil
+	}
+	remaining := time.Until(deadline) - cleanupMargin
+	seconds := int(remaining / time.Second)
+	if seconds < 1 {
+		return 0, errors.New("insufficient Controller deadline remains for the media installer")
+	}
+	if seconds > GuestInstallTimeout {
+		return GuestInstallTimeout, nil
+	}
+	return seconds, nil
 }
 
 func policyReceiptCaptureCommand() string {

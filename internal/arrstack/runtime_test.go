@@ -1,12 +1,14 @@
 package arrstack
 
 import (
+	"context"
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateGuestConfigRequiresExactOwnedQEMUShape(t *testing.T) {
@@ -94,11 +96,25 @@ func TestGuestExecCommandsHaveBoundedNativeTimeouts(t *testing.T) {
 }
 
 func TestInstallerGuardRefusesOverlapAndBoundsChildTermination(t *testing.T) {
-	command := installerGuardCommand("sleep 120")
-	for _, want := range []string{"flock -n /run/boetticher/arrstack-install.lock", "timeout --signal TERM --kill-after 30s 1100s", "sh -c"} {
+	command := installerGuardCommand("sleep 120", GuestInstallTimeout)
+	for _, want := range []string{"flock -n /run/boetticher/arrstack-install.lock", "timeout --signal TERM --kill-after 30s 1200s", "sh -c"} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("installer guard missing %q", want)
 		}
+	}
+}
+
+func TestInstallerTimeoutLeavesCleanupMarginAndCapsAtTwentyMinutes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	seconds, err := installerTimeoutSeconds(ctx)
+	if err != nil || seconds < 560 || seconds > 570 {
+		t.Fatalf("installer timeout = %d, err=%v; want about 570 seconds", seconds, err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := installerTimeoutSeconds(ctx); err == nil {
+		t.Fatal("installer timeout accepted a deadline without cleanup margin")
 	}
 }
 
@@ -176,7 +192,7 @@ func TestPolicyReceiptIsCapturedOnlyAfterTheInstallerSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	installer := strings.Index(text, "if err := guestExecLongJSON(ctx, host, installerGuardCommand(command)); err != nil {")
+	installer := strings.Index(text, "if err := guestExecLongJSON(ctx, host, installerGuardCommand(command, installTimeout), installTimeout); err != nil {")
 	capture := strings.Index(text, "if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {")
 	if installer < 0 || capture < installer {
 		t.Fatalf("policy receipt capture must follow successful adapter installation: installer=%d capture=%d", installer, capture)
