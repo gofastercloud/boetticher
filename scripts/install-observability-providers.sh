@@ -523,22 +523,10 @@ EOF
     CLOUDFLARE_API_TOKEN=$(cat /var/lib/boetticher/credentials/cloudflare-dns-token.cred) BOETTICHER_STATUS_PASSWORD_HASH="$status_hash" BOETTICHER_METRICS_PASSWORD_HASH="$node_hash" "$caddy_source" validate --config "$work/Caddyfile" --adapter caddyfile >/dev/null || die 'Caddy configuration validation failed'
     unset status_hash node_hash
   fi
-  previous="$work/Caddyfile.previous"
-  if [ -f "$target" ]; then
-    install -m 0640 "$target" "$previous"
-  fi
   install_atomic 0640 "$work/Caddyfile" "$target"
   chown_root_group "$target" caddy
-  if [ "$root" = / ] && systemctl is-active --quiet caddy.service; then
-    if ! systemctl reload caddy.service; then
-      if [ -f "$previous" ]; then
-        install_atomic 0640 "$previous" "$target"
-        chown_root_group "$target" caddy
-        systemctl reload caddy.service || true
-      fi
-      die 'Caddy configuration reload failed; previous configuration restored'
-    fi
-  fi
+  # The common activation below restarts the unit after its assets are ready.
+  # LoadCredential snapshots must refresh together with collection credentials.
   install_owned_dir "$(root_path /var/lib/boetticher/observability/state/caddy)" caddy 0750
 }
 
