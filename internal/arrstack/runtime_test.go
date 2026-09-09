@@ -119,6 +119,51 @@ func TestPolicyReceiptIsCapturedOnlyAfterTheInstallerSucceeds(t *testing.T) {
 	}
 }
 
+func TestPolicyReapplyRestartsAlreadyActiveRemainAfterExitUnit(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	reload := strings.Index(text, "systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service;")
+	restart := strings.Index(text, "systemctl restart boetticher-arrstack-firewall.service;")
+	startDocker := strings.Index(text, "systemctl start docker;")
+	if reload < 0 || restart < reload || startDocker < restart {
+		t.Fatalf("policy installation must reload, explicitly restart the policy unit, then start Docker: reload=%d restart=%d docker=%d", reload, restart, startDocker)
+	}
+	if strings.Contains(text, "systemctl enable --now boetticher-arrstack-firewall.service") {
+		t.Fatal("policy installation relies on enable --now for a RemainAfterExit unit")
+	}
+}
+
+func TestMediaFormattingRequiresPendingMarkerAndBlankOwnedDisk(t *testing.T) {
+	format := mediaMountScript(true)
+	for _, want := range []string{"wipefs -n", "dd if=", "mkfs.ext4 -F"} {
+		if !strings.Contains(format, want) {
+			t.Fatalf("pending media preparation missing %q", want)
+		}
+	}
+	if strings.Contains(mediaMountScript(false), "mkfs.ext4") {
+		t.Fatal("existing media preparation may not format an unmarked disk")
+	}
+	command := recoveryCommand(map[string]string{
+		"agent": "1", "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
+		"memory": "8192", "name": GuestName, "net0": "virtio=" + GuestMAC + ",bridge=vmbr1,tag=20,firewall=1",
+		"onboot": "0", "ostype": "l26", "scsihw": "virtio-scsi-single", "serial0": "socket",
+		"tags":      "boetticher;managed;module;" + GuestOwnerTag,
+		"ipconfig0": "ip=" + GuestAddress + "/24,gw=" + GuestGateway, "nameserver": GuestGateway,
+		"scsi0": "boetticher-data:vm-290-disk-0,ssd=1,size=32G",
+	}, MediaDiskGiB)
+	guard := strings.Index(command, "case \";$tags;\"")
+	attach := strings.Index(command, "qm set 290 --scsi1")
+	if !strings.Contains(command, GuestMediaPendingTag) || guard < 0 || attach < 0 || guard > attach {
+		t.Fatalf("unmarked media allocation is not guarded before attachment: guard=%d attach=%d command=%s", guard, attach, command)
+	}
+	if failure := strings.Index(command[guard:attach], "exit 1"); failure < 0 {
+		t.Fatal("unmarked media allocation has no failing guard branch")
+	}
+}
+
 func TestRetainedCaddyCredentialProbeDistinguishesPresentFromMissingWithoutReadingToken(t *testing.T) {
 	if !parseRetainedCredentialProbe("present") || parseRetainedCredentialProbe("missing") {
 		t.Fatal("retained credential probe did not distinguish present from missing")
