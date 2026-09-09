@@ -117,16 +117,27 @@ func managedRuleIdentity(name string, options map[string]string) bool {
 	if strings.HasPrefix(name, "boetticher_tailnet_") {
 		id := strings.TrimPrefix(name, "boetticher_tailnet_")
 		expectedName, ok := map[string]string{
-			"deny_home":      "Boetticher Tailnet deny_home",
-			"deny_nonpublic": "Boetticher Tailnet deny_nonpublic",
-			"transport_tcp":  "Boetticher Tailnet transport_tcp",
-			"transport_udp":  "Boetticher Tailnet transport_udp",
-			"dns":            "Boetticher Tailnet dns",
-			"ntp":            "Boetticher Tailnet ntp",
-			"trusted":        "Boetticher Tailnet trusted",
-			"servers":        "Boetticher Tailnet servers",
+			"deny_home":           "Boetticher Tailnet deny_home",
+			"deny_nonpublic":      "Boetticher Tailnet deny_nonpublic",
+			"transport_tcp":       "Boetticher Tailnet transport_tcp",
+			"transport_udp":       "Boetticher Tailnet transport_udp",
+			"dns":                 "Boetticher Tailnet dns",
+			"ntp":                 "Boetticher Tailnet ntp",
+			"trusted":             "Boetticher Tailnet trusted",
+			"servers":             "Boetticher Tailnet servers",
+			"mgmt_ssh":            "Boetticher Tailnet mgmt_ssh",
+			"observability_https": "Boetticher Tailnet observability_https",
 		}[id]
 		return ok && options["name"] == expectedName && options["src"] == "transit" && options["src_ip"] == tailnet.GuestAddress+"/32" && options["src_mac"] == tailnet.GuestMAC && options["family"] == "ipv4"
+	}
+	if name == "boetticher_allow_trusted_mgmt_ssh" {
+		return options["name"] == "Boetticher TRUSTED SSH to MGMT" && options["src"] == "trusted" && options["dest"] == "mgmt" && options["proto"] == "tcp" && options["dest_port"] == "22" && options["family"] == "ipv4"
+	}
+	if name == "boetticher_allow_controller_host_ssh" {
+		return options["name"] == "Boetticher Controller SSH to Host" && options["src"] == "servers" && options["dest"] == "mgmt" && options["proto"] == "tcp" && options["dest_port"] == "22" && options["dest_ip"] == "10.10.99.5/32" && options["family"] == "ipv4"
+	}
+	if name == "boetticher_allow_trusted_observability_https" {
+		return options["name"] == "Boetticher TRUSTED HTTPS to observability" && options["src"] == "trusted" && options["dest"] == "infra" && options["dest_ip"] == "10.10.10.20/32" && options["proto"] == "tcp" && options["dest_port"] == "443" && options["family"] == "ipv4"
 	}
 	zones := map[string]string{"transit": "TRANSIT", "infra": "INFRA", "servers": "SERVERS", "trusted": "TRUSTED", "sandbox": "SANDBOX", "mgmt": "MGMT"}
 	for zone, label := range zones {

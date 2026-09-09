@@ -45,7 +45,15 @@ func Enabled(m clientservices.Modules) bool {
 	return m.Observability != nil && clientservices.Enabled(m.Observability.Enabled)
 }
 func Services() []string {
-	return []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "bifrost.service"}
+	return []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "bifrost.service", "caddy.service"}
+}
+
+func ServicesForModules(modules clientservices.Modules) []string {
+	services := []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "caddy.service"}
+	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+		services = append(services, "bifrost.service")
+	}
+	return services
 }
 
 type Runner interface {
@@ -196,7 +204,11 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 			}
 		}
 	}
-	for _, provider := range []string{"victoriametrics", "bifrost", "holmes"} {
+	providers = []string{"victoriametrics"}
+	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+		providers = append(providers, "bifrost", "holmes")
+	}
+	for _, provider := range providers {
 		holmesEnvironment := ""
 		if provider == "holmes" {
 			holmesEnvironment = fmt.Sprintf(" BOETTICHER_OBSERVABILITY_HOLMES_ROOT=%s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/holmes", b.VMID)))
@@ -294,19 +306,21 @@ func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadR
 			return err
 		}
 	}
-	config, err := BifrostConfig(modules)
-	if err != nil {
-		return err
-	}
-	data, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("encode Bifrost configuration: %w", err)
-	}
-	if err := stageHostBytes(ctx, stager, hostRoot+"/bifrost.config.json", data); err != nil {
-		return err
-	}
-	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct push %d %s %s", b.VMID, shellQuoteValue(hostRoot+"/bifrost.config.json"), shellQuoteValue(providerRoot+"/bifrost.config.json"))); err != nil {
-		return fmt.Errorf("upload Bifrost configuration: %w", err)
+	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+		config, err := BifrostConfig(modules)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(config)
+		if err != nil {
+			return fmt.Errorf("encode Bifrost configuration: %w", err)
+		}
+		if err := stageHostBytes(ctx, stager, hostRoot+"/bifrost.config.json", data); err != nil {
+			return err
+		}
+		if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct push %d %s %s", b.VMID, shellQuoteValue(hostRoot+"/bifrost.config.json"), shellQuoteValue(providerRoot+"/bifrost.config.json"))); err != nil {
+			return fmt.Errorf("upload Bifrost configuration: %w", err)
+		}
 	}
 	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- install -d -m 0700 /var/lib/boetticher/credentials", b.VMID)); err != nil {
 		return err
@@ -508,6 +522,7 @@ func (c HostClient) ProviderHealth(ctx context.Context, b Binding, service strin
 		"grafana.service":         "http://127.0.0.1:3000/api/health",
 		"gatus.service":           "http://127.0.0.1:8080/health",
 		"bifrost.service":         "http://127.0.0.1:4000/health",
+		"caddy.service":           "http://unix/config/",
 	}
 	path, ok := paths[service]
 	if !ok {
@@ -516,7 +531,11 @@ func (c HostClient) ProviderHealth(ctx context.Context, b Binding, service strin
 	if _, err := c.GuestConfig(ctx, b); err != nil {
 		return "", err
 	}
-	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- curl --fail --silent --show-error --max-time 5 %s >/dev/null", b.VMID, shellQuoteValue(path))); err != nil {
+	command := fmt.Sprintf("pct exec %d -- curl --fail --silent --show-error --max-time 5 %s >/dev/null", b.VMID, shellQuoteValue(path))
+	if service == "caddy.service" {
+		command = fmt.Sprintf("pct exec %d -- curl --fail --silent --show-error --max-time 5 --unix-socket /run/caddy/admin.sock http://unix/config/ >/dev/null", b.VMID)
+	}
+	if _, err := c.Transport.Run(ctx, command); err != nil {
 		return "", fmt.Errorf("%s health endpoint failed: %w", service, err)
 	}
 	return "healthy", nil
@@ -607,6 +626,10 @@ func (c HostClient) GuestCertificate(ctx context.Context, b Binding) (string, er
 }
 
 func (c HostClient) VerifyReadiness(ctx context.Context, b Binding) error {
+	return c.VerifyReadinessForModules(ctx, b, clientservices.Modules{})
+}
+
+func (c HostClient) VerifyReadinessForModules(ctx context.Context, b Binding, modules clientservices.Modules) error {
 	state, err := c.GuestStatus(ctx, b)
 	if err != nil {
 		return err
@@ -614,7 +637,7 @@ func (c HostClient) VerifyReadiness(ctx context.Context, b Binding) error {
 	if !strings.Contains(strings.ToLower(state), "running") {
 		return fmt.Errorf("observability guest is not running: %s", state)
 	}
-	for _, service := range Services() {
+	for _, service := range ServicesForModules(modules) {
 		status, err := c.ServiceStatus(ctx, b, service)
 		if err != nil {
 			return err
@@ -623,7 +646,10 @@ func (c HostClient) VerifyReadiness(ctx context.Context, b Binding) error {
 			return fmt.Errorf("observability service %s unhealthy: %s", service, status)
 		}
 	}
-	check := "curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8428/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:9428/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:4000/health >/dev/null"
+	check := "curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8428/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:9428/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health >/dev/null; curl --fail --silent --show-error --max-time 5 --unix-socket /run/caddy/admin.sock http://unix/config/ >/dev/null"
+	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+		check += "; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:4000/health >/dev/null"
+	}
 	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(check))); err != nil {
 		return fmt.Errorf("observability local readiness: %w", err)
 	}

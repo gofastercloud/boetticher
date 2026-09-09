@@ -32,7 +32,7 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 	for _, section := range state.Firewall {
 		joined += section.Name + " " + section.Options["src"] + " " + section.Options["dest"] + "\n"
 	}
-	for _, want := range []string{"boetticher_home_wan", "boetticher_forward_trusted_servers", "boetticher_forward_trusted_home_wan", "boetticher_forward_sandbox_home_wan", "boetticher_deny_sandbox_home_management", "boetticher_allow_home_api"} {
+	for _, want := range []string{"boetticher_home_wan", "boetticher_forward_trusted_servers", "boetticher_forward_trusted_home_wan", "boetticher_forward_sandbox_home_wan", "boetticher_deny_sandbox_home_management", "boetticher_allow_home_api", "boetticher_allow_trusted_mgmt_ssh"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("policy is missing %q: %s", want, joined)
 		}
@@ -77,6 +77,8 @@ func TestObservabilityFirewallRulesUseExactInternalSourcesAndReservation(t *test
 	for _, test := range []struct {
 		name, source, destination, sourceIP, destinationIP, port string
 	}{
+		{"boetticher_allow_controller_host_ssh", "servers", "mgmt", "10.10.20.10/32", "10.10.99.5/32", "22"},
+		{"boetticher_allow_trusted_observability_https", "trusted", "infra", "", "10.10.10.20/32", "443"},
 		{"boetticher_observability_metrics_proxmox", "infra", "mgmt", "10.10.10.20/32", "10.10.99.5/32", "9100"},
 		{"boetticher_observability_metrics_controller", "infra", "servers", "10.10.10.20/32", "10.10.20.10/32", "9100"},
 		{"boetticher_observability_logs_proxmox", "mgmt", "infra", "10.10.99.5/32", "10.10.10.20/32", "443"},

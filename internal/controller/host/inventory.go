@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 type Node struct {
@@ -90,8 +92,18 @@ func Enroll(ctx context.Context, transport Transport) (LabConfig, Inventory, err
 	}
 	config := LabConfig{Name: "home-lab", Proxmox: ProxmoxConfig{Address: transport.Address, User: "root", Node: core.Nodes[0].Node, Repository: "no-subscription"}}
 	if existing, err := LoadConfig(); err == nil {
-		if existing.Proxmox.Address != config.Proxmox.Address || existing.Proxmox.User != config.Proxmox.User || (existing.Proxmox.Node != "" && existing.Proxmox.Node != config.Proxmox.Node) {
+		if existing.Proxmox.User != config.Proxmox.User || (existing.Proxmox.Node != "" && existing.Proxmox.Node != config.Proxmox.Node) {
 			return LabConfig{}, Inventory{}, errors.New("existing Proxmox enrollment binding does not match this verified host")
+		}
+		updated, changed, bindErr := bindVerifiedEnrollmentAddress(existing, transport.Address, config.Proxmox.Node)
+		if bindErr != nil {
+			return LabConfig{}, Inventory{}, bindErr
+		}
+		if changed {
+			if err := SaveConfig(updated); err != nil {
+				return LabConfig{}, Inventory{}, fmt.Errorf("save Proxmox enrollment binding: %w", err)
+			}
+			return updated, core, nil
 		}
 		if existing.Proxmox.Node == "" {
 			existing.Proxmox.Node = config.Proxmox.Node
@@ -108,6 +120,27 @@ func Enroll(ctx context.Context, transport Transport) (LabConfig, Inventory, err
 		return LabConfig{}, Inventory{}, err
 	}
 	return config, core, nil
+}
+
+func bindVerifiedEnrollmentAddress(existing LabConfig, address, node string) (LabConfig, bool, error) {
+	if existing.Proxmox.Address == address {
+		if existing.Proxmox.Node == "" && node != "" {
+			existing.Proxmox.Node = node
+			return existing, true, nil
+		}
+		return existing, false, nil
+	}
+	if address != model.ProxmoxManagementAddress {
+		return LabConfig{}, false, errors.New("existing Proxmox enrollment binding differs; only the verified internal management address may become the active connection")
+	}
+	if existing.Proxmox.ConnectionAddress != "" && existing.Proxmox.ConnectionAddress != address {
+		return LabConfig{}, false, errors.New("existing Proxmox active connection binding does not match this verified host")
+	}
+	existing.Proxmox.ConnectionAddress = address
+	if existing.Proxmox.Node == "" {
+		existing.Proxmox.Node = node
+	}
+	return existing, true, nil
 }
 
 func readKnownHosts() ([]byte, error) {

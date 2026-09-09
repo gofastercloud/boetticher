@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +48,8 @@ func runObservabilityCapability(capability, action string, args []string, input 
 	fs.SetOutput(errOut)
 	yes := fs.Bool("yes", false, "approve the intent change")
 	planOnly := fs.Bool("plan", false, "show the teardown plan without changing state")
+	publicDomain := fs.String("public-domain", "", "public DNS domain for the Caddy observability frontend (apply or plan)")
+	holmesModel := fs.String("holmes-model", "", "explicit Holmes provider model, such as openai/gpt-4.1-mini (apply or plan)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -55,6 +58,9 @@ func runObservabilityCapability(capability, action string, args []string, input 
 	}
 	if *planOnly && action != "teardown" {
 		return errors.New("--plan is only supported for module teardown")
+	}
+	if (*publicDomain != "" || *holmesModel != "") && action != "apply" && action != "plan" {
+		return errors.New("--public-domain and --holmes-model are only supported for module observability apply or plan")
 	}
 	if action == "test" {
 		config, err := loadLabConfig()
@@ -70,14 +76,14 @@ func runObservabilityCapability(capability, action string, args []string, input 
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := (observability.HostClient{Transport: transport}).VerifyReadiness(ctx, b); err != nil {
+		if err := (observability.HostClient{Transport: transport}).VerifyReadinessForModules(ctx, b, config.Modules); err != nil {
 			return err
 		}
 		fmt.Fprintln(out, "Module observability test: PASS (owned guest and local provider endpoints ready)")
 		return nil
 	}
 	if action == "apply" {
-		return applyObservability(b, *yes, input, out)
+		return applyObservability(b, *yes, *publicDomain, *holmesModel, input, out)
 	}
 	if action == "teardown" {
 		return teardownObservability(b, *yes, *planOnly, input, out)
@@ -85,6 +91,11 @@ func runObservabilityCapability(capability, action string, args []string, input 
 	config, err := loadLabConfig()
 	if err != nil {
 		return err
+	}
+	if action == "plan" && (*publicDomain != "" || *holmesModel != "") {
+		if _, err := prepareObservabilityApplyConfig(config, *publicDomain, *holmesModel); err != nil {
+			return err
+		}
 	}
 	if action == "status" && !observability.Enabled(config.Modules) {
 		desired := "disabled"
@@ -94,6 +105,10 @@ func runObservabilityCapability(capability, action string, args []string, input 
 			desired = "unconfigured"
 		}
 		fmt.Fprintf(out, "Module %s\n  Desired  %s\n  State    %s\n", capability, desired, desired)
+		return nil
+	}
+	if action == "status" && capability == "aiops" && !aiopsEnabled(config.Modules) {
+		fmt.Fprintln(out, "Module aiops\n  Desired  unconfigured\n  State    unconfigured")
 		return nil
 	}
 	transport, err := observabilityTransport(config)
@@ -110,7 +125,7 @@ func runObservabilityCapability(capability, action string, args []string, input 
 	if err != nil {
 		return err
 	}
-	services := requiredObservabilityServices(capability, nil)
+	services := requiredObservabilityServices(capability, config.Modules)
 	serviceStates := make([]string, 0, len(services))
 	for _, serviceName := range services {
 		svc, serviceErr := client.ServiceStatus(ctx, b, serviceName)
@@ -174,13 +189,17 @@ func planObservability(ctx context.Context, client observability.HostClient, b o
 	return nil
 }
 
-func applyObservability(b observability.Binding, yes bool, input io.Reader, out io.Writer) error {
+func applyObservability(b observability.Binding, yes bool, publicDomain, holmesModel string, input io.Reader, out io.Writer) error {
 	lock, err := acquireObservabilityLock(controllerhost.ClientServicesLockPath)
 	if err != nil {
 		return err
 	}
 	defer lock.Release()
 	config, err := loadLabConfig()
+	if err != nil {
+		return err
+	}
+	config, err = prepareObservabilityApplyConfig(config, publicDomain, holmesModel)
 	if err != nil {
 		return err
 	}
@@ -207,6 +226,9 @@ func applyObservability(b observability.Binding, yes bool, input io.Reader, out 
 	if secretErr != nil {
 		return secretErr
 	}
+	if missing := missingObservabilitySecrets(config.Modules, secrets); len(missing) > 0 {
+		return fmt.Errorf("module observability requires secrets before guest mutation: %s; set them with module observability secrets set NAME", strings.Join(missing, ", "))
+	}
 	payloadRoot, payloadErr := observabilityPayloadRoot()
 	if payloadErr != nil {
 		return payloadErr
@@ -226,7 +248,7 @@ func applyObservability(b observability.Binding, yes bool, input io.Reader, out 
 	if observability.Enabled(config.Modules) && observation.State == "owned" {
 		desiredDigest, digestErr := observabilityDigest(config.Modules, secrets, payloadDigest, collection)
 		servicesHealthy := true
-		for _, serviceName := range observability.Services() {
+		for _, serviceName := range observability.ServicesForModules(config.Modules) {
 			service, serviceErr := client.ServiceStatus(ctx, b, serviceName)
 			if serviceErr != nil || !serviceHealthy(service) {
 				servicesHealthy = false
@@ -256,7 +278,7 @@ func applyObservability(b observability.Binding, yes bool, input io.Reader, out 
 	if err := client.ReconcileGuestWithTLS(ctx, b, payloadRoot, config.Modules, secrets, domain, desiredDigest, collection); err != nil {
 		return err
 	}
-	for _, serviceName := range observability.Services() {
+	for _, serviceName := range observability.ServicesForModules(config.Modules) {
 		service, serviceErr := client.ServiceStatus(ctx, b, serviceName)
 		if serviceErr != nil || !serviceHealthy(service) {
 			if serviceErr != nil {
@@ -320,8 +342,7 @@ func observabilityDigest(modules clientservices.Modules, secrets map[string][]by
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func requiredObservabilityServices(capability string, monitoring *clientservices.MonitoringConfig) []string {
-	_ = monitoring
+func requiredObservabilityServices(capability string, modules clientservices.Modules) []string {
 	switch capability {
 	case "logging":
 		return []string{"victorialogs.service", "grafana.service"}
@@ -330,10 +351,17 @@ func requiredObservabilityServices(capability string, monitoring *clientservices
 	case "statuspage":
 		return []string{"gatus.service"}
 	case "aiops":
+		if modules.AIOps == nil || !clientservices.Enabled(modules.AIOps.Enabled) || modules.AIOps.Holmes == nil || !clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+			return nil
+		}
 		return []string{"bifrost.service"}
 	default:
-		return observability.Services()
+		return observability.ServicesForModules(modules)
 	}
+}
+
+func aiopsEnabled(modules clientservices.Modules) bool {
+	return modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled)
 }
 
 func capabilityConfigured(modules clientservices.Modules, capability string) bool {
@@ -345,6 +373,86 @@ func setObservabilityEnabled(modules *clientservices.Modules, enabled bool) {
 		modules.Observability = &clientservices.ObservabilityConfig{}
 	}
 	modules.Observability.Enabled = &enabled
+}
+
+func prepareObservabilityApplyConfig(config controllerhost.LabConfig, publicDomain, holmesModel string) (controllerhost.LabConfig, error) {
+	prepared := config
+	prepared.Modules = config.Modules.Clone()
+	if prepared.Modules.Observability == nil {
+		prepared.Modules.Observability = &clientservices.ObservabilityConfig{}
+	}
+	if publicDomain != "" {
+		canonical := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(publicDomain)), ".")
+		if !clientservices.ValidPublicDomain(canonical) {
+			return controllerhost.LabConfig{}, errors.New("--public-domain must be a valid public DNS domain")
+		}
+		prepared.Modules.Observability.PublicDomain = canonical
+	}
+	if !clientservices.ValidPublicDomain(prepared.Modules.Observability.PublicDomain) {
+		return controllerhost.LabConfig{}, errors.New("observability apply requires --public-domain DOMAIN on first apply")
+	}
+	if holmesModel != "" {
+		if prepared.Modules.AIOps == nil {
+			enabled := true
+			prepared.Modules.AIOps = &clientservices.AIOpsConfig{Enabled: &enabled}
+		}
+		if prepared.Modules.AIOps.Holmes == nil {
+			enabled := true
+			prepared.Modules.AIOps.Holmes = &clientservices.HolmesConfig{Enabled: &enabled, ModelAlias: "operations"}
+		}
+		holmes := prepared.Modules.AIOps.Holmes
+		enabled := true
+		holmes.Enabled = &enabled
+		if holmes.ModelAlias == "" {
+			holmes.ModelAlias = "operations"
+		}
+		if holmes.Bifrost.ClientCredential == "" {
+			holmes.Bifrost.ClientCredential = "holmes-client-token"
+		}
+		if len(holmes.Bifrost.Upstreams) == 0 {
+			holmes.Bifrost.Upstreams = []clientservices.BifrostUpstream{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", SecretRef: "openrouter-api-key"}}
+		}
+		if len(holmes.Bifrost.Models) == 0 {
+			holmes.Bifrost.Models = []clientservices.BifrostModel{{Alias: holmes.ModelAlias, Upstream: holmes.Bifrost.Upstreams[0].Name, Model: holmesModel}}
+		} else {
+			found := false
+			for index := range holmes.Bifrost.Models {
+				if holmes.Bifrost.Models[index].Alias == holmes.ModelAlias {
+					holmes.Bifrost.Models[index].Model = holmesModel
+					found = true
+					break
+				}
+			}
+			if !found {
+				return controllerhost.LabConfig{}, fmt.Errorf("--holmes-model requires the configured Holmes alias %q", holmes.ModelAlias)
+			}
+		}
+	}
+	intentSite := model.NewSite(prepared.Name, "controller-local", model.GatewayModeManaged)
+	if prepared.Network != nil && prepared.Network.Domain != "" {
+		intentSite.Network.Domain = prepared.Network.Domain
+	}
+	if err := clientservices.Validate(prepared.Modules, intentSite); err != nil {
+		return controllerhost.LabConfig{}, fmt.Errorf("validate observability apply intent: %w", err)
+	}
+	return prepared, nil
+}
+
+func missingObservabilitySecrets(modules clientservices.Modules, secrets map[string][]byte) []string {
+	wanted := observability.RequiredSecretNames(modules)
+	seen := make(map[string]struct{}, len(wanted))
+	missing := make([]string, 0, len(wanted))
+	for _, name := range wanted {
+		if _, already := seen[name]; already {
+			continue
+		}
+		seen[name] = struct{}{}
+		if len(secrets[name]) == 0 {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func affirm(input io.Reader, out io.Writer, prompt string) bool {

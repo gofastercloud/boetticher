@@ -240,6 +240,28 @@ func containsCall(calls []string, fragment string) bool {
 	return false
 }
 
+func TestServicesForModulesIncludesCaddyAndOnlyConfiguredBifrost(t *testing.T) {
+	base := ServicesForModules(clientservices.Modules{})
+	if containsService(base, "bifrost.service") || !containsService(base, "caddy.service") {
+		t.Fatalf("unconfigured service set = %#v", base)
+	}
+	enabled := true
+	modules := clientservices.Modules{AIOps: &clientservices.AIOpsConfig{Enabled: &enabled, Holmes: &clientservices.HolmesConfig{Enabled: &enabled}}}
+	configured := ServicesForModules(modules)
+	if !containsService(configured, "bifrost.service") || !containsService(configured, "caddy.service") {
+		t.Fatalf("configured service set = %#v", configured)
+	}
+}
+
+func containsService(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func countCallPrefix(calls []string, prefix string) int {
 	count := 0
 	for _, call := range calls {

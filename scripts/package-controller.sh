@@ -11,8 +11,8 @@ main() {
   esac
 
   go_bin=${BOETTICHER_GO_BIN:-$(command -v go || true)}
-  [ -n "$go_bin" ] && [ -x "$go_bin" ] || { echo 'Go toolchain is unavailable; set BOETTICHER_GO_BIN to Go 1.26.5' >&2; exit 1; }
-  "$go_bin" version | grep -Eq 'go1\.26\.5([[:space:]]|$)' || { echo 'Controller packaging requires Go 1.26.5; set BOETTICHER_GO_BIN' >&2; exit 1; }
+  [ -n "$go_bin" ] && [ -x "$go_bin" ] || { echo 'Go toolchain is unavailable; set BOETTICHER_GO_BIN to Go 1.26.6' >&2; exit 1; }
+  "$go_bin" version | grep -Eq 'go1\.26\.6([[:space:]]|$)' || { echo 'Controller packaging requires Go 1.26.6; set BOETTICHER_GO_BIN' >&2; exit 1; }
   go_cache=${GOCACHE:-/tmp/boetticher-gocache}
   go_mod_cache=${GOMODCACHE:-/tmp/boetticher-gomodcache}
   export GOCACHE="$go_cache" GOMODCACHE="$go_mod_cache"

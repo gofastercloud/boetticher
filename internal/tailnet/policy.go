@@ -2,8 +2,9 @@ package tailnet
 
 import (
 	"fmt"
-	"github.com/gofastercloud/boetticher/internal/model"
 	"strings"
+
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 // NonPublicIPv4 excludes LAB, HOME, loopback, link-local, multicast and
@@ -24,8 +25,10 @@ table inet boetticher_tailnet {
  chain forward {
   type filter hook forward priority -10; policy drop;
   meta nfproto ipv6 counter drop
-  iifname "tailscale0" oifname "eth0" ip daddr { %s } counter accept
-  iifname "tailscale0" oifname "eth0" ip daddr 10.10.5.1 tcp dport 53 counter accept
+	 iifname "tailscale0" oifname "eth0" ip daddr { %s } counter accept
+	 iifname "tailscale0" oifname "eth0" ip daddr 10.10.99.0/24 tcp dport 22 counter accept
+	 iifname "tailscale0" oifname "eth0" ip daddr 10.10.10.20 tcp dport 443 counter accept
+	 iifname "tailscale0" oifname "eth0" ip daddr 10.10.5.1 tcp dport 53 counter accept
   iifname "tailscale0" oifname "eth0" ip daddr 10.10.5.1 udp dport { 53, 123 } counter accept
   iifname "eth0" oifname "tailscale0" ct state established,related counter accept
  }

@@ -184,7 +184,7 @@ func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
 				return response([]byte(`{"data":[
   {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},
   {"iface":"vmbr1","type":"bridge","bridge_ports":"enxa0cec8a2b210","bridge_vlan_aware":true},
-  {"iface":"vmbr1.99","type":"vlan","method":"static","address":"10.10.99.5/24"},
+  {"iface":"vmbr1.99","type":"vlan","method":"static","address":"10.10.99.5/24","active":true,"autostart":true},
   {"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true},
   {"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee","active":false}
 ]}`))
@@ -209,7 +209,7 @@ func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
 			}
-			if r.Form.Get("iface") != "vmbr1.99" || r.Form.Get("type") != "vlan" || r.Form.Get("vlan-id") != "99" || r.Form.Get("vlan-raw-device") != "vmbr1" || r.Form.Get("address") != "10.10.99.5/24" {
+			if r.Form.Get("iface") != "vmbr1.99" || r.Form.Get("type") != "vlan" || r.Form.Get("vlan-id") != "99" || r.Form.Get("vlan-raw-device") != "vmbr1" || r.Form.Get("cidr") != "10.10.99.5/24" {
 				t.Fatalf("unexpected management VLAN form: %v", r.Form)
 			}
 			return response([]byte(`{"data":null}`))
@@ -256,7 +256,7 @@ func TestAttachTrunkAlreadyExactIsNoOp(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/proxmox/network" {
 			reads++
-			return response([]byte(`{"data":[{"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},{"iface":"vmbr1","type":"bridge","bridge_ports":"enxa0cec8a2b210","bridge_vlan_aware":true},{"iface":"vmbr1.99","type":"vlan","method":"static","address":"10.10.99.5/24","vlan-id":99,"vlan-raw-device":"vmbr1"},{"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee"}]}`))
+			return response([]byte(`{"data":[{"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},{"iface":"vmbr1","type":"bridge","bridge_ports":"enxa0cec8a2b210","bridge_vlan_aware":true},{"iface":"vmbr1.99","type":"vlan","method":"static","address":"10.10.99.5/24","vlan-id":99,"vlan-raw-device":"vmbr1","active":true,"autostart":true},{"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee"}]}`))
 		}
 		writes++
 		t.Fatalf("exact repeat attempted mutation: %s %s", r.Method, r.URL.Path)

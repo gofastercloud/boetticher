@@ -103,6 +103,13 @@ public Caddy DNS-01 frontend and native journal upload with system trust. The
 Host-owned `vmbr1.99` path is `10.10.99.5/24` with LAB routes via `10.10.99.1`.
 Stage 5 covers monitoring, logging, statuspage, and AIOps work.
 
+The managed firewall keeps inter-zone forwarding disabled for this access. Its
+owned rules allow TCP/22 from TRUSTED and the identity-bound Tailnet router to
+MGMT, plus TCP/22 from the resolved Controller SERVERS reservation to the Host
+at `10.10.99.5`. After the Host path is applied, re-enroll through the verified
+internal address to make it the active Controller connection; the original
+HOME address and strict imported SSH trust remain the explicit recovery path.
+
 Defer new network modules, an aggregate coordinator, SSO platforms, and
 switch automation. The existing management route remains the boundary.
 
@@ -179,10 +186,11 @@ boetticher module observability alerts pushover apply|status|test|remove
 `module observability` creates and reconciles the exact unprivileged
 `lab-monitor-01` LXC (VMID 120, VLAN 10) with retained metrics, logs, and
 observability state volumes. It owns VictoriaMetrics, VictoriaLogs, Grafana,
-Gatus, and Bifrost together; the four operator capabilities are logging,
-monitoring, status page, and AIOps. The lifecycle and `secrets` operations
-apply to the whole runtime, while the component commands are read-only status
-and query operations. `module aiops ask` is an explicit model operation.
+Gatus, and the optional explicitly configured Bifrost/Holmes route; the four
+operator capabilities are logging, monitoring, status page, and AIOps. The
+lifecycle and `secrets` operations apply to the whole runtime, while the
+component commands are read-only status and query operations. `module aiops
+ask` is an explicit model operation.
 Teardown stops the whole owned guest and retains its data for a later apply.
 Apply provisions the public Caddy frontend and native collection paths. Live
 Controller/Host acceptance of that path remains `NOT TESTED` in this phase.
@@ -210,6 +218,25 @@ observability lifecycle. `status` never prints keys. `test` accepts a local
 `user:API` file, requires approval unless `--yes` is supplied, validates the
 account, and sends one clearly labelled normal-priority message without retry.
 Disabled or unconfigured Pushover remains inert.
+
+For a fresh apply, provide the operator secrets before creating the guest;
+the command reports every missing name without starting a partial runtime:
+
+```text
+boetticher module observability secrets set grafana-admin-password
+boetticher module observability secrets set statuspage-password
+boetticher module observability secrets set cloudflare-dns-token
+boetticher module observability apply --public-domain davebarton.cc --yes
+```
+
+To opt into Holmes/Bifrost, also set `holmes-client-token` and
+`openrouter-api-key`, then apply with the explicit provider model:
+
+```text
+boetticher module observability secrets set holmes-client-token
+boetticher module observability secrets set openrouter-api-key
+boetticher module observability apply --public-domain davebarton.cc --holmes-model openai/gpt-4.1-mini --yes
+```
 
 Apply creates only an absent exact guest, refuses foreign or mismatched
 identity, uploads the installed provider payload, and verifies the active

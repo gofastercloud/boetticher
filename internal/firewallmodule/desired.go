@@ -166,6 +166,8 @@ func observabilityFirewallSections(services clientservices.Modules) ([]Section, 
 		return nil, errors.New("enabled observability requires the lab-companion SERVERS reservation")
 	}
 	return []Section{
+		{Name: "boetticher_allow_controller_host_ssh", Type: "rule", Options: map[string]string{"name": "Boetticher Controller SSH to Host", "src": "servers", "src_ip": controller.Address + "/32", "dest": "mgmt", "dest_ip": "10.10.99.5/32", "proto": "tcp", "dest_port": "22", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
+		{Name: "boetticher_allow_trusted_observability_https", Type: "rule", Options: map[string]string{"name": "Boetticher TRUSTED HTTPS to observability", "src": "trusted", "dest": "infra", "dest_ip": "10.10.10.20/32", "proto": "tcp", "dest_port": "443", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
 		{Name: "boetticher_observability_metrics_proxmox", Type: "rule", Options: map[string]string{"name": "Boetticher observability metrics to Proxmox", "src": "infra", "src_ip": "10.10.10.20/32", "dest": "mgmt", "dest_ip": "10.10.99.5/32", "proto": "tcp", "dest_port": "9100", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
 		{Name: "boetticher_observability_metrics_controller", Type: "rule", Options: map[string]string{"name": "Boetticher observability metrics to Controller", "src": "infra", "src_ip": "10.10.10.20/32", "dest": "servers", "dest_ip": controller.Address + "/32", "proto": "tcp", "dest_port": "9100", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
 		{Name: "boetticher_observability_logs_proxmox", Type: "rule", Options: map[string]string{"name": "Boetticher Host logs to observability", "src": "mgmt", "src_ip": "10.10.99.5/32", "dest": "infra", "dest_ip": "10.10.10.20/32", "proto": "tcp", "dest_port": "443", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}},
@@ -225,6 +227,7 @@ func firewallSections(zones []Zone, managementNetwork, controllerAddress string)
 			sections = append(sections, Section{Name: "boetticher_forward_" + name + "_home_wan", Type: "forwarding", Options: map[string]string{"src": name, "dest": "home_wan", "family": "ipv4"}, Lists: map[string][]string{}})
 		}
 		if zone.Type == model.ZoneTypeTrusted {
+			sections = append(sections, Section{Name: "boetticher_allow_trusted_mgmt_ssh", Type: "rule", Options: map[string]string{"name": "Boetticher TRUSTED SSH to MGMT", "src": name, "dest": "mgmt", "proto": "tcp", "dest_port": "22", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}})
 			for _, target := range model.TrustedRoutedDestinations() {
 				destination := strings.ToLower(target.Zone)
 				sections = append(sections, Section{Name: "boetticher_forward_trusted_" + destination, Type: "forwarding", Options: map[string]string{"src": name, "dest": destination, "family": "ipv4"}, Lists: map[string][]string{}})
