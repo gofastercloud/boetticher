@@ -158,11 +158,8 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 		return err
 	}
 	verifyErr := verifyClientServices(ctx, provider, state, "arrstack")
-	if verifyErr != nil {
-		var drift *clientServicesDriftError
-		if !errors.As(verifyErr, &drift) {
-			return fmt.Errorf("verify DNS/DHCP/VPN prerequisites: %w", verifyErr)
-		}
+	if verifyErr != nil && !strings.Contains(verifyErr.Error(), "not at the desired state") {
+		return fmt.Errorf("verify DNS/DHCP/VPN prerequisites: %w", verifyErr)
 	}
 	port := arrstackPeerPort(proposed)
 	guestBefore, err := arrstack.InspectGuest(ctx, sc.Host, mediaGiB)
