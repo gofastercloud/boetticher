@@ -48,11 +48,11 @@ s = (root / "src/usecase/install.ts").read_text()
 needle = '''        "docker", "compose", "-f", join(installDir, "docker-compose.yml"),
         "pull", "--ignore-buildable",
       ],
-      { timeoutMs: 600_000 },'''
+      { timeoutMs: 600_000 }'''
 replacement = '''        "docker", "compose", "-f", join(installDir, "docker-compose.yml"),
         "pull", "--ignore-buildable",
       ],
-      { timeoutMs: Number(process.env.ARRSTACK_HEADLESS_PULL_TIMEOUT_MS ?? "600000") },'''
+      { timeoutMs: Number(process.env.ARRSTACK_HEADLESS_PULL_TIMEOUT_MS ?? "600000") }'''
 if needle not in s: raise SystemExit("headless compose pull timeout anchor missing")
 s = s.replace(needle, replacement, 1)
 (root / "src/usecase/install.ts").write_text(s)
