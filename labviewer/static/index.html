@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lab Viewer · Boetticher</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar"><a class="wordmark" href="/"><span class="mark">B</span><span>BOETTICHER <em>LAB VIEWER</em></span></a><div class="live"><i></i><span id="freshness">Reading live lab.yml</span></div></header>
+    <section class="hero">
+      <div class="hero-copy"><p class="eyebrow">CONTROL ROOM / PRIVATE NETWORK</p><h1>Everything in<br><span>one place.</span></h1><p class="lede">A calm map of your lab, its health signals, and the interfaces that keep it moving.</p><div class="hero-meta"><span id="domain">—</span><span>·</span><span id="updated">Waiting for configuration</span></div></div>
+      <div class="hero-art"><img src="/boetticher-cover.jpg" alt="Breaking Prod · Boetticher illustration"><div class="art-glow"></div></div>
+    </section>
+    <section class="stats" aria-label="Lab summary"><div><strong id="module-count">—</strong><span>configured modules</span></div><div><strong id="active-count">—</strong><span>active now</span></div><div><strong id="api-version">—</strong><span>schema</span></div><div><strong>LIVE</strong><span>source of truth</span></div></section>
+    <section class="toolbar"><div><p class="eyebrow">QUICK ACCESS</p><h2>Control surfaces</h2></div><label class="search"><span>⌕</span><input id="filter" type="search" placeholder="Find a service…" autocomplete="off"></label></section>
+    <div id="content"><div class="loading"><span></span><span></span><span></span></div></div>
+    <details class="config"><summary><span>⌘</span> Explore redacted configuration <small>Secrets are hidden in the browser response</small></summary><pre id="config-json"></pre></details>
+    <footer><span>BOETTICHER / LAB VIEWER</span><span id="source-path">Live file</span></footer>
+  </main>
+</body>
+</html>
