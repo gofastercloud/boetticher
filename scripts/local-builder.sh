@@ -158,7 +158,7 @@ sync_native_source() {
   [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
   native_ssh 'rm -rf -- /var/lib/boetticher/local-builder/source; install -d -m 0755 /var/lib/boetticher/local-builder/source'
   source_archive=$(mktemp "${TMPDIR:-/tmp}/boetticher-source.XXXXXX")
-  if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/local-builder-archive -mode source -root "$repo_root" > "$source_archive"; then
+  if ! GOCACHE=${GOCACHE:-$(go env GOCACHE)} GOMODCACHE=${GOMODCACHE:-$(go env GOMODCACHE)} go run ./cmd/local-builder-archive -mode source -root "$repo_root" > "$source_archive"; then
     rm -f -- "$source_archive"
     fail 'could not create the public native-builder source archive'
   fi
@@ -328,7 +328,7 @@ pull_native_output() {
     rm -f -- "$output_archive"
     fail 'could not retrieve native builder output'
   fi
-  if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/local-builder-archive -mode output -root "$repo_root" < "$output_archive"; then
+  if ! GOCACHE=${GOCACHE:-$(go env GOCACHE)} GOMODCACHE=${GOMODCACHE:-$(go env GOMODCACHE)} go run ./cmd/local-builder-archive -mode output -root "$repo_root" < "$output_archive"; then
     rm -f -- "$output_archive"
     fail 'native builder output failed bounded archive validation'
   fi

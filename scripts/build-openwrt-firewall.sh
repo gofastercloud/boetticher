@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
 
+if [ "${BOETTICHER_BUILD_TEMP_ACTIVE:-0}" != 1 ] || [ ! -f "${BOETTICHER_BUILD_TEMP_DIR:-}/.boetticher-build-token" ] || [ ! -f "${BOETTICHER_BUILD_TEMP_LOCK:-}" ] || ! grep -F -x -q -- "${BOETTICHER_BUILD_TEMP_TOKEN:-}" "${BOETTICHER_BUILD_TEMP_DIR:-}/.boetticher-build-token"; then
+    keep_flag=
+    if [ "${1:-}" = --keep-build-files ]; then
+        keep_flag=--keep-build-files
+        shift
+    fi
+    script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+    exec python3 "$script_dir/build-temp.py" run "${BOETTICHER_BUILD_TEMP_ROOT:-${TMPDIR:-/var/tmp}/boetticher-builds}" $keep_flag -- "$0" "$@"
+fi
+
 if [ "$#" -ne 5 ]; then
     echo "usage: build-openwrt-firewall.sh OUTPUT.img MANAGEMENT_IPV4 NETMASK HOME_GATEWAY CONTROLLER_IPV4" >&2
     exit 2
@@ -43,8 +53,8 @@ esac
 version=25.12.5
 builder_revision=r33051-f5dae5ece4
 builder_url="https://downloads.openwrt.org/releases/${version}/targets/x86/64/openwrt-imagebuilder-${version}-x86-64.Linux-x86_64.tar.zst"
-work=$(mktemp -d /tmp/boetticher-openwrt-image.XXXXXX)
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+work="$BOETTICHER_BUILD_TEMP_DIR/openwrt-image"
+mkdir -m 0700 "$work"
 mkdir -p "$work/tmp"
 TMPDIR="$work/tmp"
 export TMPDIR

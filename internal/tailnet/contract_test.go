@@ -1,6 +1,9 @@
 package tailnet
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseNativeRequiresApprovedRouteAndExactPreferences(t *testing.T) {
 	status := []byte(`{"BackendState":"Running","Version":"1.102.3","TUN":true,"Self":{"Online":true,"Expired":false,"PrimaryRoutes":["10.10.0.0/16"],"AllowedIPs":[]}}`)
@@ -25,5 +28,16 @@ func TestParseNativeRejectsMalformedStatusAndPreferences(t *testing.T) {
 	status := []byte(`{"BackendState":"Running","Version":"1.102.3","TUN":true,"Self":{"Online":true,"PrimaryRoutes":["10.10.0.0/16"]}}`)
 	if report, err := ParseNative(status, []byte(`{}`)); err != nil || report.State != Failed {
 		t.Fatalf("malformed prefs state = %#v, err=%v", report, err)
+	}
+}
+
+func TestGuestPolicyAllowsOnlyProxmoxManagementSSH(t *testing.T) {
+	policy := GuestPolicy()
+	want := `iifname "tailscale0" oifname "eth0" ip daddr 10.10.99.5 tcp dport 22 counter accept`
+	if !strings.Contains(policy, want) {
+		t.Fatalf("Tailnet policy missing narrow Proxmox SSH allow %q:\n%s", want, policy)
+	}
+	if strings.Contains(policy, "10.10.99.0/24") {
+		t.Fatal("Tailnet policy broadly allows the MGMT subnet")
 	}
 }

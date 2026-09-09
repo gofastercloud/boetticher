@@ -356,7 +356,7 @@ HOME
 
 Virtual LAB
   |
-  +-- vmbr1   VLAN-aware, no host address, nic1 tagged member (VLAN 20/40)
+  +-- vmbr1   VLAN-aware, nic1 tagged member (VLAN 5/10/20/30/40/99)
        |
        +-- VLAN 5   TRANSIT
        +-- VLAN 10  INFRA
@@ -374,10 +374,12 @@ sudo boetticher host status
 ```
 
 `host status` is read-only. `host apply` adds an absent `vmbr1` stanza with VLAN
-awareness and no address or gateway. The accepted physical binding is the
-verified `nic1` MAC `a0:ce:c8:a2:b2:10`, restricted to tagged VLAN 20/40 with
-untagged ingress rejected. It never rewrites `vmbr0`, changes `192.168.4.5`,
-changes the default route, creates host VLAN subinterfaces, enables forwarding,
+awareness and no untagged address or gateway. The accepted physical binding is
+the verified `nic1` MAC `a0:ce:c8:a2:b2:10`, restricted to tagged VLANs
+5/10/20/30/40/99 with untagged ingress rejected. Host management uses tagged
+`vmbr1.99` at `10.10.99.5/24`, with LAB return routes via `10.10.99.1`. It
+never rewrites `vmbr0`, changes `192.168.4.5`, changes the default route,
+enables forwarding,
 or configures DHCP, DNS, firewall, guests, or switches. An unknown or
 conflicting `vmbr1` or physical binding is reported and not adopted.
 

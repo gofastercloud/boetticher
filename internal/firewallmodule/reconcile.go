@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 	"github.com/gofastercloud/boetticher/internal/tailnet"
 )
@@ -122,6 +123,7 @@ func managedRuleIdentity(name string, options map[string]string) bool {
 			"ntp":            "Boetticher Tailnet ntp",
 			"trusted":        "Boetticher Tailnet trusted",
 			"servers":        "Boetticher Tailnet servers",
+			"proxmox_ssh":    "Boetticher Tailnet proxmox_ssh",
 		}[id]
 		return ok && options["name"] == expectedName && options["src"] == "transit" && options["src_ip"] == tailnet.GuestAddress+"/32" && options["src_mac"] == tailnet.GuestMAC && options["family"] == "ipv4"
 	}
@@ -145,6 +147,9 @@ func managedRuleIdentity(name string, options map[string]string) bool {
 		if expected, ok := checks[name]; ok {
 			return options["name"] == expected[0] && options["src"] == expected[1] && options["proto"] == expected[2] && options["family"] == "ipv4"
 		}
+	}
+	if name == "boetticher_allow_trusted_proxmox_ssh" {
+		return options["name"] == "Boetticher TRUSTED Proxmox SSH" && options["src"] == "trusted" && options["dest"] == "mgmt" && options["dest_ip"] == model.ProxmoxManagementAddress+"/32" && options["proto"] == "tcp" && options["dest_port"] == "22" && options["family"] == "ipv4"
 	}
 	return name == "boetticher_allow_home_api" && options["name"] == "Boetticher Controller management API" && options["src"] == "home_wan" && options["proto"] == "tcp" && options["family"] == "ipv4"
 }

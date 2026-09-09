@@ -3,6 +3,7 @@ package firewallmodule
 import (
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
 
@@ -40,6 +41,19 @@ func TestDiffFirewallIgnoresForeignSafetyIPSet(t *testing.T) {
 			t.Fatal("foreign safety ipset was scheduled for teardown")
 		}
 	}
+}
+
+func TestTailnetProxmoxSSHRuleIsExact(t *testing.T) {
+	for _, section := range tailnetFirewallSections("192.168.4.0/22") {
+		if section.Name != "boetticher_tailnet_proxmox_ssh" {
+			continue
+		}
+		if section.Options["dest"] != "mgmt" || section.Options["dest_ip"] != model.ProxmoxManagementAddress+"/32" || section.Options["proto"] != "tcp" || section.Options["dest_port"] != "22" {
+			t.Fatalf("Tailnet Proxmox SSH rule is broader than required: %#v", section.Options)
+		}
+		return
+	}
+	t.Fatal("Tailnet Proxmox SSH rule missing")
 }
 
 func TestTailnetTransportAllowsControlFallbackPorts(t *testing.T) {

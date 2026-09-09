@@ -193,6 +193,7 @@ func firewallSections(zones []Zone, managementNetwork, controllerAddress string)
 			sections = append(sections, Section{Name: "boetticher_forward_" + name + "_home_wan", Type: "forwarding", Options: map[string]string{"src": name, "dest": "home_wan", "family": "ipv4"}, Lists: map[string][]string{}})
 		}
 		if zone.Type == model.ZoneTypeTrusted {
+			sections = append(sections, Section{Name: "boetticher_allow_trusted_proxmox_ssh", Type: "rule", Options: map[string]string{"name": "Boetticher TRUSTED Proxmox SSH", "src": name, "dest": "mgmt", "dest_ip": model.ProxmoxManagementAddress + "/32", "proto": "tcp", "dest_port": "22", "family": "ipv4", "target": "ACCEPT"}, Lists: map[string][]string{}})
 			for _, target := range model.TrustedRoutedDestinations() {
 				destination := strings.ToLower(target.Zone)
 				sections = append(sections, Section{Name: "boetticher_forward_trusted_" + destination, Type: "forwarding", Options: map[string]string{"src": name, "dest": destination, "family": "ipv4"}, Lists: map[string][]string{}})

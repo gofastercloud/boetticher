@@ -17,6 +17,7 @@ func Destinations() []string {
 	}
 	return result
 }
+
 func GuestPolicy() string {
 	return fmt.Sprintf(`table inet boetticher_tailnet
 flush table inet boetticher_tailnet
@@ -25,6 +26,7 @@ table inet boetticher_tailnet {
   type filter hook forward priority -10; policy drop;
   meta nfproto ipv6 counter drop
   iifname "tailscale0" oifname "eth0" ip daddr { %s } counter accept
+  iifname "tailscale0" oifname "eth0" ip daddr %s tcp dport 22 counter accept
   iifname "tailscale0" oifname "eth0" ip daddr 10.10.5.1 tcp dport 53 counter accept
   iifname "tailscale0" oifname "eth0" ip daddr 10.10.5.1 udp dport { 53, 123 } counter accept
   iifname "eth0" oifname "tailscale0" ct state established,related counter accept
@@ -51,7 +53,7 @@ table inet boetticher_tailnet {
   oifname "eth0" meta l4proto udp accept
  }
 }
-`, strings.Join(Destinations(), ", "), NonPublicIPv4, NonPublicIPv4)
+`, strings.Join(Destinations(), ", "), model.ProxmoxManagementAddress, NonPublicIPv4, NonPublicIPv4)
 }
 
 // RuntimeFiles are installed atomically before enabling forwarding. No file
