@@ -99,7 +99,7 @@ func TestOpenWrtImageACLAllowsOwnedSectionCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(builder), `"uci": ["set", "add", "delete", "commit", "apply"]`) || !strings.Contains(string(builder), `"service": ["list"]`) || !strings.Contains(string(builder), `"service": ["event"]`) {
+	if !strings.Contains(string(builder), `"uci": ["set", "add", "delete", "commit", "apply"]`) || !strings.Contains(string(builder), `"network.interface.airvpn": ["down", "up"]`) || !strings.Contains(string(builder), `"service": ["list"]`) || !strings.Contains(string(builder), `"service": ["event"]`) {
 		t.Fatal("OpenWrt rpcd ACL does not allow owned UCI section creation")
 	}
 	for _, required := range []string{

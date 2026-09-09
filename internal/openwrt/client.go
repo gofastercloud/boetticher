@@ -288,7 +288,7 @@ func (c *Client) ReloadInterface(ctx context.Context, name string) error {
 		return errors.New("unsupported interface reload")
 	}
 	for _, method := range []string{"down", "up"} {
-		if _, err := c.callWithSession(ctx, "network.interface", method, map[string]any{"interface": name}); err != nil {
+		if _, err := c.callWithSession(ctx, "network.interface."+name, method, map[string]any{}); err != nil {
 			return fmt.Errorf("%s AirVPN interface: %w", method, err)
 		}
 	}

@@ -766,6 +766,7 @@ cat >"$files/usr/share/rpcd/acl.d/boetticher.json" <<'EOF'
     "write": {
       "ubus": {
         "uci": ["set", "add", "delete", "commit", "apply"],
+        "network.interface.airvpn": ["down", "up"],
         "service": ["event"],
         "file": ["exec"]
       },
