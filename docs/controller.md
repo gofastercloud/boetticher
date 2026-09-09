@@ -65,6 +65,28 @@ curl -fsSL "$RELEASE_BASE/install.sh" | \
 published, use `--from-dir`; the installer does not silently fall back to local
 files after a failed download or checksum check.
 
+### Keeping old releases tidy
+
+The installer keeps versioned releases under `/opt/boetticher/releases` so the
+`current` release can be swapped safely. It does not guess when an old release
+is safe to remove. Run the cleanup helper to get a read-only report first:
+
+```sh
+sudo sh /opt/boetticher/current/controller/proxmox/libexec/cleanup-controller-storage.sh
+```
+
+Review the list, then choose an age and retention count and approve explicitly:
+
+```sh
+sudo sh /opt/boetticher/current/controller/proxmox/libexec/cleanup-controller-storage.sh \
+  --keep-releases 2 --max-age-days 30 --yes
+```
+
+The helper refuses symlinked or non-root-owned releases and never removes
+`current`, `rollback`, unknown names, or recent releases. Temporary controller
+downloads can be reported with `--cache-root`; no live deletion happens without
+`--yes`. On a Mac, point `--cache-root` at the task-local controller cache.
+
 ## Bootstrap and status
 
 ```sh

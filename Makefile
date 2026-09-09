@@ -1,4 +1,4 @@
-.PHONY: arr-check controller-check ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-arr image-aiops image-gatus image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-arr scan-aiops scan-gatus scan-network-probe command-docs command-docs-check deadcode race streamdeck-check build-temp-check
+.PHONY: controller-check controller-cleanup ci test build release-bundle companion-binary companion-check vet fmt-check fmt ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-aiops image-gatus image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-aiops scan-gatus scan-network-probe command-docs command-docs-check deadcode race streamdeck-check build-temp-check
 
 GOCACHE ?= $(shell go env GOCACHE 2>/dev/null || printf '%s/go-build' "$${XDG_CACHE_HOME:-$${HOME}/Library/Caches}")
 GOMODCACHE ?= $(shell go env GOMODCACHE 2>/dev/null || printf '%s/go/pkg/mod' "$${HOME}")
@@ -41,6 +41,9 @@ controller-check:
 	ANSIBLE_CONFIG=controller/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i localhost, controller/bootstrap.yml
 	ANSIBLE_CONFIG=controller/proxmox/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i proxmox, controller/proxmox/prepare.yml
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/controller ./internal/controller/host ./internal/controllerstatus ./internal/cli
+
+controller-cleanup:
+	sh scripts/cleanup-controller-storage.sh
 
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
