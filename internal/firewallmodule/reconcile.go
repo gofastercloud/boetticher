@@ -48,6 +48,14 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 			return nil, fmt.Errorf("provider section %s has conflicting managed identity", name)
 		}
 		if !sameSection(observed, section) {
+			// Replacing a hostrecord explicitly removes the old reverse mapping
+			// before adding the new address; dnsmasq may otherwise retain stale
+			// PTR data across an in-place UCI update.
+			if observed.Type == "hostrecord" && observed.Options["ip"] != section.Options["ip"] {
+				mutations = append(mutations, Mutation{Kind: MutationDelete, Section: Section{Name: name}})
+				mutations = append(mutations, Mutation{Kind: MutationCreate, Section: section})
+				continue
+			}
 			mutations = append(mutations, Mutation{Kind: MutationUpdate, Section: section})
 		}
 	}
