@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 )
 
@@ -124,8 +125,8 @@ func VPNEndpointViaHost(ctx context.Context, host HostClient) (string, error) {
 	return fields[1], nil
 }
 
-func VPNClientMTURoutesViaHost(ctx context.Context, host HostClient, addresses []string, mtu int) error {
-	if mtu < 576 || mtu > 9000 || len(addresses) == 0 {
+func VPNClientMTURoutesViaHost(ctx context.Context, host HostClient, reservations []clientservices.Reservation, mtu int) error {
+	if mtu < 576 || mtu > 9000 || len(reservations) == 0 {
 		return errors.New("VPN client MTU route requirements are invalid")
 	}
 	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/sh -c 'set -eu; ip -4 route show table main'")
@@ -140,23 +141,38 @@ func VPNClientMTURoutesViaHost(ctx context.Context, host HostClient, addresses [
 		return errors.New("provider VPN client MTU route readback failed")
 	}
 	want := strconv.Itoa(mtu)
-	for _, address := range addresses {
-		found := false
-		for _, line := range strings.Split(output.Data, "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 6 && fields[0] == address+"/32" && fields[1] == "dev" && fields[2] == "airvpn" {
-				for i := 3; i+1 < len(fields); i++ {
-					if fields[i] == "mtu" && fields[i+1] == want {
-						found = true
-					}
-				}
-			}
+	for _, reservation := range reservations {
+		address := reservation.Address
+		device, ok := labDeviceForZone(reservation.Zone)
+		if !ok {
+			return fmt.Errorf("provider VPN client MTU route zone is unsupported for %s", address)
 		}
-		if !found {
+		if !hasVPNClientMTURoute(output.Data, address, device, want) {
 			return fmt.Errorf("provider VPN client MTU route missing for %s", address)
 		}
 	}
 	return nil
+}
+
+func hasVPNClientMTURoute(data, address, device, mtu string) bool {
+	for _, line := range strings.Split(data, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 6 || (fields[0] != address && fields[0] != address+"/32") || fields[1] != "dev" || fields[2] != device {
+			continue
+		}
+		for i := 3; i+1 < len(fields); i++ {
+			if fields[i] == "mtu" && fields[i+1] == mtu {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func labDeviceForZone(zone string) (string, bool) {
+	devices := map[string]string{"TRANSIT": "br-lab.5", "INFRA": "br-lab.10", "SERVERS": "br-lab.20", "TRUSTED": "br-lab.30", "SANDBOX": "br-lab.40", "MGMT": "br-lab.99"}
+	device, ok := devices[strings.ToUpper(strings.TrimSpace(zone))]
+	return device, ok
 }
 
 func parseVPNRuntimeStatus(data string) (VPNRuntimeStatus, error) {
