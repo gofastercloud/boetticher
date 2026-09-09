@@ -752,6 +752,30 @@ func ReadStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, p
 	return readStatusWithConfig(ctx, host, peerPort, config, mediaSizes...)
 }
 
+// AdapterBytesAgree checks the installed adapter only at apply time.  Status
+// probes deliberately avoid hashing the large adapter on every invocation.
+func AdapterBytesAgree(ctx context.Context, host firewallmodule.HostClient) (bool, error) {
+	info, err := os.Lstat(AdapterPath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || info.Size() <= 0 || info.Size() > 256<<20 {
+		return false, errors.New("arrstack adapter is not a private regular file")
+	}
+	file, err := os.Open(AdapterPath)
+	if err != nil {
+		return false, fmt.Errorf("open arrstack adapter: %w", err)
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return false, fmt.Errorf("hash arrstack adapter: %w", err)
+	}
+	want := hex.EncodeToString(digest.Sum(nil))
+	installed, err := guestExecOutput(ctx, host, "if test -f "+shellQuote(GuestAdapterPath)+" && test ! -L "+shellQuote(GuestAdapterPath)+" && test \"$(stat -c '%u %a' "+shellQuote(GuestAdapterPath)+")\" = '0 755'; then sha256sum "+shellQuote(GuestAdapterPath)+"; else printf '%s\\n' MISSING; fi")
+	if err != nil {
+		return false, fmt.Errorf("inspect installed arrstack adapter: %w", err)
+	}
+	return strings.HasPrefix(installed, want+" "), nil
+}
+
 func readStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, mediaSizes ...int) (RuntimeStatus, error) {
 	if peerPort < 1 || peerPort > 65535 {
 		return RuntimeStatus{}, errors.New("arrstack peer port must be 1..65535")

@@ -85,6 +85,20 @@ func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
 	}
 }
 
+func TestApplyChecksAdapterBytesBeforeHealthyRuntimeNoOp(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "cli", "arrstack.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "arrstack.AdapterBytesAgree(ctx, sc.Host)") {
+		t.Fatal("arrstack apply can report a healthy no-op without checking adapter bytes")
+	}
+	if !strings.Contains(text, "verify arrstack adapter bytes") {
+		t.Fatal("adapter agreement errors are not surfaced by arrstack apply")
+	}
+}
+
 func TestMediaDockerDependsOnFailClosedFirewallPolicy(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {

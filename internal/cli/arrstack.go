@@ -173,12 +173,19 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if runtimeErr != nil && !changed && verifyErr == nil {
 		return runtimeErr
 	}
+	adapterAgrees := false
 	if !changed && verifyErr == nil && runtimeErr == nil && runtime.AppReady {
-		if _, err := verifyVPN(ctx, provider, sc, proposed, state, out); err != nil {
-			return fmt.Errorf("VPN must be healthy before arrstack apply: %w", err)
+		adapterAgrees, err = arrstack.AdapterBytesAgree(ctx, sc.Host)
+		if err != nil {
+			return fmt.Errorf("verify arrstack adapter bytes: %w", err)
 		}
-		fmt.Fprintln(out, "MEDIA: already applied and verified")
-		return nil
+		if adapterAgrees {
+			if _, err := verifyVPN(ctx, provider, sc, proposed, state, out); err != nil {
+				return fmt.Errorf("VPN must be healthy before arrstack apply: %w", err)
+			}
+			fmt.Fprintln(out, "MEDIA: already applied and verified")
+			return nil
+		}
 	}
 	if !yes {
 		if input == nil {
