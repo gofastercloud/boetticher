@@ -11,29 +11,92 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/bifrost"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 const (
-	LeaseDuration12Hours  = "12h"
-	ScopeReservationsOnly = "reservations-only"
-	ScopePool             = "pool"
-	DNSResolverPort       = 853
-	StubbyListenAddress   = "127.0.0.1#5453"
-	LeaseFilePath         = "/etc/boetticher/dhcp.leases"
-	ProbeAddressStart     = 250
-	ProbeAddressEnd       = 254
+	LeaseDuration12Hours             = "12h"
+	ScopeReservationsOnly            = "reservations-only"
+	ScopePool                        = "pool"
+	DNSResolverPort                  = 853
+	StubbyListenAddress              = "127.0.0.1#5453"
+	LeaseFilePath                    = "/etc/boetticher/dhcp.leases"
+	ProbeAddressStart                = 250
+	ProbeAddressEnd                  = 254
+	DefaultObservabilityPublicDomain = "davebarton.cc"
 )
 
 // Modules is the installed lab.yml service intent. A nil capability block is
 // deliberately different from a disabled block: read-only commands report
 // nil as not configured and approved apply operations may materialise defaults.
 type Modules struct {
-	Tailnet *TailnetConfig `yaml:"tailnet,omitempty" json:"tailnet,omitempty"`
-	DNS     *DNSConfig     `yaml:"dns,omitempty" json:"dns,omitempty"`
-	DHCP    *DHCPConfig    `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
-	VPN     *VPNConfig     `yaml:"vpn,omitempty" json:"vpn,omitempty"`
+	Tailnet       *TailnetConfig       `yaml:"tailnet,omitempty" json:"tailnet,omitempty"`
+	DNS           *DNSConfig           `yaml:"dns,omitempty" json:"dns,omitempty"`
+	DHCP          *DHCPConfig          `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
+	VPN           *VPNConfig           `yaml:"vpn,omitempty" json:"vpn,omitempty"`
+	Observability *ObservabilityConfig `yaml:"observability,omitempty" json:"observability,omitempty"`
+	AIOps         *AIOpsConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 }
+
+type ObservabilityConfig struct {
+	Enabled      *bool                           `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	PublicDomain string                          `yaml:"public_domain,omitempty" json:"public_domain,omitempty"`
+	Collection   ObservabilityCollectionBindings `yaml:"collection,omitempty" json:"collection,omitempty"`
+	Logging      LoggingConfig                   `yaml:"logging,omitempty" json:"logging,omitempty"`
+	Monitoring   MonitoringConfig                `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+	StatusPage   StatusPageConfig                `yaml:"statuspage,omitempty" json:"statuspage,omitempty"`
+	Alerts       AlertsConfig                    `yaml:"alerts,omitempty" json:"alerts,omitempty"`
+}
+
+// ObservabilityCollectionBindings is the persisted, fixed-role allowlist for
+// the shared observability runtime. Empty bindings are allowed before the
+// first approved apply; once populated all three canonical IPv4 addresses are
+// required and must be distinct.
+type ObservabilityCollectionBindings struct {
+	Controller  string `yaml:"controller,omitempty" json:"controller,omitempty"`
+	ProxmoxHost string `yaml:"proxmox_host,omitempty" json:"proxmox_host,omitempty"`
+	Runtime     string `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+}
+type AlertsConfig struct {
+	Pushover *PushoverConfig `yaml:"pushover,omitempty" json:"pushover,omitempty"`
+}
+type PushoverConfig struct {
+	Enabled  *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Title    string `yaml:"title,omitempty" json:"title,omitempty"`
+	Priority int    `yaml:"priority,omitempty" json:"priority,omitempty"`
+}
+type LoggingConfig struct {
+	RetentionDays int `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
+}
+type MonitoringConfig struct {
+	RetentionDays int `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
+}
+type AIOpsConfig struct {
+	Enabled *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Holmes  *HolmesConfig `yaml:"holmes,omitempty" json:"holmes,omitempty"`
+}
+type HolmesConfig struct {
+	Enabled    *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ModelAlias string        `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
+	Bifrost    BifrostConfig `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
+}
+type BifrostConfig struct {
+	ClientCredential string            `yaml:"client_credential,omitempty" json:"client_credential,omitempty"`
+	Upstreams        []BifrostUpstream `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models           []BifrostModel    `yaml:"models,omitempty" json:"models,omitempty"`
+}
+type BifrostUpstream struct {
+	Name      string `yaml:"name" json:"name"`
+	BaseURL   string `yaml:"base_url" json:"base_url"`
+	SecretRef string `yaml:"secret_ref" json:"secret_ref"`
+}
+type BifrostModel struct {
+	Alias    string `yaml:"alias" json:"alias"`
+	Upstream string `yaml:"upstream" json:"upstream"`
+	Model    string `yaml:"model" json:"model"`
+}
+type StatusPageConfig struct{}
 
 // VPNConfig is provider-neutral inbound VPN intent. Clients are references
 // to DHCP reservations; this block never creates or copies client identity.
@@ -57,9 +120,10 @@ type TailnetConfig struct {
 }
 
 type DNSConfig struct {
-	Enabled   *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Upstreams []DNSUpstream `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Records   []DNSRecord   `yaml:"records,omitempty" json:"records,omitempty"`
+	Enabled        *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Upstreams      []DNSUpstream `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Records        []DNSRecord   `yaml:"records,omitempty" json:"records,omitempty"`
+	Infrastructure []DNSRecord   `yaml:"infrastructure,omitempty" json:"infrastructure,omitempty"`
 }
 
 type DNSUpstream struct {
@@ -156,6 +220,7 @@ func (m Modules) Normalize() Modules {
 		}
 		copyDNS.Upstreams = append([]DNSUpstream(nil), result.DNS.Upstreams...)
 		copyDNS.Records = append([]DNSRecord(nil), result.DNS.Records...)
+		copyDNS.Infrastructure = append([]DNSRecord(nil), result.DNS.Infrastructure...)
 		if Enabled(copyDNS.Enabled) && len(copyDNS.Upstreams) == 0 {
 			copyDNS.Upstreams = DefaultDNSUpstreams()
 		}
@@ -216,6 +281,7 @@ func (m Modules) Clone() Modules {
 		}
 		copyDNS.Upstreams = append([]DNSUpstream(nil), m.DNS.Upstreams...)
 		copyDNS.Records = append([]DNSRecord(nil), m.DNS.Records...)
+		copyDNS.Infrastructure = append([]DNSRecord(nil), m.DNS.Infrastructure...)
 		result.DNS = &copyDNS
 	}
 	if m.DHCP != nil {
@@ -242,11 +308,48 @@ func (m Modules) Clone() Modules {
 		}
 		result.VPN = &copyVPN
 	}
+	if m.Observability != nil {
+		v := *m.Observability
+		if v.Enabled != nil {
+			b := *v.Enabled
+			v.Enabled = &b
+		}
+		if v.Alerts.Pushover != nil {
+			p := *v.Alerts.Pushover
+			if p.Enabled != nil {
+				b := *p.Enabled
+				p.Enabled = &b
+			}
+			v.Alerts.Pushover = &p
+		}
+		result.Observability = &v
+	}
+	if m.AIOps != nil {
+		v := *m.AIOps
+		if v.Enabled != nil {
+			b := *v.Enabled
+			v.Enabled = &b
+		}
+		if v.Holmes != nil {
+			h := *v.Holmes
+			if h.Enabled != nil {
+				b := *h.Enabled
+				h.Enabled = &b
+			}
+			h.Bifrost.Upstreams = append([]BifrostUpstream(nil), h.Bifrost.Upstreams...)
+			h.Bifrost.Models = append([]BifrostModel(nil), h.Bifrost.Models...)
+			v.Holmes = &h
+		}
+		result.AIOps = &v
+	}
 	return result
 }
 
 func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
+	if err := validateObservability(normalized); err != nil {
+		return err
+	}
 	if normalized.Tailnet != nil && normalized.Tailnet.Enabled && (normalized.DNS == nil || !Enabled(normalized.DNS.Enabled) || normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
 		return errors.New("enabled Tailnet requires enabled DNS and DHCP; teardown Tailnet first")
 	}
@@ -279,6 +382,103 @@ func Validate(modules Modules, site model.Site) error {
 		}
 	}
 	return nil
+}
+
+func validateObservability(modules Modules) error {
+	if modules.Observability != nil {
+		bindings := modules.Observability.Collection
+		if bindings.Controller != "" || bindings.ProxmoxHost != "" || bindings.Runtime != "" {
+			addresses := []string{bindings.Controller, bindings.ProxmoxHost, bindings.Runtime}
+			seen := make(map[string]struct{}, len(addresses))
+			for _, address := range addresses {
+				parsed, err := netip.ParseAddr(address)
+				if err != nil || !parsed.Is4() || parsed.String() != address {
+					return errors.New("modules.observability.collection bindings must be canonical IPv4 addresses")
+				}
+				if _, ok := seen[address]; ok {
+					return errors.New("modules.observability.collection bindings must use unique IPv4 addresses")
+				}
+				seen[address] = struct{}{}
+			}
+		}
+	}
+	if modules.Observability != nil && modules.Observability.PublicDomain != "" && !ValidPublicDomain(modules.Observability.PublicDomain) {
+		return errors.New("modules.observability.public_domain must be a valid public DNS domain")
+	}
+	if modules.Observability != nil && modules.Observability.Logging.RetentionDays != 0 && (modules.Observability.Logging.RetentionDays < 1 || modules.Observability.Logging.RetentionDays > 3650) {
+		return errors.New("modules.logging.retention_days must be between 1 and 3650 days")
+	}
+	if modules.Observability != nil && modules.Observability.Monitoring.RetentionDays != 0 && (modules.Observability.Monitoring.RetentionDays < 1 || modules.Observability.Monitoring.RetentionDays > 3650) {
+		return errors.New("modules.monitoring.retention_days must be between 1 and 3650 days")
+	}
+	if modules.Observability != nil && modules.Observability.Alerts.Pushover != nil {
+		pushover := modules.Observability.Alerts.Pushover
+		if pushover.Priority == 2 || pushover.Priority < -2 || pushover.Priority > 1 {
+			return errors.New("modules.observability.alerts.pushover.priority must be between -2 and 1")
+		}
+		if !validPushoverTitle(pushover.Title) {
+			return errors.New("modules.observability.alerts.pushover.title is invalid")
+		}
+	}
+	if modules.AIOps != nil && Enabled(modules.AIOps.Enabled) && (modules.AIOps.Holmes == nil || !Enabled(modules.AIOps.Holmes.Enabled)) {
+		return errors.New("enabled AIOps requires enabled Holmes settings")
+	}
+	if modules.AIOps != nil && modules.AIOps.Holmes != nil && Enabled(modules.AIOps.Holmes.Enabled) && !model.IsDNSLabel(modules.AIOps.Holmes.ModelAlias) {
+		return errors.New("modules.monitoring.holmes.model_alias must be a valid model alias when Holmes is enabled")
+	}
+	if modules.AIOps != nil && modules.AIOps.Holmes != nil && Enabled(modules.AIOps.Holmes.Enabled) {
+		h := modules.AIOps.Holmes
+		if h.Bifrost.ClientCredential != "holmes-client-token" {
+			return errors.New("modules.monitoring.holmes.bifrost.client_credential must be holmes-client-token")
+		}
+		c := bifrost.Config{Listen: bifrost.DefaultListen, ClientCredential: h.Bifrost.ClientCredential}
+		for _, u := range h.Bifrost.Upstreams {
+			if !model.IsDNSLabel(u.SecretRef) {
+				return fmt.Errorf("modules.aiops.holmes.bifrost upstream %q has an invalid secret_ref", u.Name)
+			}
+			c.Upstreams = append(c.Upstreams, bifrost.Upstream{Name: u.Name, BaseURL: u.BaseURL, Credential: u.SecretRef})
+		}
+		for _, m := range h.Bifrost.Models {
+			c.Models = append(c.Models, bifrost.Model{Alias: m.Alias, Upstream: m.Upstream, Model: m.Model})
+		}
+		if err := c.Validate(); err != nil {
+			return fmt.Errorf("modules.monitoring.holmes.bifrost: %w", err)
+		}
+	}
+	return nil
+}
+
+// ValidPublicDomain accepts the DNS name used by the public Caddy frontend.
+// It deliberately requires at least one dot so the name cannot be mistaken
+// for a local host label or private network domain.
+func ValidPublicDomain(value string) bool {
+	value = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+	if value == "" || !strings.Contains(value, ".") || len(value) > 253 || strings.Contains(value, "..") {
+		return false
+	}
+	for _, part := range strings.Split(value, ".") {
+		if part == "" || len(part) > 63 || part[0] == '-' || part[len(part)-1] == '-' {
+			return false
+		}
+		for _, char := range part {
+			if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validPushoverTitle(value string) bool {
+	if len([]byte(value)) > 250 || value == "" {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == ' ' || char == '.' || char == '_' || char == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateVPN(config *VPNConfig, dhcp *DHCPConfig) error {

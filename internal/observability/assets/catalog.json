@@ -1,0 +1,10 @@
+{
+  "victorialogs": {"version":"1.52.0","url":"https://github.com/VictoriaMetrics/VictoriaLogs/releases/download/v1.52.0/victoria-logs-linux-amd64-v1.52.0.tar.gz","sha256":"d14f585144b8d6813f15e11f0041f487e15e10e5f5e5a31be0311367e93d3494"},
+  "victoriametrics": {"version":"1.151.0","url":"https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/v1.151.0/victoria-metrics-linux-amd64-v1.151.0.tar.gz","sha256":"629bd538bdccaae6cb6c33fd6d387387abf5b6c00f2a99667407ad6085db1c91"},
+  "grafana": {"version":"13.1.2","url":"https://dl.grafana.com/oss/release/grafana_13.1.2_amd64.deb","sha256":"3ba6a81a7a4b1832791457058ce07551df94c3979f544bff4db886e638110644"},
+  "gatus": {"version":"5.36.0","url":"https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz","sha256":"b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a"},
+  "victorialogs-datasource": {"version":"0.30.1","url":"https://github.com/VictoriaMetrics/victorialogs-datasource/releases/download/v0.30.1/victoriametrics-logs-datasource-v0.30.1.zip","sha256":"d5da774cd57e5f21688f3cda3eb5aac159353a32c4edbd8bee3af013e27cb991"},
+  "node-exporter-amd64": {"version":"1.12.1","url":"https://github.com/prometheus/node_exporter/releases/download/v1.12.1/node_exporter-1.12.1.linux-amd64.tar.gz","sha256":"b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63"},
+  "node-exporter-arm64": {"version":"1.12.1","url":"https://github.com/prometheus/node_exporter/releases/download/v1.12.1/node_exporter-1.12.1.linux-arm64.tar.gz","sha256":"ad35b605f9954b9f1ffddf5ba054bdc5a98d790b9eae5291e1eeb83f1ecbd0e7"},
+  "uv-x86_64-linux": {"version":"0.12.9","url":"https://github.com/astral-sh/uv/releases/download/0.12.9/uv-x86_64-unknown-linux-gnu.tar.gz","sha256":"ec7a99cd05e0cd7f80243f135ce1361c76835cb0ee60055d14d20eba8eba1460"}
+}

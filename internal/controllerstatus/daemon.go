@@ -491,6 +491,12 @@ func (d *Daemon) handleStreamDeckEvent(ctx context.Context, event KeyEvent) {
 		switch {
 		case event.Index == 0:
 			d.streamdeckView = StreamDeckHostDetail
+		case event.Index == 10:
+			d.streamdeckView = StreamDeckNetworkDetail
+		case event.Index == 11:
+			d.streamdeckView = StreamDeckVPNDetail
+		case event.Index == 12:
+			d.streamdeckView = StreamDeckTailnetDetail
 		case event.Index >= 5 && event.Index <= 9:
 			index := d.streamdeckPage*5 + event.Index - 5
 			if index < len(d.telemetry.Guests) {
@@ -505,7 +511,7 @@ func (d *Daemon) handleStreamDeckEvent(ctx context.Context, event KeyEvent) {
 		case event.Index == 14:
 			d.requestTelemetry(ctx, now)
 		}
-	case StreamDeckHostDetail, StreamDeckGuestDetail:
+	case StreamDeckHostDetail, StreamDeckGuestDetail, StreamDeckNetworkDetail, StreamDeckVPNDetail, StreamDeckTailnetDetail:
 		switch event.Index {
 		case 13:
 			d.streamdeckView = StreamDeckHome
@@ -617,6 +623,12 @@ func (d *Daemon) streamdeckNeedsMarquee() bool {
 			return false
 		}
 		return needsDeckMarquee(d.telemetry.Guests[d.streamdeckGuest].Name)
+	case StreamDeckNetworkDetail:
+		return needsDeckMarquee(networkComponent(d.snapshot).Detail)
+	case StreamDeckVPNDetail:
+		return needsDeckMarquee(d.snapshot.VPN.Detail)
+	case StreamDeckTailnetDetail:
+		return needsDeckMarquee(d.snapshot.Tailnet.Detail)
 	default:
 		if needsDeckMarquee(d.telemetry.Host.Node) {
 			return true

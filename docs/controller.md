@@ -20,6 +20,18 @@ sudo access unchanged. Test a new public-key SSH session before running the
 installer; `--confirm-key-login` records that acknowledgement before password
 authentication is disabled.
 
+### Dual-homed Controller DNS
+
+When the Controller has a LAB connection, accept that connection's DHCP DNS
+and prefer it for resolving private service names. On NetworkManager, identify
+the active connection by its LAB NIC MAC and reservation, rather than assuming
+an interface name. Set that connection's `ipv4.ignore-auto-dns` to `no` and use
+a lower positive `ipv4.dns-priority` than HOME (the reference setup uses `50`).
+Reapply the connection and verify the resolver order. Keep HOME DNS as fallback
+and retain HOME's default route; the LAB connection remains `never-default`.
+These are Controller-local connection settings, separate from the DNS records
+owned by `/etc/boetticher/lab.yml`.
+
 ## Install from a local payload
 
 The maintainer payload contains a prebuilt ARM64 `boetticher` binary, its

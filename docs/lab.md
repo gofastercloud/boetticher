@@ -7,6 +7,18 @@ description: The Boetticher Controller, Host, and Module boundary.
 
 # Your lab, demystified
 
+## Reference topology
+
+The [logical reference-lab topology](images/network-topology.svg) separates
+deployed logical services from observability/media rollout work. The
+[physical wiring reference](images/physical-network.svg) shows the
+operator-specified switch-port map, equipment, and cable colours. Each has an
+editable source: [logical draw.io](images/network-topology.drawio) and
+[physical draw.io](images/physical-network.drawio). These are concise IPv4 and
+wiring views, not firewall-rule inventories, IPv6-isolation proof, complete
+live-link audits, or deployment acceptance records. Status and current-address
+labels are dated 9 September 2026.
+
 Boetticher currently manages one Proxmox Host from one Controller. The Host is
 the product object below the Controller; storage and networking are Host
 configuration, not separate lifecycle objects.

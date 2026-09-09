@@ -846,8 +846,8 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if !strings.Contains(buildText, `timing_emit "artifact_build_all"`) || !strings.Contains(buildText, "pid_a=") || !strings.Contains(buildText, "pid_b=") || !strings.Contains(buildText, "memory-heavy") {
 		t.Fatal("image construction is missing explicit bounded worker scheduling")
 	}
-	if strings.Count(buildText, "image-tailnet-router|image-bifrost|image-aiops") != 2 {
-		t.Fatal("AIOps is not accepted by both direct and selected image target validation")
+	if strings.Contains(buildText, "default_image_targets=\"image-base image-dns-blocky image-logging") || strings.Contains(scanText, "default_scan_names=\"boetticher-base boetticher-dns-blocky boetticher-logging") {
+		t.Fatal("retired observability artifacts remain in the default build or scan set")
 	}
 	benchmarkScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "benchmark-artifact-compression.sh"))
 	if err != nil {

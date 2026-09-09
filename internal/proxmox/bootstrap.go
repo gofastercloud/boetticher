@@ -398,8 +398,16 @@ const managementInterfaceConfig = `auto vmbr1.99
 iface vmbr1.99 inet static
     address 10.10.99.5/24
     vlan-raw-device vmbr1
-    up ip route replace 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99
-    down ip route del 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99 || true
+    up ip route replace 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99
+    up ip route replace 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99
+    up ip route replace 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99
+    up ip route replace 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99
+    up ip route replace 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99
+    down ip route del 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99 || true
+    down ip route del 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99 || true
+    down ip route del 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99 || true
+    down ip route del 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99 || true
+    down ip route del 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99 || true
 `
 
 const networkInterfacesSourceDirectory = "source-directory /etc/network/interfaces.d"
@@ -471,12 +479,14 @@ func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, 
 	if !strings.Contains(string(mgmtAddress), "inet 10.10.99.5/24") {
 		return errors.New("HOLD: Proxmox vmbr1.99 does not have 10.10.99.5/24")
 	}
-	internalRoute, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 route show 10.10.0.0/16"))
-	if err != nil {
-		return fmt.Errorf("read Proxmox internal management route: %w", err)
-	}
-	if !strings.Contains(string(internalRoute), "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99") {
-		return errors.New("HOLD: Proxmox internal route does not use 10.10.99.1 via vmbr1.99")
+	for _, route := range []string{"10.10.5.0/24", "10.10.10.0/24", "10.10.20.0/24", "10.10.30.0/24", "10.10.40.0/24"} {
+		internalRoute, routeErr := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 route show "+route))
+		if routeErr != nil {
+			return fmt.Errorf("read Proxmox internal management route %s: %w", route, routeErr)
+		}
+		if !strings.Contains(string(internalRoute), route+" via 10.10.99.1 dev vmbr1.99") {
+			return fmt.Errorf("HOLD: Proxmox internal route %s does not use 10.10.99.1 via vmbr1.99", route)
+		}
 	}
 	vlanState, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -d link show dev vmbr1"))
 	if err != nil {

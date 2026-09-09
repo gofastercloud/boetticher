@@ -130,6 +130,84 @@ func TestModuleCheckerTreatsUnconfiguredCapabilitiesAsOff(t *testing.T) {
 	}
 }
 
+func TestModuleCheckerStartsIndependentChecksTogether(t *testing.T) {
+	release := make(chan struct{})
+	vpnStarted := make(chan struct{}, 1)
+	tailnetStarted := make(chan struct{}, 1)
+	checker := ModuleChecker{
+		CommandPath: "/usr/local/bin/boetticher",
+		RunCommand: func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+			switch strings.Join(args, " ") {
+			case "module firewall status", "module dhcp status", "module dns status":
+				select {
+				case <-release:
+					return []byte("capability: PASS\n"), nil
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			case "module vpn status":
+				vpnStarted <- struct{}{}
+				return []byte("VPN: CONNECTED\n"), nil
+			case "module tailnet status --json":
+				tailnetStarted <- struct{}{}
+				return []byte(`{"configured":true,"state":"healthy","detail":"router healthy","observed_at":"` + time.Now().UTC().Format(time.RFC3339Nano) + `"}`), nil
+			}
+			return nil, errors.New("unexpected command")
+		},
+	}
+	done := make(chan ModuleStatus, 1)
+	go func() { done <- checker.Check(context.Background()) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-vpnStarted:
+		case <-tailnetStarted:
+		case <-time.After(time.Second):
+			t.Fatal("independent VPN/Tailnet checks were starved")
+		}
+	}
+	close(release)
+	select {
+	case result := <-done:
+		if result.VPN.State != Healthy || result.Tailnet.State != Healthy {
+			t.Fatalf("independent healthy checks = vpn:%#v tailnet:%#v", result.VPN, result.Tailnet)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("module checks did not finish after release")
+	}
+}
+
+func TestModuleCheckerGivesSlowChecksFullRefreshBudget(t *testing.T) {
+	deadlineSeen := make(chan time.Duration, 1)
+	checker := ModuleChecker{
+		CommandPath: "/usr/local/bin/boetticher",
+		RunCommand: func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+			if strings.Join(args, " ") == "module firewall status" {
+				deadline, ok := ctx.Deadline()
+				if !ok {
+					deadlineSeen <- -1
+					return nil, errors.New("missing deadline")
+				}
+				deadlineSeen <- time.Until(deadline)
+				time.Sleep(50 * time.Millisecond)
+				return []byte("Firewall: PASS\n"), nil
+			}
+			return []byte("capability: not configured\n"), errors.New("not configured")
+		},
+	}
+	result := checker.Check(context.Background())
+	select {
+	case budget := <-deadlineSeen:
+		if budget < 15*time.Second || budget > moduleCheckTimeout {
+			t.Fatalf("slow check budget = %s, want the full %s refresh budget", budget, moduleCheckTimeout)
+		}
+	default:
+		t.Fatal("slow firewall check did not run")
+	}
+	if result.Firewall.State != Healthy || !result.Firewall.Healthy {
+		t.Fatalf("slow healthy firewall result = %#v", result.Firewall)
+	}
+}
+
 func TestDaemonMapsModuleStatusToExistingDisplaySlots(t *testing.T) {
 	d := NewDaemon(DefaultSettings(), nil)
 	d.Controller = func(context.Context) CheckResult { return CheckResult{Configured: true, Healthy: true} }

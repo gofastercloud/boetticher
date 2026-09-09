@@ -1,0 +1,14 @@
+[Unit]
+Description=VictoriaLogs
+After=network-online.target
+[Service]
+User=victorialogs
+Group=victorialogs
+ExecStart=/usr/local/bin/victoria-logs -httpListenAddr=127.0.0.1:9428 -storageDataPath=/var/lib/victorialogs -retentionPeriod=@RETENTION_DAYS@d
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/victorialogs
+[Install]
+WantedBy=multi-user.target

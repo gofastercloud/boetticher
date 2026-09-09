@@ -32,7 +32,7 @@ boetticher module tailnet status
 boetticher module tailnet apply --auth-key-file /secure/path/key --yes
 boetticher module vpn status
 boetticher module monitoring status
-boetticher module statuspage add-check
+boetticher module statuspage status
 boetticher module printer status
 ```
 
@@ -98,14 +98,22 @@ the existing independent Controller/Host management path, with no backup
 platform or Host teardown.
 
 Application networking keeps ordinary existing calls with narrow ingress,
-egress, and identity names; do not add a generic schema. Use owned-domain
-HTTPS with DNS-01 automated renewal, the first Stage 5 dashboard, and an
-application backup before Stage 6. Stage 5 covers monitoring, logging, and
-statuspage work; add no CA or proxy platform now.
+egress, and identity names; do not add a generic schema. Stage 5 uses the
+public Caddy DNS-01 frontend and native journal upload with system trust. The
+Host-owned `vmbr1.99` path is `10.10.99.5/24` with LAB routes via `10.10.99.1`.
+Stage 5 uses one intentionally integrated `observability` capability. Monitoring,
+logging, and status page are query/status facets of that runtime, not separate
+deployable Modules. AIOps is a separate optional consumer over observability.
 
-Defer new network modules, an aggregate coordinator, CA/SSO/proxy platforms,
-observability implementation, and switch automation. The existing management
-route remains the boundary.
+The managed firewall keeps inter-zone forwarding disabled for this access. Its
+owned rules allow TCP/22 from TRUSTED and the identity-bound Tailnet router to
+MGMT, plus TCP/22 from the resolved Controller SERVERS reservation to the Host
+at `10.10.99.5`. After the Host path is applied, re-enroll through the verified
+internal address to make it the active Controller connection; the original
+HOME address and strict imported SSH trust remain the explicit recovery path.
+
+Defer new network modules, an aggregate coordinator, SSO platforms, and
+switch automation. The existing management route remains the boundary.
 
 ## Phase 4A firewall capability
 
@@ -162,6 +170,86 @@ not standalone modules. The status monitor consumes their bounded native
 status facts in the existing `DHCP/NTP` and `Tailnet` slots; unconfigured is off,
 configured-but-unavailable is failed, and no status database or scheduler is
 introduced.
+
+## Phase 5 observability capabilities
+
+The installed Controller owns one atomic observability runtime through the
+same single-Host path:
+
+```text
+boetticher module observability plan|apply|status|test|teardown|secrets
+boetticher module logging query|status
+boetticher module monitoring status
+boetticher module statuspage status
+boetticher module aiops ask QUESTION
+boetticher module observability alerts pushover apply|status|test|remove
+```
+
+`module observability` creates and reconciles the exact unprivileged
+`lab-monitor-01` LXC (VMID 120, VLAN 10) with retained metrics, logs, and
+observability state volumes. It owns VictoriaMetrics, VictoriaLogs, Grafana,
+Gatus, and the optional explicitly configured Bifrost/Holmes route. Monitoring,
+logging, and status page remain read-only facets; they have no independent
+lifecycle or runtime ownership. AIOps is an optional consumer over this runtime,
+and `module aiops ask` is an explicit model operation.
+Teardown stops the whole owned guest and retains its data for a later apply.
+Apply provisions the public Caddy frontend and native collection paths. Live
+Controller/Host acceptance of that path remains `NOT TESTED` in this phase.
+Journal upload uses system trust and no client certificate; metrics use
+authenticated HTTPS paths through the fixed internal Caddy address. Ingest
+accepts only POST `/upload` from the three resolved collection sources and
+does not trust forwarded headers. Metrics paths are fixed per target and use
+Basic Auth; arbitrary upstream paths are denied.
+
+When Holmes is enabled under AIOps intent, the same LXC runs the pinned Holmes
+0.40 runner on demand. Holmes can use only the local Prometheus-compatible
+VictoriaMetrics endpoint and VictoriaLogs endpoint. Bifrost is the sole model
+route at `127.0.0.1:4000/v1`; its separate `holmes-client-token` is the only
+credential Holmes receives, and upstream provider keys remain Bifrost-only.
+`module aiops ask QUESTION` requires normal operator approval before a model
+request that may incur charges. The runner is unprivileged and bounded, uses
+pinned localhost routes, and does not save transcripts. Kernel-level LXC
+egress containment remains `NOT TESTED`.
+
+Pushover is an optional alert contact. `module observability alerts pushover
+apply` records the enabled state, title, and priority and may import a bounded
+`--credentials-file` containing `user:API`; its credential remains
+in the Controller secret store and activation is applied with the atomic
+observability lifecycle. `status` never prints keys. `test` accepts a local
+`user:API` file, requires approval unless `--yes` is supplied, validates the
+account, and sends one clearly labelled normal-priority message without retry.
+Disabled or unconfigured Pushover remains inert.
+
+For a fresh apply, provide the operator secrets before creating the guest;
+the command reports every missing name without starting a partial runtime:
+
+```text
+boetticher module observability secrets set grafana-admin-password
+boetticher module observability secrets set cloudflare-dns-token
+boetticher module observability apply --public-domain davebarton.cc --yes
+```
+
+The Gatus status page uses HTTPS without a password prompt inside the existing
+network access boundary. Grafana sign-in and private metrics authentication
+remain enabled; no status-page password is required for a fresh deployment.
+
+To opt into Holmes/Bifrost, also set `holmes-client-token` and
+`openrouter-api-key`, then apply with the explicit provider model:
+
+```text
+boetticher module observability secrets set holmes-client-token
+boetticher module observability secrets set openrouter-api-key
+boetticher module observability apply --public-domain davebarton.cc --holmes-model openai/gpt-4.1-mini --yes
+```
+
+Apply creates only an absent exact guest, refuses foreign or mismatched
+identity, uploads the installed provider payload, and verifies the active
+provider units and local endpoints. Repeating a healthy apply is a no-op.
+`--yes` approves mutation, while an interactive affirmative answer is required
+otherwise. Source, package, and offline checks are available locally; live
+Controller/Host rollout and live acceptance remain `NOT TESTED` in this phase.
+Gatus currently checks the shared provider health endpoints; broader lab
+outcome checks remain deferred.
 
 ## Capability, provider, runtime
 

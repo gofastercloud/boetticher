@@ -151,8 +151,8 @@ func TestConfigureAIOpsNonInteractiveHoldsForMissingAlias(t *testing.T) {
 	writeConfigureSite(t, dir, model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged)))
 	var output bytes.Buffer
 	err := Run([]string{"module", "aiops", "configure", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
-	if err == nil || !strings.Contains(err.Error(), "required module configuration model_alias") {
-		t.Fatalf("missing AIOps alias was not held: %v; output=%s", err, output.String())
+	if err == nil || !strings.Contains(err.Error(), "lifecycle is owned by module observability") {
+		t.Fatalf("AIOps configure escaped the observability lifecycle boundary: %v; output=%s", err, output.String())
 	}
 }
 
@@ -205,7 +205,7 @@ func TestConfigureRejectsObjectListAboveSchemaMaximum(t *testing.T) {
 	}
 }
 
-func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
+func TestConfigureAIOpsIsRejectedOutsideObservabilityLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	identityPath, recipient := writeTestAgeIdentity(t)
 	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
@@ -221,18 +221,9 @@ func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := Run([]string{"module", "aiops", "configure", "--site", dir, "--enabled", "true", "--set", "model_alias=operations", "--json", "--age-identity", identityPath}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	var report moduleConfigureReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
-		t.Fatalf("AIOps configure JSON is invalid: %v: %s", err, output.String())
-	}
-	if report.Status != "PLAN_ONLY" || len(report.Dependencies) != 2 || report.Dependencies[0] != "logging" || report.Dependencies[1] != "bifrost" {
-		t.Fatalf("unexpected AIOps configure report: %#v", report)
-	}
-	if strings.Contains(output.String(), "present") {
-		t.Fatal("secret value leaked from AIOps configure output")
+	err := Run([]string{"module", "aiops", "configure", "--site", dir, "--enabled", "true", "--set", "model_alias=operations", "--json", "--age-identity", identityPath}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "lifecycle is owned by module observability") {
+		t.Fatalf("AIOps configure escaped lifecycle boundary: %v", err)
 	}
 }
 
@@ -241,8 +232,9 @@ func TestConfigureConfirmationRefusalLeavesConfigurationUnchanged(t *testing.T) 
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	writeConfigureSite(t, dir, config)
 	var output bytes.Buffer
-	if err := RunWithInput([]string{"module", "monitoring", "configure", "--site", dir}, strings.NewReader("n\nn\n"), &output, &output); err != nil {
-		t.Fatal(err)
+	err := RunWithInput([]string{"module", "monitoring", "configure", "--site", dir}, strings.NewReader("n\nn\n"), &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "lifecycle is owned by module observability") {
+		t.Fatalf("monitoring configure escaped lifecycle boundary: %v", err)
 	}
 	loaded, err := site.LoadConfig(dir)
 	if err != nil {
@@ -250,9 +242,6 @@ func TestConfigureConfirmationRefusalLeavesConfigurationUnchanged(t *testing.T) 
 	}
 	if loaded.Modules.Monitoring != nil && loaded.Modules.Monitoring.Enabled != nil && !*loaded.Modules.Monitoring.Enabled {
 		t.Fatal("confirmation refusal persisted disablement")
-	}
-	if !strings.Contains(output.String(), "Configuration not changed") {
-		t.Fatalf("refusal was not reported: %s", output.String())
 	}
 }
 

@@ -1,0 +1,13 @@
+# Boetticher Holmes 0.40 contract. The runner supplies the model alias and
+# caller credential per request; this file documents the immutable tool policy.
+max_steps: 6
+toolsets:
+  prometheus/metrics:
+    subtype: victoriametrics
+    enabled: true
+    config:
+      prometheus_url: http://127.0.0.1:8428
+  victorialogs:
+    enabled: true
+    config:
+      api_url: http://127.0.0.1:9428

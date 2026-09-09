@@ -1,14 +1,18 @@
 package firewallmodule
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
+	"github.com/gofastercloud/boetticher/internal/tailnet"
 )
 
 const (
@@ -82,8 +86,18 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 		if len(upstreams) == 0 {
 			upstreams = clientservices.DefaultDNSUpstreams()
 		}
-		state.DHCP = append(state.DHCP, dnsRecordSections(site, normalized.DNS.Records)...)
+		// Infrastructure bindings are projected exactly once by dnsRecordSections;
+		// persisted infrastructure intent must not create a second PTR owner.
+		allRecords := append([]clientservices.DNSRecord(nil), normalized.DNS.Records...)
+		generated, err := dnsRecordSections(site, allRecords)
+		if err != nil {
+			return ServiceState{}, err
+		}
+		state.DHCP = append(state.DHCP, generated...)
 		state.Stubby = stubbySections(upstreams)
+	}
+	if normalized.Observability != nil && clientservices.ValidPublicDomain(normalized.Observability.PublicDomain) {
+		state.DHCP = append(state.DHCP, observabilityDNSSections(normalized.Observability.PublicDomain)...)
 	}
 	// Appliance upstream time is independent of client-facing DHCP/NTP. Once
 	// the service contract is applied, retain the exact native time settings.
@@ -100,7 +114,96 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	state.System = append(state.System, ntpSections(site, ntpUpstreams, ntpServe)...)
 	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
+	observabilityFirewall, err := observabilityFirewallSections(site, normalized)
+	if err != nil {
+		return ServiceState{}, err
+	}
+	state.Firewall = append(state.Firewall, observabilityFirewall...)
 	return state, nil
+}
+
+const (
+	observabilityControllerExporterRule = "boetticher_observability_controller_exporter"
+	observabilityHostExporterRule       = "boetticher_observability_host_exporter"
+	observabilityControllerIngressRule  = "boetticher_observability_controller_ingress"
+	observabilityHostIngressRule        = "boetticher_observability_host_ingress"
+	observabilityRuntimeIngressRule     = "boetticher_observability_runtime_ingress"
+	observabilityTrustedIngressRule     = "boetticher_observability_trusted_ingress"
+	observabilityTailnetIngressRule     = "boetticher_observability_tailnet_ingress"
+)
+
+func observabilityFirewallSections(site model.Site, modules clientservices.Modules) ([]Section, error) {
+	if modules.Observability == nil || !clientservices.Enabled(modules.Observability.Enabled) {
+		return nil, nil
+	}
+	b := modules.Observability.Collection
+	if b.Controller == "" || b.ProxmoxHost == "" || b.Runtime == "" {
+		return nil, errors.New("enabled observability requires complete collection bindings")
+	}
+	roles := []struct {
+		name, address, zone string
+	}{
+		{"controller", b.Controller, "SERVERS"},
+		{"proxmox host", b.ProxmoxHost, "MGMT"},
+		{"runtime", b.Runtime, "INFRA"},
+	}
+	for _, role := range roles {
+		address, err := netip.ParseAddr(role.address)
+		zone, ok := zoneByName(site, role.zone)
+		if !ok {
+			return nil, fmt.Errorf("%s zone is required for observability firewall projection", role.zone)
+		}
+		prefix, prefixErr := netip.ParsePrefix(zone.Network)
+		if err != nil || !address.Is4() || prefixErr != nil || !prefix.Contains(address) {
+			return nil, fmt.Errorf("observability %s binding is outside %s", role.name, role.zone)
+		}
+	}
+	address := func(value string) string { return value + "/32" }
+	rule := func(name, src, srcIP, dest, destIP, port string) Section {
+		return Section{Name: name, Type: "rule", Options: map[string]string{
+			"name": "Boetticher Observability " + name[len("boetticher_observability_"):], "src": src, "src_ip": srcIP,
+			"dest": dest, "dest_ip": destIP, "proto": "tcp", "dest_port": port, "family": "ipv4", "target": "ACCEPT",
+		}, Lists: map[string][]string{}}
+	}
+	sections := []Section{
+		rule(observabilityControllerExporterRule, "infra", address(b.Runtime), "servers", address(b.Controller), "9100"),
+		rule(observabilityHostExporterRule, "infra", address(b.Runtime), "mgmt", address(b.ProxmoxHost), "9100"),
+		rule(observabilityControllerIngressRule, "servers", address(b.Controller), "infra", address(b.Runtime), "443"),
+		rule(observabilityHostIngressRule, "mgmt", address(b.ProxmoxHost), "infra", address(b.Runtime), "443"),
+		rule(observabilityRuntimeIngressRule, "infra", address(b.Runtime), "infra", address(b.Runtime), "443"),
+	}
+	trusted, ok := zoneByName(site, "TRUSTED")
+	if !ok {
+		return nil, errors.New("TRUSTED zone is required for observability firewall projection")
+	}
+	sections = append(sections, rule(observabilityTrustedIngressRule, "trusted", trusted.Network, "infra", address(b.Runtime), "443"))
+	if modules.Tailnet != nil && modules.Tailnet.Enabled && hasExactTailnetReservation(modules) {
+		sections = append(sections, rule(observabilityTailnetIngressRule, "transit", address(tailnet.GuestAddress), "infra", address(b.Runtime), "443"))
+		sections[len(sections)-1].Options["src_mac"] = tailnet.GuestMAC
+	}
+	return sections, nil
+}
+
+func hasExactTailnetReservation(modules clientservices.Modules) bool {
+	if modules.DHCP == nil {
+		return false
+	}
+	for _, reservation := range modules.DHCP.Reservations {
+		if reservation.Name == tailnet.GuestName && reservation.Zone == "TRANSIT" && strings.EqualFold(reservation.MAC, tailnet.GuestMAC) && reservation.Address == tailnet.GuestAddress {
+			return true
+		}
+	}
+	return false
+}
+
+func observabilityDNSSections(publicDomain string) []Section {
+	names := []string{"observability", "status", "ingest", "metrics"}
+	sections := make([]Section, 0, len(names))
+	for _, name := range names {
+		fqdn := name + "." + publicDomain
+		sections = append(sections, Section{Name: "boetticher_observability_record_" + nativeRecordSuffix(fqdn), Type: "hostrecord", Options: map[string]string{"name": fqdn, "ip": "10.10.10.20"}, Lists: map[string][]string{}})
+	}
+	return sections
 }
 
 func dnsmasqSections(site model.Site, modules clientservices.Modules) []Section {
@@ -221,16 +324,45 @@ func nativeIdentifier(name string) string {
 	return result.String()
 }
 
-func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Section {
+func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) ([]Section, error) {
 	sections := make([]Section, 0, len(records))
+	// Native dnsmasq host-record entries publish both A and reverse data. Keep
+	// the canonical name as the only reverse owner; aliases are CNAMEs so two
+	// names sharing an address cannot create competing PTR answers.
+	bindingSections, err := bindingDNSSections(site)
+	if err != nil {
+		return nil, err
+	}
+	sections = append(sections, bindingSections...)
+	ownedNames := map[string]struct{}{}
+	ownedAddresses := map[string]string{}
+	for _, section := range bindingSections {
+		if name := section.Options["name"]; name != "" {
+			ownedNames[name] = struct{}{}
+		}
+		if name := section.Options["cname"]; name != "" {
+			ownedNames[name] = struct{}{}
+		}
+		if section.Type == "hostrecord" {
+			ownedAddresses[section.Options["ip"]] = section.Options["name"]
+		}
+	}
 	for _, record := range records {
 		name, err := clientservices.CanonicalName(record.Name, site.Network.Domain)
 		if err != nil {
 			continue
 		}
+		if _, exists := ownedNames[name]; exists {
+			return nil, fmt.Errorf("user DNS record %s collides with infrastructure-owned name", name)
+		}
 		safe := strings.TrimPrefix(nativeRecordSectionName(name), "boetticher_record_")
 		switch record.Type {
 		case "A":
+			if canonical := net.ParseIP(record.Value); canonical != nil && canonical.To4() != nil {
+				if owner, exists := ownedAddresses[canonical.To4().String()]; exists {
+					return nil, fmt.Errorf("user DNS A record %s collides with infrastructure address %s owned by %s; use a CNAME alias", name, canonical, owner)
+				}
+			}
 			sections = append(sections, Section{Name: "boetticher_record_" + safe, Type: "hostrecord", Options: map[string]string{"name": name, "ip": record.Value}, Lists: map[string][]string{}})
 		case "CNAME":
 			target, targetErr := clientservices.CanonicalName(record.Value, site.Network.Domain)
@@ -240,7 +372,125 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) []Se
 			sections = append(sections, Section{Name: "boetticher_cname_" + nativeRecordSuffix(strings.TrimSuffix(name, ".")), Type: "cname", Options: map[string]string{"cname": name, "target": target}, Lists: map[string][]string{}})
 		}
 	}
-	return sections
+	return sections, nil
+}
+
+// bindingDNSSections projects the typed platform and network bindings into
+// native dnsmasq records. The ordering is the PTR ownership policy: a
+// platform component wins over a zone gateway, and a zone gateway wins over
+// a later alias. No observed address or fixed lab address is consulted.
+type dnsBinding struct {
+	name    string
+	ip      string
+	role    int
+	aliases []string
+}
+
+func bindingDNSSections(site model.Site) ([]Section, error) {
+	bindings := make([]dnsBinding, 0, len(site.Components)+len(site.Network.Zones)+1)
+	for _, component := range site.Components {
+		if strings.TrimSpace(component.Hostname) == "" || strings.TrimSpace(component.Address) == "" {
+			continue
+		}
+		if ip := net.ParseIP(component.Address); ip == nil || ip.To4() == nil || ip.To4().String() != component.Address {
+			return nil, fmt.Errorf("infrastructure DNS binding %q has malformed IPv4 address %q", component.Hostname, component.Address)
+		}
+		bindings = append(bindings, dnsBinding{name: component.Hostname, ip: component.Address, role: 0, aliases: append([]string(nil), component.DNSAliases...)})
+	}
+	for _, zone := range site.Network.Zones {
+		if strings.TrimSpace(zone.Name) == "" || strings.TrimSpace(zone.Gateway) == "" {
+			continue
+		}
+		if ip := net.ParseIP(zone.Gateway); ip == nil || ip.To4() == nil || ip.To4().String() != zone.Gateway {
+			return nil, fmt.Errorf("infrastructure DNS binding for zone %q has malformed IPv4 gateway %q", zone.Name, zone.Gateway)
+		}
+		bindings = append(bindings, dnsBinding{name: strings.ToLower(zone.Name) + "-gateway", ip: zone.Gateway, role: 1})
+	}
+	// The HOME address is an explicit gateway binding and remains outside LAB
+	// DHCP, but its local name is still useful to clients on configured zones.
+	if ip := net.ParseIP(site.Gateway.ManagementAddress); ip != nil && ip.To4() != nil && ip.To4().String() == site.Gateway.ManagementAddress {
+		bindings = append(bindings, dnsBinding{name: "home-gateway", ip: site.Gateway.ManagementAddress, role: 2})
+	}
+	sort.SliceStable(bindings, func(i, j int) bool {
+		if bindings[i].role != bindings[j].role {
+			return bindings[i].role < bindings[j].role
+		}
+		if bindings[i].ip != bindings[j].ip {
+			return bindings[i].ip < bindings[j].ip
+		}
+		return bindings[i].name < bindings[j].name
+	})
+	sections := make([]Section, 0, len(bindings))
+	seenName := map[string]string{}
+	seenAddress := map[string]struct{}{}
+	for _, item := range bindings {
+		name, err := clientservices.CanonicalName(item.name, site.Network.Domain)
+		if err != nil {
+			continue
+		}
+		if previous, exists := seenName[name]; exists {
+			if previous != item.ip {
+				return nil, fmt.Errorf("infrastructure DNS name %s collides between %s and %s", name, previous, item.ip)
+			}
+			continue
+		}
+		seenName[name] = item.ip
+		if _, exists := seenAddress[item.ip]; exists {
+			// A second canonical name for an address is represented as an alias
+			// only when it has a distinct name, preserving one PTR owner.
+			sections = append(sections, Section{Name: "boetticher_binding_cname_" + nativeRecordSuffix(strings.TrimSuffix(name, ".")), Type: "cname", Options: map[string]string{"cname": name, "target": canonicalBindingTarget(item.ip, bindings, site.Network.Domain)}, Lists: map[string][]string{}})
+			continue
+		}
+		seenAddress[item.ip] = struct{}{}
+		sections = append(sections, Section{Name: "boetticher_binding_record_" + nativeRecordSuffix(strings.TrimSuffix(name, ".")), Type: "hostrecord", Options: map[string]string{"name": name, "ip": item.ip}, Lists: map[string][]string{}})
+		for _, alias := range item.aliases {
+			aliasName, aliasErr := clientservices.CanonicalName(alias, site.Network.Domain)
+			if aliasErr != nil || aliasName == name {
+				continue
+			}
+			if previous, exists := seenName[aliasName]; exists {
+				if previous != item.ip {
+					return nil, fmt.Errorf("infrastructure DNS alias %s collides between %s and %s", aliasName, previous, item.ip)
+				}
+				continue
+			}
+			seenName[aliasName] = item.ip
+			sections = append(sections, Section{Name: "boetticher_binding_cname_" + nativeRecordSuffix(strings.TrimSuffix(aliasName, ".")), Type: "cname", Options: map[string]string{"cname": aliasName, "target": name}, Lists: map[string][]string{}})
+		}
+	}
+	return sections, nil
+}
+
+// InfrastructureDNSRecords returns the deterministic, typed desired state
+// suitable for persisting in the canonical site model before an approved
+// apply. Owner is stable and lets reconciliation remove only prior generated
+// entries when a binding changes.
+func InfrastructureDNSRecords(site model.Site) ([]model.DNSRecord, error) {
+	sections, err := bindingDNSSections(site)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]model.DNSRecord, 0, len(sections))
+	for _, section := range sections {
+		switch section.Type {
+		case "hostrecord":
+			result = append(result, model.DNSRecord{Name: section.Options["name"], Type: "A", Address: section.Options["ip"], Owner: "infrastructure"})
+		case "cname":
+			result = append(result, model.DNSRecord{Name: section.Options["cname"], Type: "CNAME", Address: section.Options["target"], Owner: "infrastructure"})
+		}
+	}
+	return result, nil
+}
+
+func canonicalBindingTarget(ip string, bindings []dnsBinding, domain string) string {
+	for _, item := range bindings {
+		if item.ip == ip {
+			if name, err := clientservices.CanonicalName(item.name, domain); err == nil {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func nativeRecordSuffix(name string) string {

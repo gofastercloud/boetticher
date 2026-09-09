@@ -51,6 +51,52 @@ type StatusSnapshot struct {
 	ControllerUpdates Component
 }
 
+// networkComponent is the aggregate shown on the physical Network indicator.
+// A green aggregate requires positive healthy evidence from every network
+// capability; missing or unknown evidence is never promoted to healthy.
+func networkComponent(snapshot StatusSnapshot) Component {
+	components := []Component{
+		snapshot.Firewall,
+		snapshot.DNS,
+		snapshot.DHCPNTP,
+	}
+	state := Healthy
+	for _, component := range components {
+		componentState := displayComponentState(component)
+		switch componentState {
+		case Failed:
+			state = Failed
+		case Attention:
+			if state != Failed {
+				state = Attention
+			}
+		case Checking:
+			if state != Failed && state != Attention {
+				state = Checking
+			}
+		case Off:
+			if state == Healthy {
+				state = Off
+			}
+		case Healthy:
+			// Explicit healthy state is already the debounced positive evidence.
+		default:
+			if state != Failed && state != Attention {
+				state = Checking
+			}
+		}
+	}
+	detail := "Network: firewall=" + stateLabel(displayComponentState(components[0])) + ", DNS=" + stateLabel(displayComponentState(components[1])) + ", DHCP/NTP=" + stateLabel(displayComponentState(components[2]))
+	return Component{State: state, Detail: detail}
+}
+
+func displayComponentState(component Component) State {
+	if component.State != "" {
+		return component.State
+	}
+	return Checking
+}
+
 func NewSnapshot(hostConfigured bool) StatusSnapshot {
 	host := Component{State: Off, Detail: "Host not enrolled"}
 	if hostConfigured {

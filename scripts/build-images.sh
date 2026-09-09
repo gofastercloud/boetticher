@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-	image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe|images) ;;
+	image-base|image-dns-blocky|image-firewall|image-tailnet-router|image-airvpn|image-printer|image-arr|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-printer image-arr image-network-probe"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-	  image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe) ;;
+	  image-base|image-dns-blocky|image-firewall|image-tailnet-router|image-airvpn|image-printer|image-arr|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac

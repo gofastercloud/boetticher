@@ -32,6 +32,10 @@ security, correctness, user authority, and required verification gates.
   busywork. Prefer one-sentence updates and short final responses; keep full
   receipts on disk only when needed and maintain one compact checkpoint without
   unsolicited documents.
+- When waiting for subagents, use `wait_agent` with `timeout_ms=300000`, or the
+  longest permitted timeout. Avoid repeated 30-second polls and unchanged
+  status checks. Resume when an agent reports progress, finishes, or needs
+  attention.
 - Run efficiency checks at meaningful boundaries and record corrective actions
   only. Audit oversized assignments, duplicated investigations, repeated tests,
   idle wakes, and rework. Report cached input tokens, uncached input tokens, and

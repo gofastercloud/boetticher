@@ -191,6 +191,9 @@ func RuntimeReadyState(ctx context.Context, r Runner) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
+	if ctx.Err() != nil {
+		return false, fmt.Errorf("inspect Tailnet runtime: %w", ctx.Err())
+	}
 	if result.ExitCode == 1 {
 		return false, nil
 	}
@@ -221,8 +224,14 @@ func ReadStatus(ctx context.Context, r Runner) (Report, error) {
 	if err != nil {
 		return report, err
 	}
-	if report.State == Healthy && !RuntimeReady(ctx, r) {
-		return NewReport(true, Failed, "Tailnet persistent or loaded runtime differs from intent"), nil
+	if report.State == Healthy {
+		ready, readinessErr := RuntimeReadyState(ctx, r)
+		if readinessErr != nil {
+			return NewReport(true, Failed, "Tailnet runtime readiness unavailable"), readinessErr
+		}
+		if !ready {
+			return NewReport(true, Failed, "Tailnet persistent or loaded runtime differs from intent"), nil
+		}
 	}
 	return report, nil
 }

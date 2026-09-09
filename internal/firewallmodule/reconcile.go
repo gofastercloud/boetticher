@@ -48,6 +48,14 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 			return nil, fmt.Errorf("provider section %s has conflicting managed identity", name)
 		}
 		if !sameSection(observed, section) {
+			// Replacing a hostrecord explicitly removes the old reverse mapping
+			// before adding the new address; dnsmasq may otherwise retain stale
+			// PTR data across an in-place UCI update.
+			if observed.Type == "hostrecord" && observed.Options["ip"] != section.Options["ip"] {
+				mutations = append(mutations, Mutation{Kind: MutationDelete, Section: Section{Name: name}})
+				mutations = append(mutations, Mutation{Kind: MutationCreate, Section: section})
+				continue
+			}
 			mutations = append(mutations, Mutation{Kind: MutationUpdate, Section: section})
 		}
 	}
@@ -93,8 +101,17 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 	if section.Type == "hostrecord" && strings.HasPrefix(name, "boetticher_record_") {
 		return nativeRecordSectionName(section.Options["name"]) == name && section.Options["name"] != ""
 	}
+	if section.Type == "hostrecord" && strings.HasPrefix(name, "boetticher_binding_record_") {
+		return "boetticher_binding_record_"+nativeRecordSuffix(strings.TrimSuffix(section.Options["name"], ".")) == name && section.Options["name"] != ""
+	}
+	if section.Type == "hostrecord" && strings.HasPrefix(name, "boetticher_observability_record_") {
+		return "boetticher_observability_record_"+nativeRecordSuffix(section.Options["name"]) == name && section.Options["name"] != ""
+	}
 	if section.Type == "cname" && strings.HasPrefix(name, "boetticher_cname_") {
 		return "boetticher_cname_"+nativeRecordSuffix(strings.TrimSuffix(section.Options["cname"], ".")) == name && section.Options["cname"] != ""
+	}
+	if section.Type == "cname" && strings.HasPrefix(name, "boetticher_binding_cname_") {
+		return "boetticher_binding_cname_"+nativeRecordSuffix(strings.TrimSuffix(section.Options["cname"], ".")) == name && section.Options["cname"] != ""
 	}
 	if section.Type == "rule" {
 		return managedRuleIdentity(name, section.Options)
@@ -155,6 +172,9 @@ func managedRuleIdentity(name string, options map[string]string) bool {
 }
 
 func compatibleIdentity(name string, observed openwrt.UCISection, desired Section) bool {
+	if observed.Type == "hostrecord" && strings.HasPrefix(name, "boetticher_observability_record_") {
+		return observed.Options["name"] == desired.Options["name"] && observed.Options["ip"] == "10.10.10.20"
+	}
 	if name == "airvpn" {
 		return observed.Options["proto"] == "wireguard"
 	}

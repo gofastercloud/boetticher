@@ -37,12 +37,12 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	if isLegacyLifecycleCommand(args[0]) {
 		return legacyLifecycleDisabled(args[0])
 	}
-	if err := retiredCommandError(args); err != nil {
-		return err
-	}
 	if helpRequested(args) {
 		commandHelp(args, out)
 		return nil
+	}
+	if err := retiredCommandError(args); err != nil {
+		return err
 	}
 	switch args[0] {
 	case "controller":
@@ -81,6 +81,10 @@ func retiredCommandError(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "logs":
+		return errors.New("boetticher logs is retired; use boetticher module logging query")
+	case "aiops":
+		return errors.New("boetticher aiops is retired; use boetticher module aiops ask")
 	case "dhcp":
 		return errors.New("boetticher dhcp is retired; use boetticher module dhcp")
 	case "dns":
@@ -163,6 +167,9 @@ func normalizedHelpPath(pathParts []string) string {
 	}
 	switch pathParts[0] {
 	case "module", "host":
+		if pathParts[0] == "module" && len(pathParts) >= 4 {
+			return strings.Join(pathParts[:4], " ")
+		}
 		if pathParts[0] == "module" && len(pathParts) >= 3 {
 			return strings.Join(pathParts[:3], " ")
 		}

@@ -1,0 +1,32 @@
+[Unit]
+Description=Boetticher observability Caddy frontend
+After=network-online.target victorialogs.service victoriametrics.service grafana.service gatus.service
+Wants=network-online.target
+
+[Service]
+User=caddy
+Group=caddy
+RuntimeDirectory=caddy
+RuntimeDirectoryMode=0700
+UMask=0077
+LoadCredential=cloudflare-dns-token:/var/lib/boetticher/credentials/cloudflare-dns-token.cred
+LoadCredential=node-exporter-read-token:/var/lib/boetticher/credentials/node-exporter-read-token.cred
+Environment=HOME=/var/lib/boetticher/observability/state/caddy
+Environment=XDG_DATA_HOME=/var/lib/boetticher/observability/state/caddy/.local/share
+Environment=XDG_CONFIG_HOME=/var/lib/boetticher/observability/state/caddy/.config
+ExecStart=/bin/sh -ec 'node_password="$(cat /run/credentials/caddy.service/node-exporter-read-token)"; node_hash="$(printf "%%s\\n" "$node_password" | /usr/local/bin/caddy hash-password --algorithm bcrypt)"; unset node_password; node_auth="$(printf "boetticher:%%s" "$(cat /run/credentials/caddy.service/node-exporter-read-token)" | base64 -w0)"; export BOETTICHER_METRICS_PASSWORD_HASH="$node_hash" BOETTICHER_NODE_EXPORTER_AUTH="$node_auth" CLOUDFLARE_API_TOKEN="$(cat /run/credentials/caddy.service/cloudflare-dns-token)"; unset node_auth; exec /usr/local/bin/caddy run --config=/etc/boetticher/caddy/Caddyfile --adapter=caddyfile'
+ExecReload=/bin/sh -ec 'node_password="$(cat /run/credentials/caddy.service/node-exporter-read-token)"; node_hash="$(printf "%%s\\n" "$node_password" | /usr/local/bin/caddy hash-password --algorithm bcrypt)"; unset node_password; node_auth="$(printf "boetticher:%%s" "$(cat /run/credentials/caddy.service/node-exporter-read-token)" | base64 -w0)"; export BOETTICHER_METRICS_PASSWORD_HASH="$node_hash" BOETTICHER_NODE_EXPORTER_AUTH="$node_auth" CLOUDFLARE_API_TOKEN="$(cat /run/credentials/caddy.service/cloudflare-dns-token)"; unset node_auth; exec /usr/local/bin/caddy reload --config=/etc/boetticher/caddy/Caddyfile --adapter=caddyfile'
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/boetticher/observability/state/caddy /run/caddy
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
