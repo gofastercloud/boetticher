@@ -11,7 +11,7 @@ import (
 
 func TestValidateGuestConfigRequiresExactOwnedQEMUShape(t *testing.T) {
 	config := map[string]string{
-		"agent": "1", "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
+		"agent": "1", "cpu": GuestCPU, "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
 		"memory": "8192", "name": GuestName, "net0": "virtio=" + GuestMAC + ",bridge=vmbr1,tag=20,firewall=1",
 		"onboot": "0", "ostype": "l26", "scsi0": "boetticher-data:vm-290-disk-0,ssd=1,size=32G",
 		"scsi1": "boetticher-data:vm-290-disk-1,format=raw,ssd=1,size=256G", "scsihw": "virtio-scsi-single",
@@ -22,12 +22,15 @@ func TestValidateGuestConfigRequiresExactOwnedQEMUShape(t *testing.T) {
 		t.Fatalf("valid arrstack VM rejected: %v", err)
 	}
 	for name, value := range map[string]string{
+		"wrong CPU":    "kvm64",
 		"foreign disk": "other-storage:vm-290-disk-0,ssd=1,size=32G",
 		"wrong bridge": "virtio=" + GuestMAC + ",bridge=vmbr0,tag=20,firewall=1",
 		"wrong owner":  "boetticher;managed;module;boetticher-module-other",
 	} {
 		bad := cloneConfig(config)
 		switch name {
+		case "wrong CPU":
+			bad["cpu"] = value
 		case "foreign disk":
 			bad["scsi0"] = value
 		case "wrong bridge":
@@ -41,6 +44,33 @@ func TestValidateGuestConfigRequiresExactOwnedQEMUShape(t *testing.T) {
 	}
 }
 
+func TestNewMediaGuestRequiresX8664V3HostFeatures(t *testing.T) {
+	commandSource, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(commandSource)
+	for _, feature := range []string{"avx2", "bmi1", "bmi2", "f16c", "fma", "lzcnt", "movbe", "popcnt", "sse4_2", "xsave"} {
+		if !strings.Contains(text, feature) {
+			t.Fatalf("x86-64-v3 preflight missing %s", feature)
+		}
+	}
+	if !strings.Contains(text, "requireGuestCPUFeatures(ctx, host)") {
+		t.Fatal("new media guest creation does not run the CPU feature preflight")
+	}
+}
+
+func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "docker compose version >/dev/null") {
+		t.Fatal("media runtime does not preflight Docker Compose")
+	}
+}
+
 func TestValidateGuestConfigRejectsUnknownConfigAndMissingMediaDisk(t *testing.T) {
 	config := map[string]string{"name": GuestName, "scsi0": "boetticher-data:vm-290-disk-0,size=32G", "scsi1": "boetticher-data:vm-290-disk-1,size=256G"}
 	config["unexpected"] = "foreign"
@@ -51,7 +81,7 @@ func TestValidateGuestConfigRejectsUnknownConfigAndMissingMediaDisk(t *testing.T
 
 func TestRecoverableGuestAcceptsOnlyAnExactOwnedInterruptedImport(t *testing.T) {
 	config := map[string]string{
-		"agent": "1", "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
+		"agent": "1", "cpu": GuestCPU, "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
 		"memory": "8192", "name": GuestName, "net0": "virtio=" + GuestMAC + ",bridge=vmbr1,tag=20,firewall=1",
 		"onboot": "0", "ostype": "l26", "scsihw": "virtio-scsi-single", "serial0": "socket",
 		"tags":      "boetticher;managed;module;" + GuestOwnerTag,
@@ -163,7 +193,7 @@ func TestMediaFormattingRequiresPendingMarkerAndBlankOwnedDisk(t *testing.T) {
 		t.Fatal("existing media preparation may not format an unmarked disk")
 	}
 	command := recoveryCommand(map[string]string{
-		"agent": "1", "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
+		"agent": "1", "cpu": GuestCPU, "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
 		"memory": "8192", "name": GuestName, "net0": "virtio=" + GuestMAC + ",bridge=vmbr1,tag=20,firewall=1",
 		"onboot": "0", "ostype": "l26", "scsihw": "virtio-scsi-single", "serial0": "socket",
 		"tags":      "boetticher;managed;module;" + GuestOwnerTag,

@@ -42,6 +42,7 @@ const (
 	GuestPrefix          = 24
 	GuestRootDisk        = "scsi0"
 	GuestMediaDisk       = "scsi1"
+	GuestCPU             = "x86-64-v3"
 	GuestAgentTimeout    = 90 * time.Second
 )
 
@@ -210,7 +211,10 @@ func ValidateGuestConfigForSize(config map[string]string, mediaGiB int) error {
 			return fail()
 		}
 	}
-	if config["name"] != GuestName || config["cores"] != strconv.Itoa(CPUs) || config["memory"] != strconv.Itoa(MemoryMiB) || config["onboot"] != "0" || config["agent"] != "1" || config["ostype"] != "l26" || config["scsihw"] != "virtio-scsi-single" || !hasTag(config["tags"], "boetticher") || !hasTag(config["tags"], "managed") || !hasTag(config["tags"], "module") || !hasTag(config["tags"], GuestOwnerTag) {
+	if config["name"] != GuestName || config["cpu"] != GuestCPU || config["cores"] != strconv.Itoa(CPUs) || config["memory"] != strconv.Itoa(MemoryMiB) || config["onboot"] != "0" || config["agent"] != "1" || config["ostype"] != "l26" || config["scsihw"] != "virtio-scsi-single" || !hasTag(config["tags"], "boetticher") || !hasTag(config["tags"], "managed") || !hasTag(config["tags"], "module") || !hasTag(config["tags"], GuestOwnerTag) {
+		if config["name"] == GuestName && config["cpu"] != GuestCPU {
+			return errors.New("media VM CPU must be x86-64-v3; update the owned VM while stopped before retrying")
+		}
 		return fail()
 	}
 	if !strings.Contains(config["boot"], "order=scsi0") || config["ipconfig0"] != "ip="+GuestAddress+"/24,gw="+GuestGateway || config["nameserver"] != GuestGateway {
@@ -261,7 +265,10 @@ func ValidateRecoverableGuestConfigForSize(config map[string]string, mediaGiB in
 			return fail()
 		}
 	}
-	if config["name"] != GuestName || config["cores"] != strconv.Itoa(CPUs) || config["memory"] != strconv.Itoa(MemoryMiB) || config["onboot"] != "0" || config["agent"] != "1" || config["ostype"] != "l26" || config["scsihw"] != "virtio-scsi-single" || !hasTag(config["tags"], "boetticher") || !hasTag(config["tags"], "managed") || !hasTag(config["tags"], "module") || !hasTag(config["tags"], GuestOwnerTag) {
+	if config["name"] != GuestName || config["cpu"] != GuestCPU || config["cores"] != strconv.Itoa(CPUs) || config["memory"] != strconv.Itoa(MemoryMiB) || config["onboot"] != "0" || config["agent"] != "1" || config["ostype"] != "l26" || config["scsihw"] != "virtio-scsi-single" || !hasTag(config["tags"], "boetticher") || !hasTag(config["tags"], "managed") || !hasTag(config["tags"], "module") || !hasTag(config["tags"], GuestOwnerTag) {
+		if config["name"] == GuestName && config["cpu"] != GuestCPU {
+			return errors.New("media VM CPU must be x86-64-v3; update the owned VM while stopped before retrying")
+		}
 		return fail()
 	}
 	if !strings.Contains(config["boot"], "order=scsi0") || config["ipconfig0"] != "ip="+GuestAddress+"/24,gw="+GuestGateway || config["nameserver"] != GuestGateway || config["serial0"] != "socket" {
@@ -316,6 +323,9 @@ func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, m
 		}
 		return recoverGuestWithMedia(ctx, host, guest.Config, mediaGiB)
 	}
+	if err := requireGuestCPUFeatures(ctx, host); err != nil {
+		return err
+	}
 	remoteImage, cleanup, err := copyAssetToHost(ctx, host, BuilderPath, "arrstack-builder")
 	if err != nil {
 		return err
@@ -324,7 +334,7 @@ func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, m
 	if _, err := host.Run(ctx, "sh "+shellQuote(remoteImage)+" "+shellQuote(ImagePath)); err != nil {
 		return fmt.Errorf("build pinned arrstack VM image: %w", err)
 	}
-	command := "set -eu; test -r " + shellQuote(ImagePath) + "; image=" + shellQuote(ImagePath) + "; qm create " + strconv.Itoa(GuestVMID) + " --name " + shellQuote(GuestName) + " --memory " + strconv.Itoa(MemoryMiB) + " --cores " + strconv.Itoa(CPUs) + " --ostype l26 --onboot 0 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+GuestOwnerTag+";"+GuestMediaPendingTag) + " --net0 " + shellQuote("virtio="+GuestMAC+",bridge=vmbr1,tag="+strconv.Itoa(GuestVLAN)+",firewall=1") + " --ipconfig0 " + shellQuote("ip="+GuestAddress+"/24,gw="+GuestGateway) + " --nameserver " + shellQuote(GuestGateway) + " --ide2 " + shellQuote(StorageID+":cloudinit") + "; qm importdisk " + strconv.Itoa(GuestVMID) + " \"$image\" " + shellQuote(StorageID) + " --format raw >/dev/null; disk=$(qm config " + strconv.Itoa(GuestVMID) + " | awk -F': ' '/^unused[0-9]+:/ {print $2; exit}'); test -n \"$disk\"; case \"$disk\" in " + shellQuote(StorageID+":vm-290-disk-") + "*) ;; *) echo 'unexpected arrstack root disk identity' >&2; exit 1 ;; esac; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestRootDisk + " \"$disk,ssd=1\"; qm resize " + strconv.Itoa(GuestVMID) + " " + GuestRootDisk + " " + strconv.Itoa(RootDiskGiB) + "G; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestMediaDisk + " " + shellQuote(StorageID+":"+strconv.Itoa(mediaGiB)+",format=raw,ssd=1") + ""
+	command := "set -eu; test -r " + shellQuote(ImagePath) + "; image=" + shellQuote(ImagePath) + "; qm create " + strconv.Itoa(GuestVMID) + " --name " + shellQuote(GuestName) + " --cpu " + shellQuote(GuestCPU) + " --memory " + strconv.Itoa(MemoryMiB) + " --cores " + strconv.Itoa(CPUs) + " --ostype l26 --onboot 0 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+GuestOwnerTag+";"+GuestMediaPendingTag) + " --net0 " + shellQuote("virtio="+GuestMAC+",bridge=vmbr1,tag="+strconv.Itoa(GuestVLAN)+",firewall=1") + " --ipconfig0 " + shellQuote("ip="+GuestAddress+"/24,gw="+GuestGateway) + " --nameserver " + shellQuote(GuestGateway) + " --ide2 " + shellQuote(StorageID+":cloudinit") + "; qm importdisk " + strconv.Itoa(GuestVMID) + " \"$image\" " + shellQuote(StorageID) + " --format raw >/dev/null; disk=$(qm config " + strconv.Itoa(GuestVMID) + " | awk -F': ' '/^unused[0-9]+:/ {print $2; exit}'); test -n \"$disk\"; case \"$disk\" in " + shellQuote(StorageID+":vm-290-disk-") + "*) ;; *) echo 'unexpected arrstack root disk identity' >&2; exit 1 ;; esac; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestRootDisk + " \"$disk,ssd=1\"; qm resize " + strconv.Itoa(GuestVMID) + " " + GuestRootDisk + " " + strconv.Itoa(RootDiskGiB) + "G; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestMediaDisk + " " + shellQuote(StorageID+":"+strconv.Itoa(mediaGiB)+",format=raw,ssd=1") + ""
 	if _, err := host.Run(ctx, command); err != nil {
 		return fmt.Errorf("create arrstack VM: %w", err)
 	}
@@ -334,6 +344,15 @@ func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, m
 	}
 	if !created.Exists {
 		return errors.New("arrstack VM was not present after creation")
+	}
+	return nil
+}
+
+func requireGuestCPUFeatures(ctx context.Context, host firewallmodule.HostClient) error {
+	const required = "avx avx2 bmi1 bmi2 f16c fma lzcnt movbe popcnt sse4_1 sse4_2 xsave"
+	command := "set -eu; flags=$(awk '/^flags[[:space:]]*:/ {print $0; exit}' /proc/cpuinfo); for flag in " + required + "; do printf '%s\\n' \"$flags\" | grep -Eq \"(^|[[:space:]])$flag([[:space:]]|$)\" || { echo \"missing x86-64-v3 CPU feature: $flag\" >&2; exit 1; }; done"
+	if _, err := host.Run(ctx, command); err != nil {
+		return errors.New("Host CPU lacks the x86-64-v3 features required by the media Bun runtime")
 	}
 	return nil
 }
@@ -480,7 +499,7 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 		return err
 	}
 	policyUnit := "[Unit]\nDescription=Boetticher arrstack fail-closed firewall\nBefore=docker.service\nAfter=network-online.target nftables.service\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=" + GuestPolicyPath + "\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n"
-	policyInstall := "install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policy + "\nARRSTACK_POLICY\ncat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
+	policyInstall := "command -v docker >/dev/null; docker compose version >/dev/null; install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policy + "\nARRSTACK_POLICY\ncat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
 	if err := guestExecJSON(ctx, host, policyInstall); err != nil {
 		return fmt.Errorf("arrstack guest prerequisites are not ready: %w", err)
 	}

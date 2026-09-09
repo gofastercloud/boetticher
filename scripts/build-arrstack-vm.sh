@@ -72,7 +72,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-virt-customize -a "$customized" --install docker.io,qemu-guest-agent,nftables,iptables,ca-certificates,curl --upload "$policy":/usr/local/sbin/boetticher-arrstack-firewall --upload "$unit":/etc/systemd/system/boetticher-arrstack-firewall.service --run-command 'chmod 0755 /usr/local/sbin/boetticher-arrstack-firewall; systemctl enable boetticher-arrstack-firewall.service qemu-guest-agent; systemctl disable docker.service docker.socket' --mkdir /var/lib/arrstack/media --mkdir /opt/arrstack
+virt-customize -a "$customized" --install docker.io,docker-compose,qemu-guest-agent,nftables,iptables,ca-certificates,curl --upload "$policy":/usr/local/sbin/boetticher-arrstack-firewall --upload "$unit":/etc/systemd/system/boetticher-arrstack-firewall.service --run-command 'chmod 0755 /usr/local/sbin/boetticher-arrstack-firewall; systemctl enable boetticher-arrstack-firewall.service qemu-guest-agent; systemctl disable docker.service docker.socket' --mkdir /var/lib/arrstack/media --mkdir /opt/arrstack
 qemu-img check "$customized"
 install -d -m 0755 /var/lib/boetticher/arrstack-image
 install -m 0644 "$customized" "$output.new"
