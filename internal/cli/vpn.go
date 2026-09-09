@@ -646,6 +646,9 @@ func runVPNTeardown(ctx context.Context, serviceContext clientServiceContext, op
 	copyVPN := *proposed.VPN
 	copyVPN.Enabled = boolPointer(false)
 	proposed.VPN = &copyVPN
+	if err := refuseVPNStopWithLiveProtectedGuests(ctx, serviceContext.Host, serviceContext.Config.Proxmox.Node, serviceContext.Config.Modules); err != nil {
+		return err
+	}
 	provider, err := requireClientProvider(ctx, serviceContext.Site, serviceContext.Desired, serviceContext.Host)
 	if err != nil {
 		return err
@@ -670,6 +673,9 @@ func runVPNTeardown(ctx context.Context, serviceContext clientServiceContext, op
 		if !answer {
 			return errors.New("module vpn teardown cancelled")
 		}
+	}
+	if err := refuseVPNStopWithLiveProtectedGuests(ctx, serviceContext.Host, serviceContext.Config.Proxmox.Node, serviceContext.Config.Modules); err != nil {
+		return err
 	}
 	serviceContext.Config.Modules = proposed
 	if err := controllerhost.SaveConfig(serviceContext.Config); err != nil {

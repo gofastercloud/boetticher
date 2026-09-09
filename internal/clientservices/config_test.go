@@ -153,6 +153,29 @@ func TestNormalizeMaterializesReferenceDefaultsOnlyInMemory(t *testing.T) {
 	}
 }
 
+func TestArrstackRequiresProtectedIntentAndAllowsConfiguredPeerPort(t *testing.T) {
+	enabled := true
+	modules := Modules{
+		Arrstack: &ArrstackConfig{Enabled: true},
+		DNS:      &DNSConfig{Enabled: &enabled},
+		DHCP:     &DHCPConfig{Enabled: &enabled, Reservations: []Reservation{{Name: "lab-arrstack-01", Zone: "SERVERS", MAC: "02:00:00:00:20:e6", Address: "10.10.20.230"}}},
+		VPN:      &VPNConfig{Enabled: &enabled, Location: "europe", Clients: []string{"lab-arrstack-01"}, Forwards: []VPNForward{{Name: "arrstack-qbittorrent", Reservation: "lab-arrstack-01", Protocols: []string{"tcp", "udp"}, Port: 40000}}},
+	}
+	if err := Validate(modules, testSite()); err != nil {
+		t.Fatalf("valid arrstack intent rejected: %v", err)
+	}
+	stopped := false
+	modules.VPN.Enabled = &stopped
+	if err := Validate(modules, testSite()); err != nil {
+		t.Fatalf("arrstack intent with a retained stopped VPN was rejected: %v", err)
+	}
+	modules.VPN.Enabled = &enabled
+	modules.VPN.Clients = nil
+	if err := Validate(modules, testSite()); err == nil {
+		t.Fatal("arrstack without VPN client intent accepted")
+	}
+}
+
 func TestValidateRejectsReservationPoolAndNameConflicts(t *testing.T) {
 	modules := Modules{
 		DNS:  &DNSConfig{Enabled: boolPtr(true), Records: []DNSRecord{{Name: "app", Type: "A", Value: "10.10.30.61"}}},

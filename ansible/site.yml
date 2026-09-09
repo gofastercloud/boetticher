@@ -50,8 +50,6 @@
       when: inventory_hostname in groups.get('bifrost', [])
     - role: printer
       when: inventory_hostname in groups.get('printer', [])
-    - role: arr
-      when: inventory_hostname in groups.get('arr', [])
     - role: aiops
       when: inventory_hostname in groups.get('aiops', [])
     - role: gatus

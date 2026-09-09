@@ -113,25 +113,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 			t.Fatalf("%s module schema ref = %q", name, ref.Ref)
 		}
 	}
-	var arrRef struct {
-		Ref string `json:"$ref"`
-	}
-	if err := json.Unmarshal(modules.Properties["arr"], &arrRef); err != nil {
-		t.Fatalf("decode arr module schema ref: %v", err)
-	}
-	if arrRef.Ref != "#/$defs/ArrModuleConfig" {
-		t.Fatalf("arr module schema ref = %q", arrRef.Ref)
-	}
 	if _, ok := document.Definitions["ToggleModuleConfig"].Properties["network"]; ok {
 		t.Fatal("non-network toggle schema exposes network")
-	}
-	var arrNetwork struct {
-		Enum []string `json:"enum"`
-	}
-	if err := json.Unmarshal(document.Definitions["ArrModuleConfig"].Properties["network"], &arrNetwork); err != nil {
-		t.Fatalf("decode arr network schema: %v", err)
-	}
-	if len(arrNetwork.Enum) != 1 || arrNetwork.Enum[0] != "airvpn" {
-		t.Fatalf("arr network schema = %#v, want only airvpn", arrNetwork.Enum)
 	}
 }

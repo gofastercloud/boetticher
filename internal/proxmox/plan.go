@@ -704,9 +704,6 @@ func vlanFor(s model.Site, zoneName string) int {
 }
 
 func lxcNetworkParam(guest GuestPlan) string {
-	if guest.MAC == model.ArrGuestMAC {
-		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,hwaddr=%s,ip=dhcp", guest.VLAN, guest.MAC)
-	}
 	if guest.MAC != "" {
 		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,hwaddr=%s,ip=%s/24,gw=%s", guest.VLAN, guest.MAC, guest.Address, guest.Gateway)
 	}
@@ -1756,7 +1753,7 @@ func ensureGuestMACFilter(ctx context.Context, client *Client, plan Plan, guest 
 	if guest.MAC == "" || guest.Owner == "" {
 		return nil
 	}
-	if err := client.SetGuestNetworkFilters(ctx, plan.Node, guest.Kind, guest.VMID, guest.MAC != model.ArrGuestMAC); err != nil {
+	if err := client.SetGuestNetworkFilters(ctx, plan.Node, guest.Kind, guest.VMID, true); err != nil {
 		return fmt.Errorf("HOLD: enable Proxmox MAC filtering for %s: %w", guest.Name, err)
 	}
 	return nil

@@ -1,0 +1,20 @@
+# One wildcard certificate and exact service routes. Unknown hosts are rejected.
+*.davebarton.cc {
+	@radarr host oscar.davebarton.cc
+	handle @radarr { reverse_proxy radarr:7878 }
+	@sonarr host emmy.davebarton.cc
+	handle @sonarr { reverse_proxy sonarr:8989 }
+	@bazarr host tony.davebarton.cc
+	handle @bazarr { reverse_proxy bazarr:6767 }
+	@prowlarr host peabody.davebarton.cc
+	handle @prowlarr { reverse_proxy prowlarr:9696 }
+	@trailarr host clio.davebarton.cc
+	handle @trailarr { reverse_proxy trailarr:7889 }
+	@qbittorrent host qbittorrent.davebarton.cc
+	handle @qbittorrent { reverse_proxy qbittorrent:8080 }
+	@jellyfin host jellyfin.davebarton.cc
+	handle @jellyfin { reverse_proxy jellyfin:8096 }
+	@jellyseerr host jellyseerr.davebarton.cc
+	handle @jellyseerr { reverse_proxy jellyseerr:5055 }
+	handle { respond 404 }
+}

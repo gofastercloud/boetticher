@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "logging", "printer", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "monitoring", "aiops", "airvpn", "bifrost", "gatus", "logging", "printer", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -90,79 +90,6 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 		if secret.Consumer == "powerdns-authoritative" && (!secret.Persistent || secret.Delivery != "protected-powerdns-backend") {
 			t.Fatalf("PowerDNS secret exception is not explicit: %#v", secret)
 		}
-	}
-}
-
-func TestArrRequiresAirVPNAndComposesOwnedDHCPReservation(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	airvpnEnabled := true
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
-	site, _, err := Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	declaration, ok := findDeclaration(site, "arr")
-	if !ok || len(declaration.DHCPReservations) != 1 {
-		t.Fatalf("arr declaration reservation missing: %#v", declaration)
-	}
-	reservation := declaration.DHCPReservations[0]
-	if reservation.Hostname != "lab-arr-01" || reservation.Address != model.ArrGuestAddress || reservation.MAC != model.ArrGuestMAC || reservation.VMID != model.ArrVMID {
-		t.Fatalf("unexpected arr DHCP reservation: %#v", reservation)
-	}
-	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0] != reservation {
-		t.Fatalf("module reservation was not projected into canonical DHCP state: %#v", site.DHCPReservations)
-	}
-	var downloadsVolume model.PersistentVolumeDeclaration
-	for _, volume := range declaration.Volumes {
-		if volume.Name == "downloads" {
-			downloadsVolume = volume
-			break
-		}
-	}
-	if downloadsVolume.Guest != "lab-arr-01" || downloadsVolume.MountPath != "/var/lib/arr/downloads" || downloadsVolume.SizeGiB != 500 || downloadsVolume.Backup || downloadsVolume.Placement != model.StorageRequireDataDisk {
-		t.Fatalf("ARR downloads volume contract is incomplete: %#v", downloadsVolume)
-	}
-	var downloadsState model.PersistentState
-	for _, state := range declaration.Persistent {
-		if state.Name == "downloads" {
-			downloadsState = state
-			break
-		}
-	}
-	if downloadsState.Path != "/var/lib/arr/downloads" || downloadsState.Kind != "media-downloads" || downloadsState.Backup || downloadsState.Sensitive || downloadsState.Replacement != "retain-across-rootfs-replacement" {
-		t.Fatalf("ARR downloads persistent-state contract is incomplete: %#v", downloadsState)
-	}
-}
-
-func TestArrReservationRemainsUniqueWithOtherOptionalModules(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &enabled}
-	config.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	config.Modules.Bifrost = &model.BifrostModuleConfig{
-		Enabled: &enabled, Network: model.ModuleNetworkDirect,
-		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.BifrostModelConfig{{Alias: "operations-investigator", Upstream: "openrouter", Model: "openai/gpt-5-mini"}},
-	}
-	site, _, err := Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0].Address != model.ArrGuestAddress {
-		t.Fatalf("ARR reservation was duplicated or missing: %#v", site.DHCPReservations)
-	}
-}
-
-func TestArrRejectsNonAirVPNNetwork(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
-	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.arr.network") {
-		t.Fatalf("arr direct network mode was accepted: %v", err)
 	}
 }
 
@@ -304,13 +231,6 @@ func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *tes
 	}
 	if !secretField.Sensitive {
 		t.Fatalf("Bifrost secret reference is not structurally classified: %#v", bifrost[1])
-	}
-	arr, err := registry.ConfigurationFields("arr", config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(arr) != 1 || arr[0].Key != "network" || arr[0].Default != string(model.ModuleNetworkAirVPN) || len(arr[0].AllowedValues) != 1 || arr[0].AllowedValues[0] != string(model.ModuleNetworkAirVPN) {
-		t.Fatalf("unexpected ARR configuration schema: %#v", arr)
 	}
 }
 

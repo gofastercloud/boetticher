@@ -307,32 +307,6 @@ func TestComposedPlanUsesResolvedCapabilityOrder(t *testing.T) {
 	}
 }
 
-func TestArrPlanUsesDeclarationOwnedDHCPIdentity(t *testing.T) {
-	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	config.StorageProfile = "dedicated-data-disk"
-	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
-	enabled := true
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}
-	site, _, err := modules.Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := PlanFromSite(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, guest := range plan.Guests {
-		if guest.Name == "lab-arr-01" {
-			if guest.MAC != model.ArrGuestMAC || lxcNetworkParam(guest) != "name=eth0,bridge=vmbr1,tag=20,firewall=1,hwaddr="+model.ArrGuestMAC+",ip=dhcp" {
-				t.Fatalf("arr guest network identity = %#v", guest)
-			}
-			return
-		}
-	}
-	t.Fatal("arr guest is missing")
-}
-
 func TestAirVPNBifrostPlanUsesStableMACFilterIdentity(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true

@@ -40,21 +40,6 @@
       ],
       "type": "object"
     },
-    "ArrModuleConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "network": {
-          "enum": [
-            "airvpn"
-          ],
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "BifrostModelConfig": {
       "additionalProperties": false,
       "properties": {
@@ -271,9 +256,6 @@
         },
         "airvpn": {
           "$ref": "#/$defs/AirVPNModuleConfig"
-        },
-        "arr": {
-          "$ref": "#/$defs/ArrModuleConfig"
         },
         "bifrost": {
           "$ref": "#/$defs/BifrostModuleConfig"
