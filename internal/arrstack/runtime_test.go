@@ -1,6 +1,7 @@
 package arrstack
 
 import (
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,13 +80,13 @@ func TestRuntimeProbeDoesNotTreatDeadServiceMarkersAsHealthy(t *testing.T) {
 }
 
 func TestRuntimeProbeUsesConfiguredPeerPortAndExpectedServices(t *testing.T) {
-	probe := runtimeProbeCommand(40000)
-	for _, want := range []string{"docker-compose.yml", "for expectation in caddy=ghcr.io/lavx/arrstack-caddy@sha256:d1c594877aa8f9f79f8fc10bb13c854a1f2219e54422fb3abc4dc3f845aaadd7 qbittorrent=", "ai-subtitle-translator", "recyclarr", "test \"$image\" = \"$expected\"", "caddy adapt", "--resolve oscar.davebarton.cc:443:10.10.20.230", GuestPolicyReceipt, "test \"$recorded_rules\" = \"$actual_rules\"", "test \"$recorded_script\" = \"$actual_script\""} {
+	probe := runtimeProbeCommandWithConfig(40000, clientservices.MediaConfig{ApplicationDomain: "media.example.net", Aliases: clientservices.MediaAliases{Radarr: "movies"}})
+	for _, want := range []string{"docker-compose.yml", "for expectation in caddy=ghcr.io/lavx/arrstack-caddy@sha256:d1c594877aa8f9f79f8fc10bb13c854a1f2219e54422fb3abc4dc3f845aaadd7 qbittorrent=", "ai-subtitle-translator", "recyclarr", "test \"$image\" = \"$expected\"", "caddy adapt", "--resolve 'movies.media.example.net':443:10.10.20.230", GuestPolicyReceipt, "test \"$recorded_rules\" = \"$actual_rules\"", "test \"$recorded_script\" = \"$actual_script\""} {
 		if !strings.Contains(probe, want) {
 			t.Fatalf("runtime probe missing %q", want)
 		}
 	}
-	if strings.Contains(probe, "curl -k") || strings.Contains(probe, "davebarton.cc:443:127.0.0.1") {
+	if strings.Contains(probe, "curl -k") || strings.Contains(probe, "media.example.com:443:127.0.0.1") {
 		t.Fatal("runtime probe bypasses TLS or probes the wildcard apex on loopback")
 	}
 }

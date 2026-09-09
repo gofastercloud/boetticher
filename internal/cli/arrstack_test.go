@@ -10,9 +10,10 @@ import (
 func TestPrepareArrstackAddsExactIntentAndPreservesExistingPeerPort(t *testing.T) {
 	enabled := true
 	current := clientservices.Modules{
-		DNS:  &clientservices.DNSConfig{Enabled: &enabled},
-		DHCP: &clientservices.DHCPConfig{Enabled: &enabled},
-		VPN:  &clientservices.VPNConfig{Enabled: &enabled, Location: "europe", Forwards: []clientservices.VPNForward{{Name: "arrstack-qbittorrent", Reservation: "lab-arrstack-01", Protocols: []string{"tcp", "udp"}, Port: 35797}}},
+		Media: &clientservices.MediaConfig{ApplicationDomain: "media.example.net", Aliases: clientservices.MediaAliases{Radarr: "movies", Sonarr: "shows", Bazarr: "subs", Prowlarr: "index", Trailarr: "trails"}},
+		DNS:   &clientservices.DNSConfig{Enabled: &enabled},
+		DHCP:  &clientservices.DHCPConfig{Enabled: &enabled},
+		VPN:   &clientservices.VPNConfig{Enabled: &enabled, Location: "europe", Forwards: []clientservices.VPNForward{{Name: "media-qbittorrent", Reservation: "lab-media-01", Protocols: []string{"tcp", "udp"}, Port: 35797}}},
 	}
 	proposed, changed, err := prepareArrstackModules(current)
 	if err != nil {
@@ -41,7 +42,7 @@ func TestPrepareArrstackRejectsGUIIngressPorts(t *testing.T) {
 		current := clientservices.Modules{
 			DNS:  &clientservices.DNSConfig{Enabled: &enabled},
 			DHCP: &clientservices.DHCPConfig{Enabled: &enabled},
-			VPN:  &clientservices.VPNConfig{Enabled: &enabled, Location: "europe", Forwards: []clientservices.VPNForward{{Name: "arrstack-qbittorrent", Reservation: arrstack.GuestName, Protocols: []string{"tcp", "udp"}, Port: port}}},
+			VPN:  &clientservices.VPNConfig{Enabled: &enabled, Location: "europe", Forwards: []clientservices.VPNForward{{Name: "media-qbittorrent", Reservation: arrstack.GuestName, Protocols: []string{"tcp", "udp"}, Port: port}}},
 		}
 		if _, _, err := prepareArrstackModules(current); err == nil {
 			t.Fatalf("peer port %d was accepted", port)

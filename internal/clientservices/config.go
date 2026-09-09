@@ -16,16 +16,35 @@ import (
 )
 
 const (
-	LeaseDuration12Hours             = "12h"
-	ScopeReservationsOnly            = "reservations-only"
-	ScopePool                        = "pool"
-	DNSResolverPort                  = 853
-	StubbyListenAddress              = "127.0.0.1#5453"
-	LeaseFilePath                    = "/etc/boetticher/dhcp.leases"
-	ProbeAddressStart                = 250
-	ProbeAddressEnd                  = 254
-	DefaultObservabilityPublicDomain = "davebarton.cc"
+	LeaseDuration12Hours  = "12h"
+	ScopeReservationsOnly = "reservations-only"
+	ScopePool             = "pool"
+	DNSResolverPort       = 853
+	StubbyListenAddress   = "127.0.0.1#5453"
+	LeaseFilePath         = "/etc/boetticher/dhcp.leases"
+	ProbeAddressStart     = 250
+	ProbeAddressEnd       = 254
 )
+
+// MediaReferenceConfig contains the installation's reference values. These
+// values seed omitted operator fields; validation accepts any safe equivalent.
+type MediaReferenceConfig struct {
+	ApplicationDomain string
+	Aliases           MediaAliases
+}
+
+type MediaAliases struct {
+	Radarr   string `yaml:"radarr,omitempty" json:"radarr,omitempty"`
+	Sonarr   string `yaml:"sonarr,omitempty" json:"sonarr,omitempty"`
+	Bazarr   string `yaml:"bazarr,omitempty" json:"bazarr,omitempty"`
+	Prowlarr string `yaml:"prowlarr,omitempty" json:"prowlarr,omitempty"`
+	Trailarr string `yaml:"trailarr,omitempty" json:"trailarr,omitempty"`
+}
+
+var DefaultMediaReference = MediaReferenceConfig{
+	// Site-specific values are supplied by the operator/reference example;
+	// validation must never require a personal domain or aliases.
+}
 
 // Modules is the installed lab.yml service intent. A nil capability block is
 // deliberately different from a disabled block: read-only commands report
@@ -37,14 +56,21 @@ type Modules struct {
 	VPN           *VPNConfig           `yaml:"vpn,omitempty" json:"vpn,omitempty"`
 	Observability *ObservabilityConfig `yaml:"observability,omitempty" json:"observability,omitempty"`
 	AIOps         *AIOpsConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
-	Arrstack      *ArrstackConfig      `yaml:"arrstack,omitempty" json:"arrstack,omitempty"`
+	Media         *MediaConfig         `yaml:"media,omitempty" json:"media,omitempty"`
+	// Arrstack is source compatibility for internal tests and older callers;
+	// it is never persisted or advertised in the public configuration.
+	Arrstack *ArrstackConfig `yaml:"-" json:"-"`
 }
 
-type ArrstackConfig struct {
-	Enabled           bool   `yaml:"enabled" json:"enabled"`
-	MediaGiB          int    `yaml:"media_gib,omitempty" json:"media_gib,omitempty"`
-	ApplicationDomain string `yaml:"application_domain,omitempty" json:"application_domain,omitempty"`
+type MediaConfig struct {
+	Enabled           bool         `yaml:"enabled" json:"enabled"`
+	MediaGiB          int          `yaml:"media_gib,omitempty" json:"media_gib,omitempty"`
+	ApplicationDomain string       `yaml:"application_domain,omitempty" json:"application_domain,omitempty"`
+	Aliases           MediaAliases `yaml:"aliases,omitempty" json:"aliases,omitempty"`
 }
+
+// ArrstackConfig is retained as an internal source compatibility alias.
+type ArrstackConfig = MediaConfig
 
 type ObservabilityConfig struct {
 	Enabled      *bool            `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -207,15 +233,16 @@ func ResolveReservation(modules Modules, name string) (Reservation, bool) {
 
 func (m Modules) Normalize() Modules {
 	result := m
-	if result.Arrstack != nil {
-		copyArr := *result.Arrstack
+	if result.Media == nil && result.Arrstack != nil {
+		result.Media = result.Arrstack
+	}
+	if result.Media != nil {
+		copyArr := *result.Media
 		if copyArr.MediaGiB == 0 {
 			copyArr.MediaGiB = 256
 		}
-		if copyArr.ApplicationDomain == "" {
-			copyArr.ApplicationDomain = "davebarton.cc"
-		}
-		result.Arrstack = &copyArr
+		result.Media = &copyArr
+		result.Arrstack = result.Media
 	}
 	if result.DNS != nil {
 		copyDNS := *result.DNS
@@ -273,9 +300,9 @@ func (m Modules) Normalize() Modules {
 
 func (m Modules) Clone() Modules {
 	result := Modules{}
-	if m.Arrstack != nil {
-		copyArr := *m.Arrstack
-		result.Arrstack = &copyArr
+	if m.Media != nil {
+		copyMedia := *m.Media
+		result.Media = &copyMedia
 	}
 	if m.Tailnet != nil {
 		copyTailnet := *m.Tailnet
@@ -357,24 +384,32 @@ func Validate(modules Modules, site model.Site) error {
 	if err := validateObservability(normalized); err != nil {
 		return err
 	}
-	if normalized.Arrstack != nil && normalized.Arrstack.Enabled {
+	if normalized.Media != nil && normalized.Media.Enabled {
 		if normalized.DNS == nil || !Enabled(normalized.DNS.Enabled) || normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled) || normalized.VPN == nil {
 			return errors.New("enabled arrstack requires enabled DNS, DHCP, and configured VPN client intent")
 		}
-		if normalized.Arrstack.MediaGiB < 1 {
-			return errors.New("modules.arrstack.media_gib must be positive")
+		if normalized.Media.MediaGiB < 1 {
+			return errors.New("modules.media.media_gib must be positive")
 		}
-		if normalized.Arrstack.ApplicationDomain != "davebarton.cc" {
-			return errors.New("modules.arrstack.application_domain must be davebarton.cc")
+		if !ValidPublicDomain(normalized.Media.ApplicationDomain) {
+			return errors.New("modules.media.application_domain must be a valid DNS domain")
+		}
+		aliases := []string{normalized.Media.Aliases.Radarr, normalized.Media.Aliases.Sonarr, normalized.Media.Aliases.Bazarr, normalized.Media.Aliases.Prowlarr, normalized.Media.Aliases.Trailarr}
+		seenAliases := map[string]bool{}
+		for _, alias := range aliases {
+			if !validLabel(alias) || seenAliases[alias] {
+				return errors.New("modules.media.aliases must be unique valid labels")
+			}
+			seenAliases[alias] = true
 		}
 		reservationFound, vpnClient := false, false
 		for _, r := range normalized.DHCP.Reservations {
-			if r.Name == "lab-arrstack-01" && r.Zone == "SERVERS" && r.Address == "10.10.20.230" && r.MAC == "02:00:00:00:20:e6" {
+			if r.Name == "lab-media-01" && r.Zone == "SERVERS" && r.Address == "10.10.20.230" && r.MAC == "02:00:00:00:20:e6" {
 				reservationFound = true
 			}
 		}
 		for _, c := range normalized.VPN.Clients {
-			if c == "lab-arrstack-01" {
+			if c == "lab-media-01" {
 				vpnClient = true
 			}
 		}
@@ -383,12 +418,12 @@ func Validate(modules Modules, site model.Site) error {
 		}
 		foundForward := false
 		for _, f := range normalized.VPN.Forwards {
-			if f.Name == "arrstack-qbittorrent" && f.Reservation == "lab-arrstack-01" && f.Port >= 1 && len(f.Protocols) == 2 && f.Protocols[0] == "tcp" && f.Protocols[1] == "udp" {
+			if f.Name == "media-qbittorrent" && f.Reservation == "lab-media-01" && f.Port >= 1 && len(f.Protocols) == 2 && f.Protocols[0] == "tcp" && f.Protocols[1] == "udp" {
 				foundForward = true
 			}
 		}
 		if !foundForward {
-			return errors.New("enabled arrstack requires the arrstack-qbittorrent TCP/UDP forward")
+			return errors.New("enabled arrstack requires the media-qbittorrent TCP/UDP forward")
 		}
 	}
 	if normalized.Tailnet != nil && normalized.Tailnet.Enabled && (normalized.DNS == nil || !Enabled(normalized.DNS.Enabled) || normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
@@ -488,6 +523,18 @@ func ValidPublicDomain(value string) bool {
 			if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func validLabel(value string) bool {
+	if value == "" || len(value) > 63 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, char := range strings.ToLower(value) {
+		if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+			return false
 		}
 	}
 	return true

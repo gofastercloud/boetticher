@@ -96,7 +96,7 @@ s = re.sub(r'\n  // Step 9a: Prepare custom Caddy image.*?\n  // Step 9b:', '\n 
 s = caddy.read_text()
 s = s.replace('.filter((svc) => svc.adminPort !== undefined)', '.filter((svc) => svc.adminPort !== undefined && new Set(["radarr", "sonarr", "bazarr", "prowlarr", "trailarr", "qbittorrent", "jellyfin", "jellyseerr"]).has(svc.id))')
 import re
-s = re.sub(r'id: svc\.id,\s*port:', lambda _: 'id: ({radarr: "oscar", sonarr: "emmy", bazarr: "tony", prowlarr: "peabody", trailarr: "clio"} as Record<string, string>)[svc.id] ?? svc.id,' + chr(10) + '      port:', s, count=1)
+s = re.sub(r'id: svc\.id,\s*port:', lambda _: 'id: ({radarr: process.env.ARRSTACK_ALIAS_RADARR, sonarr: process.env.ARRSTACK_ALIAS_SONARR, bazarr: process.env.ARRSTACK_ALIAS_BAZARR, prowlarr: process.env.ARRSTACK_ALIAS_PROWLARR, trailarr: process.env.ARRSTACK_ALIAS_TRAILARR} as Record<string, string | undefined>)[svc.id] ?? svc.id,' + chr(10) + '      port:', s, count=1)
 caddy.write_text(s)
 s = compose.read_text().replace('`0.0.0.0:${p}:${p}`', '`${svc.id === "caddy" ? "10.10.20.230" : "127.0.0.1"}:${p}:${p}`')
 s = s.replace('return {\n    image: CADDY_PREBUILT_IMAGE,\n    tag: CADDY_PREBUILT_TAG,\n    build: svc.build,\n  };', 'return { image: svc.image, tag: svc.tag, build: svc.build };')

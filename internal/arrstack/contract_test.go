@@ -8,7 +8,7 @@ func TestContractIdentityAndVPNForward(t *testing.T) {
 		t.Fatalf("reservation = %#v", r)
 	}
 	f := VPNForward()
-	if f.Name != "arrstack-qbittorrent" || f.Reservation != GuestName || f.Port != 35796 {
+	if f.Name != "media-qbittorrent" || f.Reservation != GuestName || f.Port != 35796 {
 		t.Fatalf("forward = %#v", f)
 	}
 	if len(f.Protocols) != 2 || f.Protocols[0] != "tcp" || f.Protocols[1] != "udp" {

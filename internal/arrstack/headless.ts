@@ -32,6 +32,8 @@ export function buildHeadlessState(installDir: string, storageRoot: string): Sta
   ];
   const apiKeys: Record<string, string> = { ...(existing?.api_keys ?? {}) };
   for (const id of ["prowlarr", "sonarr", "radarr"]) if (!apiKeys[id]) apiKeys[id] = generateApiKey();
+  const domain = process.env.ARRSTACK_APPLICATION_DOMAIN;
+  if (typeof domain !== "string" || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) throw new Error("ARRSTACK_APPLICATION_DOMAIN must be a valid DNS domain");
   return {
     schema_version: 1,
     installer_version: VERSION,
@@ -41,8 +43,8 @@ export function buildHeadlessState(installDir: string, storageRoot: string): Sta
     admin: { username: existing?.admin.username ?? process.env.ARRSTACK_ADMIN_USER ?? os.userInfo().username },
     services_enabled: enabled,
     gpu: { vendor: "none" },
-    remote_access: { mode: "cloudflare", domain: "davebarton.cc" },
-    local_dns: { enabled: false, tld: "davebarton.cc", install_dnsmasq: false },
+    remote_access: { mode: "cloudflare", domain },
+    local_dns: { enabled: false, tld: domain, install_dnsmasq: false },
     vpn: { enabled: false },
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     puid: existing?.puid ?? 1000,

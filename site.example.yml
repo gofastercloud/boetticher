@@ -11,7 +11,18 @@ gateway:
   upstream:
     mode: dhcp
     mac: 02:00:00:00:01:01
-modules: {}
+modules:
+  # Reference installation example; choose your own domain and labels.
+  media:
+    enabled: false
+    media_gib: 500
+    application_domain: davebarton.cc
+    aliases:
+      radarr: oscar
+      sonarr: emmy
+      bazarr: tony
+      prowlarr: peabody
+      trailarr: clio
 physical_network:
   mode: virtual-only
 tested_versions:

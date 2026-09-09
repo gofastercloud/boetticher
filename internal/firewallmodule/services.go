@@ -83,8 +83,8 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 			upstreams = clientservices.DefaultDNSUpstreams()
 		}
 		state.DHCP = append(state.DHCP, dnsRecordSections(site, normalized.DNS.Records)...)
-		if normalized.Arrstack != nil && normalized.Arrstack.Enabled {
-			state.DHCP = append(state.DHCP, arrstackDNSSections(site, normalized.Arrstack)...)
+		if normalized.Media != nil && normalized.Media.Enabled {
+			state.DHCP = append(state.DHCP, arrstackDNSSections(site, normalized.Media)...)
 		}
 		state.Stubby = stubbySections(upstreams)
 	}
@@ -118,14 +118,14 @@ func observabilityDNSSections(publicDomain string) []Section {
 	return sections
 }
 
-func arrstackDNSSections(site model.Site, config *clientservices.ArrstackConfig) []Section {
+func arrstackDNSSections(site model.Site, config *clientservices.MediaConfig) []Section {
 	if config == nil || !config.Enabled {
 		return nil
 	}
-	aliases := []string{"oscar", "emmy", "tony", "peabody", "clio", "qbittorrent", "jellyfin", "jellyseerr"}
+	aliases := []string{config.Aliases.Radarr, config.Aliases.Sonarr, config.Aliases.Bazarr, config.Aliases.Prowlarr, config.Aliases.Trailarr, "qbittorrent", "jellyfin", "jellyseerr"}
 	result := make([]Section, 0, len(aliases))
 	for _, alias := range aliases {
-		result = append(result, Section{Name: "boetticher_arrstack_cname_" + alias, Type: "cname", Options: map[string]string{"cname": alias + "." + config.ApplicationDomain, "target": "lab-arrstack-01." + site.Network.Domain}, Lists: map[string][]string{}})
+		result = append(result, Section{Name: "boetticher_arrstack_cname_" + alias, Type: "cname", Options: map[string]string{"cname": alias + "." + config.ApplicationDomain, "target": "lab-media-01." + site.Network.Domain}, Lists: map[string][]string{}})
 	}
 	return result
 }
