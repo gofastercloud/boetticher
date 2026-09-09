@@ -16,9 +16,16 @@ import (
 )
 
 const (
-	serviceDNSMasqSection = "boetticher_dnsmasq"
-	serviceStubbyGlobal   = "global"
-	serviceNTPSection     = "ntp"
+	serviceDNSMasqSection               = "boetticher_dnsmasq"
+	serviceStubbyGlobal                 = "global"
+	serviceNTPSection                   = "ntp"
+	observabilityControllerExporterRule = "boetticher_observability_controller_exporter"
+	observabilityHostExporterRule       = "boetticher_observability_host_exporter"
+	observabilityControllerIngressRule  = "boetticher_observability_controller_ingress"
+	observabilityHostIngressRule        = "boetticher_observability_host_ingress"
+	observabilityRuntimeIngressRule     = "boetticher_observability_runtime_ingress"
+	observabilityTrustedIngressRule     = "boetticher_observability_trusted_ingress"
+	observabilityTailnetIngressRule     = "boetticher_observability_tailnet_ingress"
 )
 
 // ServiceState is the composed native configuration owned by the DHCP/DNS

@@ -50,6 +50,7 @@ var DefaultMediaReference = MediaReferenceConfig{
 // deliberately different from a disabled block: read-only commands report
 // nil as not configured and approved apply operations may materialise defaults.
 type Modules struct {
+	Systems       []System             `yaml:"systems,omitempty" json:"systems,omitempty"`
 	Tailnet       *TailnetConfig       `yaml:"tailnet,omitempty" json:"tailnet,omitempty"`
 	DNS           *DNSConfig           `yaml:"dns,omitempty" json:"dns,omitempty"`
 	DHCP          *DHCPConfig          `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
@@ -60,6 +61,31 @@ type Modules struct {
 	// Arrstack is source compatibility for internal tests and older callers;
 	// it is never persisted or advertised in the public configuration.
 	Arrstack *ArrstackConfig `yaml:"-" json:"-"`
+}
+
+// System registers an existing user-owned Proxmox guest. Boetticher projects
+// only its narrow network policy; the guest lifecycle stays with Proxmox.
+type System struct {
+	Name       string `yaml:"name" json:"name"`
+	VMID       int    `yaml:"vmid" json:"vmid"`
+	Kind       string `yaml:"kind" json:"kind"`
+	GuestName  string `yaml:"guest_name" json:"guest_name"`
+	MAC        string `yaml:"mac" json:"mac"`
+	Address    string `yaml:"address" json:"address"`
+	Port       int    `yaml:"port" json:"port"`
+	Monitoring bool   `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+}
+
+// SystemsExpanded derives DHCP reservations from canonical system intent.
+func SystemsExpanded(modules Modules) Modules {
+	result := modules.Clone()
+	if result.DHCP == nil {
+		return result
+	}
+	for _, system := range result.Systems {
+		result.DHCP.Reservations = append(result.DHCP.Reservations, Reservation{Name: strings.ToLower(system.Name), Zone: "SERVERS", MAC: system.MAC, Address: system.Address})
+	}
+	return result
 }
 
 type MediaConfig struct {
@@ -313,6 +339,7 @@ func (m Modules) Normalize() Modules {
 
 func (m Modules) Clone() Modules {
 	result := Modules{}
+	result.Systems = append([]System(nil), m.Systems...)
 	if m.Media != nil {
 		copyMedia := *m.Media
 		result.Media = &copyMedia
