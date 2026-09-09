@@ -39,8 +39,8 @@ remote_native_root="$remote_root/root"
 remote_native_source="$remote_native_root$remote_source"
 remote_native_output="$remote_native_root$remote_output"
 
-native_image_targets='image-base image-dns-blocky image-logging image-monitoring image-tailnet-router image-airvpn image-bifrost image-printer image-aiops image-gatus image-network-probe image-firewall'
-native_scan_names='boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-printer boetticher-aiops boetticher-gatus boetticher-network-probe'
+native_image_targets='image-base image-dns-blocky image-logging image-monitoring image-tailnet-router image-airvpn image-bifrost image-aiops image-gatus image-network-probe image-firewall'
+native_scan_names='boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-aiops boetticher-gatus boetticher-network-probe'
 
 case "$builder_ssh" in
   *[![:alnum:]@._:-]*) fail 'BOETTICHER_LOCAL_BUILDER_SSH contains unsupported characters' ;;
@@ -141,8 +141,8 @@ validate_remote_target() {
   shift
   for target in "$@"; do
     case "$runner:$target" in
-	  build:image-base|build:image-dns-blocky|build:image-logging|build:image-monitoring|build:image-firewall|build:image-tailnet-router|build:image-airvpn|build:image-bifrost|build:image-printer|build:image-aiops|build:image-gatus|build:image-network-probe|build:images) ;;
-	  scan:scan-base|scan:scan-dns-blocky|scan:scan-logging|scan:scan-monitoring|scan:scan-firewall|scan:scan-tailnet-router|scan:scan-airvpn|scan:scan-bifrost|scan:scan-printer|scan:scan-aiops|scan:scan-gatus|scan:scan-network-probe|scan:scan-images) ;;
+	  build:image-base|build:image-dns-blocky|build:image-logging|build:image-monitoring|build:image-firewall|build:image-tailnet-router|build:image-airvpn|build:image-bifrost|build:image-aiops|build:image-gatus|build:image-network-probe|build:images) ;;
+	  scan:scan-base|scan:scan-dns-blocky|scan:scan-logging|scan:scan-monitoring|scan:scan-firewall|scan:scan-tailnet-router|scan:scan-airvpn|scan:scan-bifrost|scan:scan-aiops|scan:scan-gatus|scan:scan-network-probe|scan:scan-images) ;;
       *) fail "unsupported native builder target: $target" ;;
     esac
   done
