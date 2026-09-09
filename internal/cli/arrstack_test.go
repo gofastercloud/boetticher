@@ -2,10 +2,20 @@ package cli
 
 import (
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/arrstack"
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 )
+
+func TestMediaApplyUsesFullParentTransportBudget(t *testing.T) {
+	sc := clientServiceContext{}
+	sc.Host.Transport.Timeout = 10 * time.Minute
+	sc.Host.Transport.Timeout = mediaApplyTransportTimeout
+	if sc.Host.Transport.Timeout != 20*time.Minute {
+		t.Fatalf("media apply transport timeout = %s", sc.Host.Transport.Timeout)
+	}
+}
 
 func TestPrepareArrstackAddsExactIntentAndPreservesExistingPeerPort(t *testing.T) {
 	enabled := true
