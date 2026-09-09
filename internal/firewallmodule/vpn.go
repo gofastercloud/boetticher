@@ -50,7 +50,7 @@ func vpnSections(site model.Site, modules clientservices.Modules, profile VPNPro
 	}
 
 	firewall := []Section{
-		{Name: "boetticher_zone_vpn", Type: "zone", Options: map[string]string{"name": "vpn", "input": "DROP", "output": "ACCEPT", "forward": "DROP", "family": "ipv4", "masq": "1"}, Lists: map[string][]string{"network": {"airvpn"}}},
+		{Name: "boetticher_zone_vpn", Type: "zone", Options: map[string]string{"name": "vpn", "input": "DROP", "output": "ACCEPT", "forward": "DROP", "family": "ipv4", "masq": "1", "mtu_fix": "1"}, Lists: map[string][]string{"network": {"airvpn"}}},
 	}
 	for _, zone := range site.Network.Zones {
 		name := strings.ToLower(zone.Name)
