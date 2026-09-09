@@ -39,7 +39,12 @@ boetticher module printer status
 DHCP-derived DNS and client-facing NTP are supporting behaviour of the peer
 `dhcp` and `dns` capabilities, not standalone capabilities. VPN dispatch,
 provider reconciliation, fail-closed policy, and Controller-daemon observation
-are implemented; remote and physical acceptance remain separate gates.
+are implemented; remote and physical acceptance remain separate gates. VPN
+provider reboot and teardown inspect the enrolled Host's complete VM inventory
+and each running guest NIC before stopping protection; malformed or unavailable
+inventory refuses the mutation, while stopped guests do not block it. This is
+source and local-runtime behavior; it does not claim deployment or packet
+acceptance.
 
 ## Phase 4D Tailnet capability
 
@@ -60,6 +65,42 @@ journeys, and physical isolation require separate acceptance. Key expiry or
 machine approval attention is recoverable by rerunning apply with a current
 operator-approved key. Phase 4D local runtime is qualified; remote and physical
 acceptance remain separate gates.
+
+## Arrstack application capability
+
+The application lifecycle uses one fixed amd64 QEMU VM, `lab-arrstack-01`
+(VMID 290, `10.10.20.230`, SERVERS VLAN 20), with a 32 GiB root disk and a
+configurable persistent media disk on `boetticher-data`. The supported operator
+journey is:
+
+```text
+boetticher module arrstack plan --plan
+boetticher module arrstack apply --cloudflare-token-file /secure/path/token --yes
+boetticher module arrstack status
+boetticher module arrstack test --yes
+boetticher module arrstack teardown --plan
+boetticher module arrstack teardown --yes
+```
+
+The token path must be an operator-owned private regular file. It is staged only
+through the authenticated Host and guest agent, then removed; it is not printed,
+stored in intent, or included in status. The peer port comes from the existing
+`modules.vpn.forwards` entry `arrstack-qbittorrent` and preserves its TCP/UDP
+number. Applying requires the current protected-service state and a healthy VPN
+handshake before the VM or application starts. A complete protected-guest
+inventory is required before provider reboot, VPN teardown, or application
+teardown can stop protection; stopped guests are explicitly ignored. These
+checks are source and local-runtime safeguards and make no deployment or
+packet-acceptance claim.
+
+The VM firewall admits HTTPS only from TRUSTED (`10.10.30.0/24`) and Tailnet
+SNAT (`10.10.5.10`); the VPN appliance owns peer-forward provenance. Caddy
+rejects unknown service names, Docker forwarding is fail-closed, and IPv6 is
+disabled. `status` reports guest application health and VPN health separately.
+Local runtime checks are evidence for the installed guest only; remote ingress,
+peer packet journeys, physical VLAN isolation, and live public acceptance remain
+`NOT TESTED` until executed. Teardown stops the VM and removes aliases and the
+peer forward while retaining media, its reservation, and VPN client protection.
 
 ## 4E network closeout state
 

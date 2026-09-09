@@ -1,0 +1,18 @@
+services:
+  qbittorrent:
+    ports:
+      - "10.10.20.230:35796:35796/tcp"
+      - "10.10.20.230:35796:35796/udp"
+      - "127.0.0.1:8080:8080"
+  caddy:
+    ports:
+      - "10.10.20.230:443:443"
+networks:
+  default:
+    name: btcr-arrstack0
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: btcr-arrstack0
+    ipam:
+      config:
+        - subnet: 172.30.20.0/24

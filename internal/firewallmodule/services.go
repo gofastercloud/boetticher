@@ -83,6 +83,9 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 			upstreams = clientservices.DefaultDNSUpstreams()
 		}
 		state.DHCP = append(state.DHCP, dnsRecordSections(site, normalized.DNS.Records)...)
+		if normalized.Arrstack != nil && normalized.Arrstack.Enabled {
+			state.DHCP = append(state.DHCP, arrstackDNSSections(site, normalized.Arrstack)...)
+		}
 		state.Stubby = stubbySections(upstreams)
 	}
 	if normalized.Observability != nil && clientservices.ValidPublicDomain(normalized.Observability.PublicDomain) {
@@ -105,7 +108,6 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
 	return state, nil
 }
-
 func observabilityDNSSections(publicDomain string) []Section {
 	names := []string{"observability", "status", "ingest", "metrics"}
 	sections := make([]Section, 0, len(names))
@@ -114,6 +116,18 @@ func observabilityDNSSections(publicDomain string) []Section {
 		sections = append(sections, Section{Name: "boetticher_observability_record_" + nativeRecordSuffix(fqdn), Type: "hostrecord", Options: map[string]string{"name": fqdn, "ip": "10.10.10.20"}, Lists: map[string][]string{}})
 	}
 	return sections
+}
+
+func arrstackDNSSections(site model.Site, config *clientservices.ArrstackConfig) []Section {
+	if config == nil || !config.Enabled {
+		return nil
+	}
+	aliases := []string{"oscar", "emmy", "tony", "peabody", "clio", "qbittorrent", "jellyfin", "jellyseerr"}
+	result := make([]Section, 0, len(aliases))
+	for _, alias := range aliases {
+		result = append(result, Section{Name: "boetticher_arrstack_cname_" + alias, Type: "cname", Options: map[string]string{"cname": alias + "." + config.ApplicationDomain, "target": "lab-arrstack-01." + site.Network.Domain}, Lists: map[string][]string{}})
+	}
+	return result
 }
 
 func dnsmasqSections(site model.Site, modules clientservices.Modules) []Section {

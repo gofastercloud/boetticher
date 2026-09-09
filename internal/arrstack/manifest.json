@@ -1,0 +1,22 @@
+{
+  "upstream_revision": "701b066a79f2217bad7d0465c892f4062db92f26",
+  "source_sha256": "cf11ea4396f603dcbec6eb11edb78e3ba90c2223953ad55628cdeec95b214509",
+  "services": {
+    "qbittorrent": "lscr.io/linuxserver/qbittorrent@sha256:9942bbed1b6bc5cbaa1733873242cf5611b6c48652c1d8bb71704667c7eee7de",
+    "prowlarr": "lscr.io/linuxserver/prowlarr@sha256:20ac4a451d4526b0f1be9f474210eb98541384e64596c3cf5eb76787b251afb4",
+    "sonarr": "lscr.io/linuxserver/sonarr@sha256:580d419a949e9afadcf00cc33e38747f795ac162f20649649464b6640a5e971d",
+    "radarr": "lscr.io/linuxserver/radarr@sha256:9506460c590c0ef11d77db780d4162ab9df7b0939f37cb4cbd35b0f12d0d6b69",
+    "bazarr": "ghcr.io/lavx/bazarr@sha256:7478fa2a2c6b2795df85a50b908e1c992eeb413f543909809a5bc487fe8b0115",
+    "flaresolverr": "ghcr.io/flaresolverr/flaresolverr@sha256:258523d25e4e07028c3a206f0e03ae807b26a50a201dd320f09a18464ecf86fa",
+    "jellyfin": "jellyfin/jellyfin@sha256:97150310f89f908abbf6fa9640ccc36f9bfa9e5e987775db310b3b70c2d11602",
+    "jellyseerr": "ghcr.io/seerr-team/seerr@sha256:b21cf91bb7a10d70446e104e7b7b9c9c386aa22beeac535a3271cbfc5843d142",
+    "trailarr": "nandyalu/trailarr@sha256:27a5624869b6a60af5f1f313289b4f830fa6d06e5127c5192a515ceb1f8dc6d7",
+    "ai-subtitle-translator": "ghcr.io/lavx/ai-subtitle-translator@sha256:754bd81cb4843469be8cb23267d5db4ac7bb7760b1203fcab9c6d95bf4ac14ef",
+    "recyclarr": "ghcr.io/recyclarr/recyclarr@sha256:73303ba5ee647b6492fee917d3a781c6e59b6cab08f9dfce9482a950846f564f"
+  },
+  "caddy": {
+    "base": "ghcr.io/lavx/arrstack-caddy@sha256:d1c594877aa8f9f79f8fc10bb13c854a1f2219e54422fb3abc4dc3f845aaadd7",
+    "plugins": ["github.com/caddy-dns/cloudflare"],
+    "cloudflare_dns_plugin": "pinned-by-caddy.Dockerfile"
+  }
+}

@@ -105,46 +105,6 @@ func TestPrinterRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testin
 	}
 }
 
-func TestArrRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T) {
-	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(contents)
-	for _, required := range []string{
-		"include_tasks: ../../tasks/step-ca-endpoint.yml",
-		"step_ca_endpoint_subject: \"sonarr.{{ domain }}\"",
-		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/arr.key.pem",
-		"ssl_verify_client on;",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("arr TLS contract is missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"arr_server_cert_pem", "arr.csr.pem", "ansible.builtin.fetch:"} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("arr role retains controller server-certificate exchange %q", forbidden)
-		}
-	}
-}
-
-func TestARRRoleUsesBoundedGuestLocalConfiguration(t *testing.T) {
-	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{"boetticher-arr-configure, check", "boetticher-arr-configure, prepare", "boetticher-arr-configure, wire", "state: stopped", "readarr.service", "loop: [sonarr, radarr, lidarr, prowlarr, qbittorrent]"} {
-		if !strings.Contains(string(contents), required) {
-			t.Fatalf("ARR lifecycle missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"<ApiKey>", "ansible.builtin.slurp:", "ansible.builtin.fetch:", "apt:"} {
-		if strings.Contains(string(contents), forbidden) {
-			t.Fatalf("ARR role crosses guest-local artifact boundary: %q", forbidden)
-		}
-	}
-}
-
 func TestCompanionStreamDeckUsesDirectUSBAndScopedRuntimeFiles(t *testing.T) {
 	playbook, err := os.ReadFile(filepath.Join("..", "..", "ansible", "companion.yml"))
 	if err != nil {
@@ -1848,7 +1808,6 @@ func TestSharedClientCAFrontendsRestrictClientIdentities(t *testing.T) {
 			`if ($ssl_client_s_dn !~ "^(?:CN=client-operator\\.{{ domain | regex_escape }}(?:,O=boetticher)?|CN=client-aiops-router-client\\.{{ domain | regex_escape }}(?:,O=boetticher)?)$") { return 403; }`,
 			`if ($ssl_client_s_dn ~ "CN=client-aiops-router-client(?:\\.|,|$)") { return 403; }`,
 		}},
-		{role: "arr", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
 		{role: "printer", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
 	}
 	for _, check := range checks {

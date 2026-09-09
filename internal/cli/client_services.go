@@ -379,7 +379,7 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 				remaining = append(remaining, change)
 			}
 			if len(remaining) > 0 {
-				return fmt.Errorf("provider %s configuration is not at the desired state", item.packageName)
+				return &clientServicesDriftError{packageName: item.packageName}
 			}
 		}
 	}
@@ -405,6 +405,15 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 		return errors.New("provider native time service is unavailable")
 	}
 	return nil
+}
+
+// clientServicesDriftError is the safe, owned reconciliation case. Transport,
+// parser, and ownership-validation errors remain ordinary failures and must not
+// be suppressed merely because intent changed.
+type clientServicesDriftError struct{ packageName string }
+
+func (e *clientServicesDriftError) Error() string {
+	return fmt.Sprintf("provider %s configuration is not at the desired state", e.packageName)
 }
 
 func verifyDisabledClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState) error {

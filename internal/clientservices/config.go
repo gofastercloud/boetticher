@@ -37,6 +37,13 @@ type Modules struct {
 	VPN           *VPNConfig           `yaml:"vpn,omitempty" json:"vpn,omitempty"`
 	Observability *ObservabilityConfig `yaml:"observability,omitempty" json:"observability,omitempty"`
 	AIOps         *AIOpsConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
+	Arrstack      *ArrstackConfig      `yaml:"arrstack,omitempty" json:"arrstack,omitempty"`
+}
+
+type ArrstackConfig struct {
+	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	MediaGiB          int    `yaml:"media_gib,omitempty" json:"media_gib,omitempty"`
+	ApplicationDomain string `yaml:"application_domain,omitempty" json:"application_domain,omitempty"`
 }
 
 type ObservabilityConfig struct {
@@ -200,6 +207,16 @@ func ResolveReservation(modules Modules, name string) (Reservation, bool) {
 
 func (m Modules) Normalize() Modules {
 	result := m
+	if result.Arrstack != nil {
+		copyArr := *result.Arrstack
+		if copyArr.MediaGiB == 0 {
+			copyArr.MediaGiB = 256
+		}
+		if copyArr.ApplicationDomain == "" {
+			copyArr.ApplicationDomain = "davebarton.cc"
+		}
+		result.Arrstack = &copyArr
+	}
 	if result.DNS != nil {
 		copyDNS := *result.DNS
 		if result.DNS.Enabled != nil {
@@ -256,6 +273,10 @@ func (m Modules) Normalize() Modules {
 
 func (m Modules) Clone() Modules {
 	result := Modules{}
+	if m.Arrstack != nil {
+		copyArr := *m.Arrstack
+		result.Arrstack = &copyArr
+	}
 	if m.Tailnet != nil {
 		copyTailnet := *m.Tailnet
 		result.Tailnet = &copyTailnet
@@ -335,6 +356,40 @@ func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
 	if err := validateObservability(normalized); err != nil {
 		return err
+	}
+	if normalized.Arrstack != nil && normalized.Arrstack.Enabled {
+		if normalized.DNS == nil || !Enabled(normalized.DNS.Enabled) || normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled) || normalized.VPN == nil {
+			return errors.New("enabled arrstack requires enabled DNS, DHCP, and configured VPN client intent")
+		}
+		if normalized.Arrstack.MediaGiB < 1 {
+			return errors.New("modules.arrstack.media_gib must be positive")
+		}
+		if normalized.Arrstack.ApplicationDomain != "davebarton.cc" {
+			return errors.New("modules.arrstack.application_domain must be davebarton.cc")
+		}
+		reservationFound, vpnClient := false, false
+		for _, r := range normalized.DHCP.Reservations {
+			if r.Name == "lab-arrstack-01" && r.Zone == "SERVERS" && r.Address == "10.10.20.230" && r.MAC == "02:00:00:00:20:e6" {
+				reservationFound = true
+			}
+		}
+		for _, c := range normalized.VPN.Clients {
+			if c == "lab-arrstack-01" {
+				vpnClient = true
+			}
+		}
+		if !reservationFound || !vpnClient {
+			return errors.New("enabled arrstack requires its fixed DHCP reservation and VPN client intent")
+		}
+		foundForward := false
+		for _, f := range normalized.VPN.Forwards {
+			if f.Name == "arrstack-qbittorrent" && f.Reservation == "lab-arrstack-01" && f.Port >= 1 && len(f.Protocols) == 2 && f.Protocols[0] == "tcp" && f.Protocols[1] == "udp" {
+				foundForward = true
+			}
+		}
+		if !foundForward {
+			return errors.New("enabled arrstack requires the arrstack-qbittorrent TCP/UDP forward")
+		}
 	}
 	if normalized.Tailnet != nil && normalized.Tailnet.Enabled && (normalized.DNS == nil || !Enabled(normalized.DNS.Enabled) || normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
 		return errors.New("enabled Tailnet requires enabled DNS and DHCP; teardown Tailnet first")

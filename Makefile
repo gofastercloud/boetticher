@@ -1,4 +1,4 @@
-.PHONY: arr-check controller-check ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-printer image-arr image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-firewall scan-tailnet-router scan-airvpn scan-printer scan-arr scan-network-probe command-docs command-docs-check deadcode race streamdeck-check
+.PHONY: controller-check ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-printer image-aiops image-gatus image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-aiops scan-gatus scan-network-probe command-docs command-docs-check deadcode race streamdeck-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -104,10 +104,10 @@ image-check:
 	shellcheck scripts/build-openwrt-firewall.sh
 	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts || true)"
 
-image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-printer image-arr image-network-probe images:
+image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-printer image-aiops image-gatus image-network-probe images:
 	./scripts/build-images.sh $@
 
-scan-base scan-dns-blocky scan-firewall scan-tailnet-router scan-airvpn scan-printer scan-arr scan-network-probe scan-images:
+scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-aiops scan-gatus scan-network-probe scan-images:
 	./scripts/scan-images.sh $@
 
 naming-check:
@@ -121,7 +121,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-arr-check:
-	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m unittest discover -s images/arr/tests -p 'test_*.py' -v
-
-ci: arr-check controller-check fmt-check image-check schema-check command-docs-check deadcode test usb-export-test race streamdeck-check companion-check vet build ansible-check security-check diff-check
+ci: controller-check fmt-check image-check schema-check command-docs-check deadcode test usb-export-test race streamdeck-check companion-check vet build ansible-check security-check diff-check

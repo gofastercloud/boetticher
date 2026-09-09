@@ -34,6 +34,7 @@ boetticher module logging query|status [flags]
 boetticher module aiops ask QUESTION [--yes] [--json]
 boetticher module vpn plan|apply|status|teardown|add-client|remove-client [flags]
 boetticher module tailnet plan|apply|status|test|teardown [flags]
+boetticher module arrstack plan|apply|status|test|teardown [--plan|--yes] [--cloudflare-token-file FILE]
 ```
 
 ## Advanced command menu

@@ -24,16 +24,20 @@ main() {
   trap 'rm -rf "$stage"' EXIT HUP INT TERM
   mkdir -p "$stage/bin" "dist/controller"
 
+  ARRSTACK_BUN_TARGET=bun-linux-x64 sh scripts/build-arrstack.sh "$stage/bin/arrstack"
+
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
     "$go_bin" build -trimpath -o "$stage/bin/boetticher" ./cmd/boetticher
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
     "$go_bin" build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
-  chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status"
+  chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status" "$stage/bin/arrstack"
   cp -R controller "$stage/controller"
   mkdir -p "$stage/controller/proxmox/libexec"
   cp scripts/build-openwrt-firewall.sh "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
   cp scripts/build-tailnet.sh "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
+  cp scripts/build-arrstack-vm.sh "$stage/controller/proxmox/libexec/boetticher-build-arrstack-vm"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
+  chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-arrstack-vm"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
 
   mkdir -p "$stage/controller/observability/bin"
