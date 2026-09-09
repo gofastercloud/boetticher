@@ -467,7 +467,7 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	}
 	mediaPending := hasTag(guest.Config["tags"], GuestMediaPendingTag)
 	// The VM-owned marker, rather than caller history, authorizes first-use formatting.
-	if err := guestExecJSON(ctx, host, "test -x /usr/bin/qemu-ga; "+mediaMountScript(mediaPending)); err != nil {
+	if err := guestExecJSON(ctx, host, "command -v qemu-ga >/dev/null; "+mediaMountScript(mediaPending)); err != nil {
 		return fmt.Errorf("prepare arrstack media disk: %w", err)
 	}
 	if mediaPending {

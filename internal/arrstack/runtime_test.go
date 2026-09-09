@@ -180,6 +180,20 @@ func TestMediaFormattingRequiresPendingMarkerAndBlankOwnedDisk(t *testing.T) {
 	}
 }
 
+func TestMediaPreparationUsesPathNeutralGuestAgentCheck(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "command -v qemu-ga >/dev/null") {
+		t.Fatal("media preparation does not use a path-neutral qemu-agent check")
+	}
+	if strings.Contains(text, "test -x /usr/bin/qemu-ga") {
+		t.Fatal("media preparation relies on a distro-specific qemu-agent path")
+	}
+}
+
 func TestMediaBlankCheckAcceptsOnlyBoundedZeroDevice(t *testing.T) {
 	bin := t.TempDir()
 	for name, body := range map[string]string{
