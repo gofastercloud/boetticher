@@ -43,6 +43,20 @@ replacement = needle + '''
 if needle not in s: raise SystemExit("install action anchor missing")
 cli.write_text(s.replace(needle, replacement, 1))
 s = (root / "src/usecase/install.ts").read_text()
+# Headless Controller installs provide a bounded remaining operation budget for
+# image pulls; interactive upstream installs retain their 10-minute default.
+needle = '''        "docker", "compose", "-f", join(installDir, "docker-compose.yml"),
+        "pull", "--ignore-buildable",
+      ],
+      { timeoutMs: 600_000 },'''
+replacement = '''        "docker", "compose", "-f", join(installDir, "docker-compose.yml"),
+        "pull", "--ignore-buildable",
+      ],
+      { timeoutMs: Number(process.env.ARRSTACK_HEADLESS_PULL_TIMEOUT_MS ?? "600000") },'''
+if needle not in s: raise SystemExit("headless compose pull timeout anchor missing")
+s = s.replace(needle, replacement, 1)
+(root / "src/usecase/install.ts").write_text(s)
+s = (root / "src/usecase/install.ts").read_text()
 # Keep the Cloudflare credential outside state.json and the generic .env.
 # Only the Caddy service consumes the private env file below.
 s = s.replace('state.remote_access.mode === "cloudflare"\n          ? state.remote_access.token', 'state.remote_access.mode === "cloudflare"\n          ? undefined')
