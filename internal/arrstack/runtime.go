@@ -551,10 +551,10 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 			return errors.New("Cloudflare token exceeds the bounded credential size")
 		}
 		command = "tmp=$(mktemp /run/boetticher-cloudflare-token.XXXXXX); trap 'rm -f \"$tmp\"' EXIT HUP INT TERM; chmod 0600 \"$tmp\"; cat >\"$tmp\"; CF_API_TOKEN=\"$(cat \"$tmp\")\" " + command
-		if _, err := guestExecWithStdinTimeoutJSON(ctx, host, installerGuardCommand(command, installTimeout), bytes.NewReader(cloudflareToken), installTimeout); err != nil {
+		if _, err := guestExecWithStdinTimeoutJSON(ctx, host, installerGuardCommand(command, installTimeout), bytes.NewReader(cloudflareToken), installTimeout+35); err != nil {
 			return fmt.Errorf("run headless arrstack installer with Cloudflare token: %w", err)
 		}
-	} else if err := guestExecLongJSON(ctx, host, installerGuardCommand(command, installTimeout), installTimeout); err != nil {
+	} else if err := guestExecLongJSON(ctx, host, installerGuardCommand(command, installTimeout), installTimeout+35); err != nil {
 		return fmt.Errorf("run headless arrstack installer: %w", err)
 	}
 	if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {
@@ -568,7 +568,7 @@ func installerGuardCommand(command string, timeoutSeconds int) string {
 }
 
 func installerTimeoutSeconds(ctx context.Context) (int, error) {
-	const cleanupMargin = 30 * time.Second
+	const cleanupMargin = 65 * time.Second
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		return GuestInstallTimeout, nil

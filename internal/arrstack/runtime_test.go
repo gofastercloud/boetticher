@@ -108,13 +108,32 @@ func TestInstallerTimeoutLeavesCleanupMarginAndCapsAtTwentyMinutes(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	seconds, err := installerTimeoutSeconds(ctx)
-	if err != nil || seconds < 560 || seconds > 570 {
-		t.Fatalf("installer timeout = %d, err=%v; want about 570 seconds", seconds, err)
+	if err != nil || seconds < 525 || seconds > 545 {
+		t.Fatalf("installer timeout = %d, err=%v; want about 540 seconds", seconds, err)
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := installerTimeoutSeconds(ctx); err == nil {
 		t.Fatal("installer timeout accepted a deadline without cleanup margin")
+	}
+}
+
+func TestInstallerGuardLinuxBehavior(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("Docker is unavailable")
+	}
+	const script = `set -eu
+lock=/tmp/boetticher-installer.lock
+flock -n "$lock" sh -c 'sleep 2' & first=$!
+sleep .1
+if flock -n "$lock" true; then exit 11; fi
+wait "$first"
+if timeout --signal TERM --kill-after 1s 1s sh -c 'trap "" TERM; while :; do :; done'; then exit 12; else status=$?; fi
+test "$status" = 124 || test "$status" = 137
+`
+	cmd := exec.Command("docker", "run", "--rm", "--platform", "linux/amd64", "debian:13-slim", "sh", "-ec", script)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Linux installer guard behavior failed: %v: %s", err, output)
 	}
 }
 
@@ -192,7 +211,7 @@ func TestPolicyReceiptIsCapturedOnlyAfterTheInstallerSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	installer := strings.Index(text, "if err := guestExecLongJSON(ctx, host, installerGuardCommand(command, installTimeout), installTimeout); err != nil {")
+	installer := strings.Index(text, "if err := guestExecLongJSON(ctx, host, installerGuardCommand(command, installTimeout), installTimeout+35); err != nil {")
 	capture := strings.Index(text, "if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {")
 	if installer < 0 || capture < installer {
 		t.Fatalf("policy receipt capture must follow successful adapter installation: installer=%d capture=%d", installer, capture)
