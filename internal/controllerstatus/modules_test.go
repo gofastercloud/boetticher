@@ -58,8 +58,29 @@ func TestParseTailnetResultAllowsValidNonzeroCommandStatesButNeverHealthy(t *tes
 		t.Fatalf("attention Tailnet status = %#v", got)
 	}
 	healthy := []byte(`{"configured":true,"state":"healthy","detail":"router healthy","observed_at":"2026-09-08T00:59:30Z"}`)
-	if got := parseTailnetResult(healthy, errors.New("status exited 1"), now); got.State != Failed {
+	if got := parseTailnetResult(healthy, errors.New("status exited 1"), now); got.State != Failed || got.Detail != "Tailnet healthy status was not returned by a successful command" {
 		t.Fatalf("failed healthy Tailnet status = %#v", got)
+	}
+}
+
+func TestParseTailnetResultPreservesSemanticFailureDetail(t *testing.T) {
+	now := time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)
+	output := []byte(`{"configured":true,"state":"failed","detail":"Tailnet is disconnected from its coordination service","observed_at":"2026-09-08T00:59:30Z"}`)
+	got := parseTailnetResult(output, errors.New("status exited 1"), now)
+	if got.State != Failed || got.Healthy || got.Detail != "Tailnet is disconnected from its coordination service" {
+		t.Fatalf("failure result = %#v", got)
+	}
+}
+
+func TestTailnetTransitionDetailFiltersUntrustedErrorText(t *testing.T) {
+	if got := tailnetTransitionDetail("Tailnet is disconnected from its coordination service"); got != "Tailnet is disconnected from its coordination service" {
+		t.Fatalf("coordination detail = %q", got)
+	}
+	if got := tailnetTransitionDetail("inspect Host guest inventory: stderr contains secret"); got != "status check failed" {
+		t.Fatalf("untrusted detail = %q", got)
+	}
+	if got := tailnetTransitionDetail("Tailnet status evidence is missing\nraw output"); got != "status check failed" {
+		t.Fatalf("multiline detail = %q", got)
 	}
 }
 

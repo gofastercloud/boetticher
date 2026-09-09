@@ -97,13 +97,32 @@ type Metadata struct {
 	EndpointPort  int    `json:"endpoint_port"`
 	TunnelAddress string `json:"tunnel_address"`
 	SHA256        string `json:"sha256"`
+	Selector      string `json:"selector,omitempty"`
 }
+
+// ValidateSelector applies the provider's bounded selector syntax without a
+// network request.
+func ValidateSelector(selector string) error { return validateSelector(strings.TrimSpace(selector)) }
 
 // Client calls the AirVPN configuration generator. BaseURL is injectable for
 // tests and defaults to the provider API.
 type Client struct {
 	HTTPClient *http.Client
 	BaseURL    string
+}
+
+// HasLiveSelector checks public healthy server metadata before an explicit
+// profile refresh.
+func (c Client) HasLiveSelector(ctx context.Context, selector string) (bool, error) {
+	selector = strings.TrimSpace(selector)
+	if err := ValidateSelector(selector); err != nil {
+		return false, err
+	}
+	baseURL := c.BaseURL
+	if baseURL == "" {
+		baseURL = DefaultAPIBaseURL
+	}
+	return c.selectorHasLiveServer(ctx, baseURL, selector, c.profileHTTPClient())
 }
 
 func (c Client) Generate(ctx context.Context, apiKey, servers string) (Profile, error) {

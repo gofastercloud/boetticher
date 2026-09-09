@@ -60,10 +60,45 @@ func TestVPNAPIKeyProvisioningRequiresExplicitApproval(t *testing.T) {
 	}
 }
 
-func TestPrepareVPNModulesRequiresEuropeSelection(t *testing.T) {
+func TestPrepareVPNModulesAcceptsNamedSelectorAndRejectsUnsafeInput(t *testing.T) {
 	enabled := true
 	modules := clientservices.Modules{VPN: &clientservices.VPNConfig{Enabled: &enabled, Location: "australia"}}
-	if _, _, err := prepareVPNModules(modules, model.NewSite("lab", "controller-local", model.GatewayModeManaged)); err == nil || !strings.Contains(err.Error(), "Europe") {
-		t.Fatalf("non-Europe VPN selection was accepted: %v", err)
+	prepared, _, err := prepareVPNModules(modules, model.NewSite("lab", "controller-local", model.GatewayModeManaged))
+	if err != nil || prepared.VPN.Location != "australia" {
+		t.Fatalf("named VPN selection was not retained: %#v err=%v", prepared, err)
+	}
+	modules.VPN.Location = "australia/status"
+	if _, _, err := prepareVPNModules(modules, model.NewSite("lab", "controller-local", model.GatewayModeManaged)); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("unsafe VPN selector was accepted: %v", err)
+	}
+}
+
+func TestVPNApplyParsesLocation(t *testing.T) {
+	opts, err := parseVPNOptions("apply", []string{"--location", "Sydney", "--yes"})
+	if err != nil || opts.location != "Sydney" {
+		t.Fatalf("location option = %#v err=%v", opts, err)
+	}
+}
+
+func TestRetainedVPNSelectorLegacyAndBoundRoundTrip(t *testing.T) {
+	t.Setenv(vpnStateRootEnv, t.TempDir())
+	s := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	if err := pathguard.MkdirAll(vpnStateDir(s), 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "[Interface]\nPrivateKey = " + strings.Repeat("A", 43) + "\n"
+	if err := pathguard.WriteFileWithParentMode(vpnStatePath(s, vpnProfileFile), []byte(legacy), 0600, 0700); err != nil {
+		t.Fatal(err)
+	}
+	selector, err := retainedVPNSelector(s)
+	if err != nil || selector != "europe" {
+		t.Fatalf("legacy selector = %q err=%v", selector, err)
+	}
+	if err := pathguard.WriteFileWithParentMode(vpnStatePath(s, vpnProfileFile), []byte("[Interface]\n# Boetticher-Selector: Sydney\n"), 0600, 0700); err != nil {
+		t.Fatal(err)
+	}
+	selector, err = retainedVPNSelector(s)
+	if err != nil || selector != "Sydney" {
+		t.Fatalf("bound selector = %q err=%v", selector, err)
 	}
 }

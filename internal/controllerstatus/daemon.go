@@ -702,18 +702,23 @@ func (d *Daemon) logTransitions() {
 	for _, transition := range []struct {
 		name          string
 		before, after State
+		detail        string
 	}{
-		{"CTL", d.previous.Controller.State, d.snapshot.Controller.State},
-		{"HOST", d.previous.Host.State, d.snapshot.Host.State},
-		{"FW", d.previous.Firewall.State, d.snapshot.Firewall.State},
-		{"DHCP/NTP", d.previous.DHCPNTP.State, d.snapshot.DHCPNTP.State},
-		{"Tailnet", d.previous.Tailnet.State, d.snapshot.Tailnet.State},
-		{"NET", d.previous.Internet.State, d.snapshot.Internet.State},
-		{"CTRL-UPDATES", d.previous.ControllerUpdates.State, d.snapshot.ControllerUpdates.State},
-		{"HOST-UPDATES", d.previous.HostUpdates.State, d.snapshot.HostUpdates.State},
+		{"CTL", d.previous.Controller.State, d.snapshot.Controller.State, ""},
+		{"HOST", d.previous.Host.State, d.snapshot.Host.State, ""},
+		{"FW", d.previous.Firewall.State, d.snapshot.Firewall.State, ""},
+		{"DHCP/NTP", d.previous.DHCPNTP.State, d.snapshot.DHCPNTP.State, ""},
+		{"Tailnet", d.previous.Tailnet.State, d.snapshot.Tailnet.State, d.snapshot.Tailnet.Detail},
+		{"NET", d.previous.Internet.State, d.snapshot.Internet.State, ""},
+		{"CTRL-UPDATES", d.previous.ControllerUpdates.State, d.snapshot.ControllerUpdates.State, ""},
+		{"HOST-UPDATES", d.previous.HostUpdates.State, d.snapshot.HostUpdates.State, ""},
 	} {
 		if transition.before != "" && transition.before != transition.after {
-			d.Logger.Printf("%s state: %s -> %s", transition.name, transition.before, transition.after)
+			if transition.name == "Tailnet" {
+				d.Logger.Printf("%s state: %s -> %s (%s)", transition.name, transition.before, transition.after, tailnetTransitionDetail(transition.detail))
+			} else {
+				d.Logger.Printf("%s state: %s -> %s", transition.name, transition.before, transition.after)
+			}
 		}
 	}
 	d.previous = d.snapshot

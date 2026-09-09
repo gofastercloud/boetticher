@@ -135,6 +135,20 @@ func (c ModuleChecker) checkTailnet(ctx context.Context) CheckResult {
 	return parseTailnetResult(output, err, time.Now().UTC())
 }
 
+// tailnetTransitionDetail keeps the daemon's transition log useful without
+// copying command output or transport errors into the journal. The accepted
+// prefixes are semantic report text produced by the Tailnet contract.
+func tailnetTransitionDetail(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" || len(detail) > 256 || strings.ContainsAny(detail, "\r\n") {
+		return "status check failed"
+	}
+	if strings.HasPrefix(detail, "Tailnet ") || strings.HasPrefix(detail, "Tailscale ") || strings.HasPrefix(detail, "Approve this device") {
+		return detail
+	}
+	return "status check failed"
+}
+
 type tailnetStatusJSON struct {
 	Configured *bool     `json:"configured"`
 	State      State     `json:"state"`
