@@ -47,6 +47,9 @@ func vpnSections(site model.Site, modules clientservices.Modules, profile VPNPro
 				"src": address + "/32", "action": "unreachable", "priority": strconv.Itoa(10100 + index),
 			}, Lists: map[string][]string{}},
 		)
+		network = append(network, Section{Name: nativeVPNClientMTUSectionName(address), Type: "route", Options: map[string]string{
+			"interface": "airvpn", "target": address, "netmask": "255.255.255.255", "mtu": strconv.Itoa(profile.MTU),
+		}, Lists: map[string][]string{}})
 	}
 
 	firewall := []Section{
@@ -79,6 +82,10 @@ func vpnSections(site model.Site, modules clientservices.Modules, profile VPNPro
 		}, Lists: map[string][]string{"proto": append([]string(nil), forward.Protocols...)}})
 	}
 	return network, firewall
+}
+
+func nativeVPNClientMTUSectionName(address string) string {
+	return "boetticher_vpn_client_mtu_" + nativeRecordSuffix(address)
 }
 
 func nativeVPNForwardSectionName(name string) string {

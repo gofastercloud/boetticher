@@ -83,6 +83,22 @@ func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
 	}
 }
 
+func TestMediaDockerDependsOnFailClosedFirewallPolicy(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{"docker.service.d/boetticher-arrstack-firewall.conf", "Requires=boetticher-arrstack-firewall.service", "After=boetticher-arrstack-firewall.service", "systemctl enable docker.service"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Docker recovery dependency missing %q", want)
+		}
+	}
+	if strings.Contains(text, "Requires=docker.service") {
+		t.Fatal("firewall policy must not require Docker")
+	}
+}
+
 func TestGuestExecCommandsHaveBoundedNativeTimeouts(t *testing.T) {
 	if !strings.Contains(guestExec("true"), "--synchronous 1 --timeout 30 --") {
 		t.Fatal("short guest exec is not bounded")
