@@ -44,6 +44,8 @@ const (
 	GuestMediaDisk       = "scsi1"
 	GuestCPU             = "x86-64-v3"
 	GuestAgentTimeout    = 90 * time.Second
+	GuestExecTimeout     = 30
+	GuestInstallTimeout  = 20 * 60
 )
 
 type GuestFacts struct {
@@ -410,7 +412,11 @@ func recoveryCommand(config map[string]string, mediaGiB int) string {
 }
 
 func guestExec(command string) string {
-	return "qm guest exec " + strconv.Itoa(GuestVMID) + " --synchronous 1 -- /bin/sh -c " + shellQuote("set -eu; "+command)
+	return guestExecWithTimeout(command, GuestExecTimeout)
+}
+
+func guestExecWithTimeout(command string, timeoutSeconds int) string {
+	return "qm guest exec " + strconv.Itoa(GuestVMID) + " --synchronous 1 --timeout " + strconv.Itoa(timeoutSeconds) + " -- /bin/sh -c " + shellQuote("set -eu; "+command)
 }
 
 func guestExecJSON(ctx context.Context, host firewallmodule.HostClient, command string) error {
@@ -419,7 +425,24 @@ func guestExecJSON(ctx context.Context, host firewallmodule.HostClient, command 
 }
 
 func guestExecWithStdinJSON(ctx context.Context, host firewallmodule.HostClient, command string, input io.Reader) (string, error) {
-	result, err := host.RunWithStdin(ctx, "qm guest exec "+strconv.Itoa(GuestVMID)+" --synchronous 1 --pass-stdin -- /bin/sh -c "+shellQuote("set -eu; "+command), input)
+	return guestExecWithStdinTimeoutJSON(ctx, host, command, input, GuestExecTimeout)
+}
+
+func guestExecWithStdinTimeoutJSON(ctx context.Context, host firewallmodule.HostClient, command string, input io.Reader, timeoutSeconds int) (string, error) {
+	result, err := host.RunWithStdin(ctx, "qm guest exec "+strconv.Itoa(GuestVMID)+" --synchronous 1 --timeout "+strconv.Itoa(timeoutSeconds)+" --pass-stdin -- /bin/sh -c "+shellQuote("set -eu; "+command), input)
+	if err != nil {
+		return "", err
+	}
+	return parseGuestResponse(result.Stdout)
+}
+
+func guestExecLongJSON(ctx context.Context, host firewallmodule.HostClient, command string) error {
+	_, err := guestExecLongOutput(ctx, host, command)
+	return err
+}
+
+func guestExecLongOutput(ctx context.Context, host firewallmodule.HostClient, command string) (string, error) {
+	result, err := host.Run(ctx, guestExecWithTimeout(command, GuestInstallTimeout))
 	if err != nil {
 		return "", err
 	}
@@ -524,16 +547,20 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 			return errors.New("Cloudflare token exceeds the bounded credential size")
 		}
 		command = "tmp=$(mktemp /run/boetticher-cloudflare-token.XXXXXX); trap 'rm -f \"$tmp\"' EXIT HUP INT TERM; chmod 0600 \"$tmp\"; cat >\"$tmp\"; CF_API_TOKEN=\"$(cat \"$tmp\")\" " + command
-		if _, err := guestExecWithStdinJSON(ctx, host, command, bytes.NewReader(cloudflareToken)); err != nil {
-			return errors.New("run headless arrstack installer with Cloudflare token: guest command failed")
+		if _, err := guestExecWithStdinTimeoutJSON(ctx, host, installerGuardCommand(command), bytes.NewReader(cloudflareToken), GuestInstallTimeout); err != nil {
+			return fmt.Errorf("run headless arrstack installer with Cloudflare token: %w", err)
 		}
-	} else if err := guestExecJSON(ctx, host, command); err != nil {
+	} else if err := guestExecLongJSON(ctx, host, installerGuardCommand(command)); err != nil {
 		return fmt.Errorf("run headless arrstack installer: %w", err)
 	}
 	if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {
 		return fmt.Errorf("capture applied arrstack firewall receipt: %w", err)
 	}
 	return nil
+}
+
+func installerGuardCommand(command string) string {
+	return "flock -n /run/boetticher/arrstack-install.lock timeout --signal TERM --kill-after 30s 1100s sh -c " + shellQuote(command)
 }
 
 func policyReceiptCaptureCommand() string {

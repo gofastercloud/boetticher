@@ -81,6 +81,27 @@ func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
 	}
 }
 
+func TestGuestExecCommandsHaveBoundedNativeTimeouts(t *testing.T) {
+	if !strings.Contains(guestExec("true"), "--synchronous 1 --timeout 30 --") {
+		t.Fatal("short guest exec is not bounded")
+	}
+	if !strings.Contains(guestExecWithTimeout("true", GuestInstallTimeout), "--synchronous 1 --timeout 1200 --") {
+		t.Fatal("installer guest exec does not use the 20-minute timeout")
+	}
+	if strings.Contains(guestExecWithTimeout("true", GuestInstallTimeout), "--synchronous 1 --pass-stdin") {
+		t.Fatal("timeout helper unexpectedly implies stdin")
+	}
+}
+
+func TestInstallerGuardRefusesOverlapAndBoundsChildTermination(t *testing.T) {
+	command := installerGuardCommand("sleep 120")
+	for _, want := range []string{"flock -n /run/boetticher/arrstack-install.lock", "timeout --signal TERM --kill-after 30s 1100s", "sh -c"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("installer guard missing %q", want)
+		}
+	}
+}
+
 func TestValidateGuestConfigRejectsUnknownConfigAndMissingMediaDisk(t *testing.T) {
 	config := map[string]string{"name": GuestName, "scsi0": "boetticher-data:vm-290-disk-0,size=32G", "scsi1": "boetticher-data:vm-290-disk-1,size=256G"}
 	config["unexpected"] = "foreign"
@@ -155,7 +176,7 @@ func TestPolicyReceiptIsCapturedOnlyAfterTheInstallerSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	installer := strings.Index(text, "if err := guestExecJSON(ctx, host, command); err != nil {")
+	installer := strings.Index(text, "if err := guestExecLongJSON(ctx, host, installerGuardCommand(command)); err != nil {")
 	capture := strings.Index(text, "if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {")
 	if installer < 0 || capture < installer {
 		t.Fatalf("policy receipt capture must follow successful adapter installation: installer=%d capture=%d", installer, capture)
