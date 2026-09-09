@@ -3,6 +3,8 @@ package firewallmodule
 import (
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
+	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
 
@@ -20,10 +22,30 @@ func TestNativeVPNClientMTURouteIsExactAndOwned(t *testing.T) {
 	if name != "boetticher_vpn_client_mtu_n10_d10_d20_d230" {
 		t.Fatalf("MTU route name = %q", name)
 	}
-	section := openwrt.UCISection{Type: "route", Options: map[string]string{"interface": "airvpn", "target": "10.10.20.230", "netmask": "255.255.255.255", "mtu": "1320"}}
-	if !managedStaleSection(name, section) || managedStaleSection(name, openwrt.UCISection{Type: "route", Options: map[string]string{"interface": "airvpn", "target": "10.10.20.231", "netmask": "255.255.255.255", "mtu": "1320"}}) {
+	section := openwrt.UCISection{Type: "route", Options: map[string]string{"interface": "boetticher_iface_servers", "target": "10.10.20.230", "netmask": "255.255.255.255", "mtu": "1320"}}
+	if !managedStaleSection(name, section) || managedStaleSection(name, openwrt.UCISection{Type: "route", Options: map[string]string{"interface": "airvpn", "target": "10.10.20.230", "netmask": "255.255.255.255", "mtu": "1320"}}) || managedStaleSection(name, openwrt.UCISection{Type: "route", Options: map[string]string{"interface": "boetticher_iface_servers", "target": "10.10.20.231", "netmask": "255.255.255.255", "mtu": "1320"}}) {
 		t.Fatal("MTU route ownership contract is unsafe")
 	}
+}
+
+func TestVPNClientMTURouteUsesReservationLABInterface(t *testing.T) {
+	enabled := true
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	modules := clientservices.Modules{
+		VPN:  &clientservices.VPNConfig{Enabled: &enabled, Clients: []string{"lab-media-01"}},
+		DHCP: &clientservices.DHCPConfig{Enabled: &enabled, Reservations: []clientservices.Reservation{{Name: "lab-media-01", Zone: "SERVERS", Address: "10.10.20.230"}}},
+	}
+	network, _ := vpnSections(site, modules, VPNProfile{MTU: 1320})
+	for _, section := range network {
+		if section.Name != nativeVPNClientMTUSectionName("10.10.20.230") {
+			continue
+		}
+		if section.Options["interface"] != "boetticher_iface_servers" || section.Options["target"] != "10.10.20.230" || section.Options["mtu"] != "1320" {
+			t.Fatalf("MTU route does not use the reservation LAB interface: %#v", section.Options)
+		}
+		return
+	}
+	t.Fatal("missing client MTU route")
 }
 
 func TestManagedStaleVPNForwardRecognizesOwnedCurrentAndLegacyNames(t *testing.T) {
