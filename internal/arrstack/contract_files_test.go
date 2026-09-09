@@ -28,7 +28,7 @@ func TestBuilderPinsQBitTorrentListenerToThePublishedPeerPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{`Connection\\\\PortRangeMin=${peerPort}`, `Connection\\\\PortRangeMax=${peerPort}`, "ARRSTACK_PEER_PORT"} {
+	for _, want := range []string{`Connection\\\\PortRangeMin=${peerPort}`, `Connection\\\\PortRangeMax=${peerPort}`, "ARRSTACK_PEER_PORT", "ARRSTACK_HEADLESS_PULL_TIMEOUT_MS", "timeoutMs: Number(process.env.ARRSTACK_HEADLESS_PULL_TIMEOUT_MS ?? \"600000\")"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("builder does not render qBittorrent listener contract %q", want)
 		}

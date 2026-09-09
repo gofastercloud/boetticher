@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,26 @@ func TestGuestExecCommandsHaveBoundedNativeTimeouts(t *testing.T) {
 	}
 	if strings.Contains(guestExecWithTimeout("true", GuestInstallTimeout), "--synchronous 1 --pass-stdin") {
 		t.Fatal("timeout helper unexpectedly implies stdin")
+	}
+}
+
+func TestHeadlessInstallerReservesComposeUpHealthAndCleanupBudget(t *testing.T) {
+	for _, test := range []struct {
+		name, input string
+		want, max   int
+		ok          bool
+	}{
+		{name: "full operation", input: "1200", want: 900, max: 900, ok: true},
+		{name: "short operation", input: "300", ok: false},
+		{name: "bounded maximum", input: "1800", want: 900, max: 900, ok: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input, _ := strconv.Atoi(test.input)
+			got, err := headlessPullTimeoutSeconds(input)
+			if (err == nil) != test.ok || (test.ok && (got != test.want || got > test.max)) {
+				t.Fatalf("headless pull timeout input=%d got=%d err=%v", input, got, err)
+			}
+		})
 	}
 }
 

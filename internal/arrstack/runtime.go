@@ -543,11 +543,15 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	if err := streamAdapterToGuest(ctx, host); err != nil {
 		return err
 	}
-	command := "ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
 	installTimeout, err := installerTimeoutSeconds(ctx)
 	if err != nil {
 		return err
 	}
+	pullTimeout, err := headlessPullTimeoutSeconds(installTimeout)
+	if err != nil {
+		return err
+	}
+	command := "ARRSTACK_HEADLESS_PULL_TIMEOUT_MS=" + strconv.Itoa(pullTimeout*1000) + " ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
 	if len(cloudflareToken) > 0 {
 		if len(cloudflareToken) > 16<<10 {
 			return errors.New("Cloudflare token exceeds the bounded credential size")
@@ -563,6 +567,17 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 		return fmt.Errorf("capture applied arrstack firewall receipt: %w", err)
 	}
 	return nil
+}
+
+func headlessPullTimeoutSeconds(installTimeout int) (int, error) {
+	if installTimeout > GuestInstallTimeout {
+		installTimeout = GuestInstallTimeout
+	}
+	reserve := int((5 * time.Minute) / time.Second)
+	if installTimeout <= reserve {
+		return 0, errors.New("insufficient Controller deadline remains for the headless media image pull")
+	}
+	return installTimeout - reserve, nil
 }
 
 func installerGuardCommand(command string, timeoutSeconds int) string {
