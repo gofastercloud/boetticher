@@ -126,10 +126,15 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 			return errors.New("observability payload transport cannot stage the base helper")
 		}
 		helperPath := payloadRoot + "/controller/proxmox/libexec/boetticher-build-observability-base"
+		tempHelperPath := payloadRoot + "/controller/proxmox/libexec/build-temp.py"
 		definitionPath := payloadRoot + "/controller/observability/base/debian.yaml"
 		helperData, err := os.ReadFile(helperPath)
 		if err != nil {
 			return fmt.Errorf("read observability base helper: %w", err)
+		}
+		tempHelperData, err := os.ReadFile(tempHelperPath)
+		if err != nil {
+			return fmt.Errorf("read build temporary helper: %w", err)
 		}
 		definitionData, err := os.ReadFile(definitionPath)
 		if err != nil {
@@ -138,6 +143,7 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 		inputDigest := baseImageInputDigest(helperData, definitionData)
 		hostStageRoot := fmt.Sprintf("/tmp/boetticher-observability-%d-base-stage", b.VMID)
 		hostBaseHelper := hostStageRoot + "/build-base"
+		hostTempHelper := hostStageRoot + "/build-temp.py"
 		hostBaseDefinition := hostStageRoot + "/debian.yaml"
 		if err := validateHostStageRoot(hostStageRoot); err != nil {
 			return err
@@ -153,6 +159,12 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 		}
 		if err := stageHostBytes(ctx, stager, hostBaseHelper, helperData); err != nil {
 			return fmt.Errorf("stage observability base helper: %w", err)
+		}
+		if err := stageHostBytes(ctx, stager, hostTempHelper, tempHelperData); err != nil {
+			return fmt.Errorf("stage build temporary helper: %w", err)
+		}
+		if _, err := c.Transport.Run(ctx, fmt.Sprintf("chmod 0700 %s", shellQuoteValue(hostTempHelper))); err != nil {
+			return fmt.Errorf("make build temporary helper executable: %w", err)
 		}
 		if _, err := c.Transport.Run(ctx, fmt.Sprintf("chmod 0700 %s", shellQuoteValue(hostBaseHelper))); err != nil {
 			return fmt.Errorf("make observability base helper executable: %w", err)
