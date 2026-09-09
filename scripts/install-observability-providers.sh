@@ -509,8 +509,8 @@ https://ingest.$public_domain {
 EOF
   target=$(root_path /etc/boetticher/caddy/Caddyfile)
   if [ "$root" = / ]; then
-    status_hash=$(cat /var/lib/boetticher/credentials/statuspage-password.cred | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy status password hash generation failed'
-    node_hash=$(cat /var/lib/boetticher/credentials/node-exporter-read-token.cred | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy metrics password hash generation failed'
+    status_hash=$({ cat /var/lib/boetticher/credentials/statuspage-password.cred; printf '\n'; } | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy status password hash generation failed'
+    node_hash=$({ cat /var/lib/boetticher/credentials/node-exporter-read-token.cred; printf '\n'; } | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy metrics password hash generation failed'
     CLOUDFLARE_API_TOKEN=$(cat /var/lib/boetticher/credentials/cloudflare-dns-token.cred) BOETTICHER_STATUS_PASSWORD_HASH="$status_hash" BOETTICHER_METRICS_PASSWORD_HASH="$node_hash" "$caddy_source" validate --config "$work/Caddyfile" --adapter caddyfile >/dev/null || die 'Caddy configuration validation failed'
     unset status_hash node_hash
   fi

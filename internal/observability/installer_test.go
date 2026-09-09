@@ -556,3 +556,13 @@ func mustReadFile(t *testing.T, path string) []byte {
 	}
 	return data
 }
+
+func TestProviderInstallerTerminatesCredentialHashInput(t *testing.T) {
+	script := mustReadFile(t, "../../scripts/install-observability-providers.sh")
+	text := string(script)
+	for _, credential := range []string{"statuspage-password.cred", "node-exporter-read-token.cred"} {
+		if !strings.Contains(text, "cat /var/lib/boetticher/credentials/"+credential+"; printf '\\n'") {
+			t.Fatalf("credential %s is not terminated before Caddy hashing", credential)
+		}
+	}
+}
