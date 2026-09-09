@@ -9,7 +9,7 @@ import (
 )
 
 func TestExampleSiteIsValid(t *testing.T) {
-	data, err := os.ReadFile("../../site.example.yml")
+	data, err := os.ReadFile("../../lab.example.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
