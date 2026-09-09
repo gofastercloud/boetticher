@@ -24,9 +24,9 @@ test("Boetticher adapter renders the owned network and pinned public surfaces", 
   expect(compose).not.toContain("build:");
   expect(compose).not.toContain(":latest");
   expect(compose).toContain("ghcr.io/lavx/arrstack-caddy@sha256:d1c594877aa8f9f79f8fc10bb13c854a1f2219e54422fb3abc4dc3f845aaadd7");
-  const caddy = renderCaddyfile(services, { mode: "cloudflare", domain: "davebarton.cc" });
-  expect(caddy).toContain("*.davebarton.cc");
+  const caddy = renderCaddyfile(services, { mode: "cloudflare", domain: "media.example.com" });
+  expect(caddy).toContain("*.media.example.com");
   expect(caddy).toMatch(/handle\s*\{\s*respond 404\s*\}/);
-  expect(caddy).not.toContain("ai-subtitle-translator.davebarton.cc");
-  expect(caddy).not.toContain("recyclarr.davebarton.cc");
+  expect(caddy).not.toContain("ai-subtitle-translator.media.example.com");
+  expect(caddy).not.toContain("recyclarr.media.example.com");
 });

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 )
 
@@ -34,7 +35,7 @@ const (
 	GuestInstallDir      = "/opt/arrstack"
 	GuestComposePath     = GuestInstallDir + "/docker-compose.yml"
 	GuestMediaRoot       = "/var/lib/arrstack/media"
-	GuestOwnerTag        = "boetticher-module-arrstack"
+	GuestOwnerTag        = "boetticher-module-media"
 	GuestMediaPendingTag = "boetticher-arrstack-media-pending"
 	GuestVLAN            = 20
 	GuestGateway         = "10.10.20.1"
@@ -442,10 +443,14 @@ func copyAssetToHost(ctx context.Context, host firewallmodule.HostClient, source
 }
 
 func InstallRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, mediaSizes ...int) error {
-	return installRuntime(ctx, host, peerPort, cloudflareToken, mediaSizes...)
+	return installRuntime(ctx, host, peerPort, cloudflareToken, clientservices.MediaConfig{ApplicationDomain: clientservices.DefaultMediaReference.ApplicationDomain, Aliases: clientservices.DefaultMediaReference.Aliases}, mediaSizes...)
 }
 
-func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, mediaSizes ...int) error {
+func InstallRuntimeWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, config clientservices.MediaConfig, mediaSizes ...int) error {
+	return installRuntime(ctx, host, peerPort, cloudflareToken, config, mediaSizes...)
+}
+
+func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, config clientservices.MediaConfig, mediaSizes ...int) error {
 	if peerPort < 1 || peerPort > 65535 {
 		return errors.New("arrstack peer port must be 1..65535")
 	}
@@ -482,7 +487,7 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	if err := streamAdapterToGuest(ctx, host); err != nil {
 		return err
 	}
-	command := "ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
+	command := "ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
 	if len(cloudflareToken) > 0 {
 		if len(cloudflareToken) > 16<<10 {
 			return errors.New("Cloudflare token exceeds the bounded credential size")
@@ -630,6 +635,14 @@ func ReadStatus(ctx context.Context, host firewallmodule.HostClient, mediaSizes 
 // peer port. A different applied firewall port is drift, even when containers
 // happen to be running.
 func ReadStatusWithPeerPort(ctx context.Context, host firewallmodule.HostClient, peerPort int, mediaSizes ...int) (RuntimeStatus, error) {
+	return readStatusWithConfig(ctx, host, peerPort, clientservices.MediaConfig{ApplicationDomain: "media.example.com", Aliases: clientservices.MediaAliases{Radarr: "radarr"}}, mediaSizes...)
+}
+
+func ReadStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, mediaSizes ...int) (RuntimeStatus, error) {
+	return readStatusWithConfig(ctx, host, peerPort, config, mediaSizes...)
+}
+
+func readStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, mediaSizes ...int) (RuntimeStatus, error) {
 	if peerPort < 1 || peerPort > 65535 {
 		return RuntimeStatus{}, errors.New("arrstack peer port must be 1..65535")
 	}
@@ -646,7 +659,7 @@ func ReadStatusWithPeerPort(ctx context.Context, host firewallmodule.HostClient,
 		status.Detail = "guest is stopped"
 		return status, nil
 	}
-	result, err := host.Run(ctx, guestExec(runtimeProbeCommand(peerPort)))
+	result, err := host.Run(ctx, guestExec(runtimeProbeCommandWithConfig(peerPort, config)))
 	if err != nil {
 		status.Detail = "guest runtime is not ready"
 		return status, nil
@@ -679,6 +692,10 @@ func parseRuntimeProbe(data string) (dockerReady, appReady bool) {
 }
 
 func runtimeProbeCommand(peerPort int) string {
+	return runtimeProbeCommandWithConfig(peerPort, clientservices.MediaConfig{ApplicationDomain: "media.example.com", Aliases: clientservices.MediaAliases{Radarr: "radarr"}})
+}
+
+func runtimeProbeCommandWithConfig(peerPort int, config clientservices.MediaConfig) string {
 	serviceImages := make([]string, 0, len(expectedServices))
 	for _, service := range expectedServices {
 		serviceImages = append(serviceImages, service+"="+expectedServiceImages[service])
@@ -686,7 +703,8 @@ func runtimeProbeCommand(peerPort int) string {
 	services := strings.Join(serviceImages, " ")
 	compose := shellQuote(GuestComposePath)
 	qbit := qbitReadinessCommand(peerPort, compose)
-	return "systemctl is-active --quiet qemu-guest-agent; systemctl is-active --quiet docker && printf '%s\\n' DOCKER_READY || true; test -x " + shellQuote(GuestAdapterPath) + " && test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + " && printf '%s\\n' APP_STATE_READY || true; if sh -ec " + shellQuote(policyAgreementCommand(peerPort)) + "; then printf '%s\\n' POLICY_READY; fi; if test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + "; then for expectation in " + services + "; do service=${expectation%%=*}; expected=${expectation#*=}; cid=$(docker compose -f " + compose + " ps -q \"$service\"); test -n \"$cid\"; state=$(docker inspect -f '{{.State.Status}}' \"$cid\"); test \"$state\" = running || test \"$service\" = recyclarr; health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \"$cid\"); test \"$health\" = healthy || test \"$health\" = none || test \"$service\" = recyclarr; image=$(docker inspect -f '{{.Config.Image}}' \"$cid\"); test \"$image\" = \"$expected\"; done; " + qbit + "; printf '%s\\n' APP_READY; fi; if ss -lnt | grep -F -- '10.10.20.230:443' >/dev/null && docker compose -f " + compose + " exec -T caddy caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 && curl --fail --silent --show-error --connect-timeout 3 --resolve oscar.davebarton.cc:443:10.10.20.230 https://oscar.davebarton.cc/ -o /dev/null; then printf '%s\\n' CADDY_TLS_READY; fi"
+	probeHost := config.Aliases.Radarr + "." + config.ApplicationDomain
+	return "systemctl is-active --quiet qemu-guest-agent; systemctl is-active --quiet docker && printf '%s\\n' DOCKER_READY || true; test -x " + shellQuote(GuestAdapterPath) + " && test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + " && printf '%s\\n' APP_STATE_READY || true; if sh -ec " + shellQuote(policyAgreementCommand(peerPort)) + "; then printf '%s\\n' POLICY_READY; fi; if test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + "; then for expectation in " + services + "; do service=${expectation%%=*}; expected=${expectation#*=}; cid=$(docker compose -f " + compose + " ps -q \"$service\"); test -n \"$cid\"; state=$(docker inspect -f '{{.State.Status}}' \"$cid\"); test \"$state\" = running || test \"$service\" = recyclarr; health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \"$cid\"); test \"$health\" = healthy || test \"$health\" = none || test \"$service\" = recyclarr; image=$(docker inspect -f '{{.Config.Image}}' \"$cid\"); test \"$image\" = \"$expected\"; done; " + qbit + "; printf '%s\\n' APP_READY; fi; if ss -lnt | grep -F -- '10.10.20.230:443' >/dev/null && docker compose -f " + compose + " exec -T caddy caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 && curl --fail --silent --show-error --connect-timeout 3 --resolve " + shellQuote(probeHost) + ":443:10.10.20.230 https://" + shellQuote(probeHost) + "/ -o /dev/null; then printf '%s\\n' CADDY_TLS_READY; fi"
 }
 
 func qbitReadinessCommand(peerPort int, compose string) string {

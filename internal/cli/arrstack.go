@@ -23,7 +23,7 @@ import (
 )
 
 func runArrstackCapability(action string, args []string, input io.Reader, out, _ io.Writer) error {
-	fs := flag.NewFlagSet("module arrstack "+action, flag.ContinueOnError)
+	fs := flag.NewFlagSet("module media "+action, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	yes := fs.Bool("yes", false, "approve the change")
 	plan := fs.Bool("plan", false, "preview without changing state")
@@ -32,7 +32,7 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		return err
 	}
 	if fs.NArg() != 0 || (*yes && *plan) {
-		return errors.New("usage: boetticher module arrstack plan|apply|status|teardown [--plan|--yes]")
+		return errors.New("usage: boetticher module media plan|apply|status|teardown [--plan|--yes]")
 	}
 	var lock *site.OperationLock
 	var err error
@@ -53,14 +53,14 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "ARRSTACK plan\n  Guest: %s VMID %d address %s\n  Configuration: %s\n  No mutation or confirmation prompt\n", arrstack.GuestName, arrstack.GuestVMID, arrstack.GuestAddress, yesNo(changed))
+		fmt.Fprintf(out, "MEDIA plan\n  Guest: %s VMID %d address %s\n  Configuration: %s\n  No mutation or confirmation prompt\n", arrstack.GuestName, arrstack.GuestVMID, arrstack.GuestAddress, yesNo(changed))
 		_ = proposed
 		return nil
 	case "status":
-		enabled := c.Modules.Arrstack != nil && c.Modules.Arrstack.Enabled
-		fmt.Fprintf(out, "ARRSTACK: %s\nGuest: %s VMID %d address %s\n", map[bool]string{true: "configured", false: "not configured"}[enabled], arrstack.GuestName, arrstack.GuestVMID, arrstack.GuestAddress)
+		enabled := c.Modules.Media != nil && c.Modules.Media.Enabled
+		fmt.Fprintf(out, "MEDIA: %s\nGuest: %s VMID %d address %s\n", map[bool]string{true: "configured", false: "not configured"}[enabled], arrstack.GuestName, arrstack.GuestVMID, arrstack.GuestAddress)
 		if !enabled {
-			return errors.New("arrstack capability is not configured")
+			return errors.New("media capability is not configured")
 		}
 		sc, err := loadClientServiceContext()
 		if err != nil {
@@ -68,9 +68,9 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		mediaGiB := sc.Config.Modules.Normalize().Arrstack.MediaGiB
+		mediaGiB := sc.Config.Modules.Normalize().Media.MediaGiB
 		port := arrstackPeerPort(c.Modules)
-		runtime, err := arrstack.ReadStatusWithPeerPort(ctx, sc.Host, port, mediaGiB)
+		runtime, err := arrstack.ReadStatusWithConfig(ctx, sc.Host, port, *c.Modules.Media, mediaGiB)
 		if err != nil {
 			return err
 		}
@@ -93,11 +93,11 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		}
 		return nil
 	case "test":
-		if c.Modules.Arrstack == nil || !c.Modules.Arrstack.Enabled {
-			return errors.New("arrstack capability is not configured")
+		if c.Modules.Media == nil || !c.Modules.Media.Enabled {
+			return errors.New("media capability is not configured")
 		}
 		if len(args) != 1 || args[0] != "--yes" {
-			return errors.New("module arrstack test requires --yes")
+			return errors.New("module media test requires --yes")
 		}
 		sc, err := loadClientServiceContext()
 		if err != nil {
@@ -105,15 +105,15 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		mediaGiB := sc.Config.Modules.Normalize().Arrstack.MediaGiB
-		runtime, err := arrstack.ReadStatusWithPeerPort(ctx, sc.Host, arrstackPeerPort(c.Modules), mediaGiB)
+		mediaGiB := sc.Config.Modules.Normalize().Media.MediaGiB
+		runtime, err := arrstack.ReadStatusWithConfig(ctx, sc.Host, arrstackPeerPort(c.Modules), *c.Modules.Media, mediaGiB)
 		if err != nil {
 			return err
 		}
 		if !runtime.AppReady {
 			return fmt.Errorf("arrstack runtime test failed: %s", runtime.Detail)
 		}
-		fmt.Fprintln(out, "ARRSTACK local runtime: PASS (QEMU guest agent, Docker, adapter and state)")
+		fmt.Fprintln(out, "MEDIA local runtime: PASS (QEMU guest agent, Docker, adapter and state)")
 		fmt.Fprintln(out, "Remote ingress, peer forwarding, packet and physical acceptance: NOT TESTED")
 		return nil
 	case "apply":
@@ -122,13 +122,13 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "ARRSTACK apply plan: changed=%s guest VMID %d media=%dGiB; protected VPN prerequisites inspected; no mutation\n", yesNo(changed), arrstack.GuestVMID, proposed.Arrstack.MediaGiB)
+			fmt.Fprintf(out, "MEDIA apply plan: changed=%s guest VMID %d media=%dGiB; protected VPN prerequisites inspected; no mutation\n", yesNo(changed), arrstack.GuestVMID, proposed.Media.MediaGiB)
 			return nil
 		}
 		return runArrstackApply(c, *yes, *cloudflareTokenFile, input, out)
 	case "teardown":
 		if *plan {
-			fmt.Fprintf(out, "ARRSTACK teardown plan: stop VMID %d, withdraw aliases and peer forward; retain media, reservation and VPN client\n", arrstack.GuestVMID)
+			fmt.Fprintf(out, "MEDIA teardown plan: stop VMID %d, withdraw aliases and peer forward; retain media, reservation and VPN client\n", arrstack.GuestVMID)
 			return nil
 		}
 		return runArrstackTeardown(c, *yes, input, out)
@@ -146,7 +146,7 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if err != nil {
 		return err
 	}
-	mediaGiB := proposed.Normalize().Arrstack.MediaGiB
+	mediaGiB := proposed.Normalize().Media.MediaGiB
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	provider, err := requireClientProvider(ctx, sc.Site, sc.Desired, sc.Host)
@@ -169,7 +169,7 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if err != nil {
 		return err
 	}
-	runtime, runtimeErr := arrstack.ReadStatusWithPeerPort(ctx, sc.Host, port, mediaGiB)
+	runtime, runtimeErr := arrstack.ReadStatusWithConfig(ctx, sc.Host, port, *proposed.Media, mediaGiB)
 	if runtimeErr != nil && !changed && verifyErr == nil {
 		return runtimeErr
 	}
@@ -177,7 +177,7 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 		if _, err := verifyVPN(ctx, provider, sc, proposed, state, out); err != nil {
 			return fmt.Errorf("VPN must be healthy before arrstack apply: %w", err)
 		}
-		fmt.Fprintln(out, "ARRSTACK: already applied and verified")
+		fmt.Fprintln(out, "MEDIA: already applied and verified")
 		return nil
 	}
 	if !yes {
@@ -227,24 +227,24 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 			return errors.New("arrstack runtime repair requires --cloudflare-token-file because no retained private Caddy credential is available")
 		}
 	}
-	if err := arrstack.InstallRuntime(ctx, sc.Host, port, cloudflareToken, mediaGiB); err != nil {
+	if err := arrstack.InstallRuntimeWithConfig(ctx, sc.Host, port, cloudflareToken, *proposed.Media, mediaGiB); err != nil {
 		return err
 	}
-	runtime, err = arrstack.ReadStatusWithPeerPort(ctx, sc.Host, port, mediaGiB)
+	runtime, err = arrstack.ReadStatusWithConfig(ctx, sc.Host, port, *proposed.Media, mediaGiB)
 	if err != nil {
 		return err
 	}
 	if !runtime.AppReady {
 		return fmt.Errorf("arrstack apply verification failed: %s", runtime.Detail)
 	}
-	fmt.Fprintln(out, "ARRSTACK: applied and verified (guest, Docker and headless application)")
+	fmt.Fprintln(out, "MEDIA: applied and verified (guest, Docker and headless application)")
 	return nil
 }
 
 func arrstackPeerPort(modules clientservices.Modules) int {
 	if modules.VPN != nil {
 		for _, forward := range modules.VPN.Forwards {
-			if forward.Name == "arrstack-qbittorrent" {
+			if forward.Name == "media-qbittorrent" {
 				return forward.Port
 			}
 		}
@@ -284,16 +284,16 @@ func wipeArrstackPrivateToken(data []byte) {
 }
 
 func runArrstackTeardown(current controllerhost.LabConfig, yes bool, input io.Reader, out io.Writer) error {
-	if current.Modules.Arrstack == nil || !current.Modules.Arrstack.Enabled {
-		fmt.Fprintln(out, "ARRSTACK teardown: already disabled; reservation and VPN client retained")
+	if current.Modules.Media == nil || !current.Modules.Media.Enabled {
+		fmt.Fprintln(out, "MEDIA teardown: already disabled; reservation and VPN client retained")
 		return nil
 	}
 	proposed := current.Modules.Clone()
-	proposed.Arrstack.Enabled = false
+	proposed.Media.Enabled = false
 	if proposed.VPN != nil {
 		forwards := proposed.VPN.Forwards[:0]
 		for _, forward := range proposed.VPN.Forwards {
-			if forward.Name != "arrstack-qbittorrent" {
+			if forward.Name != "media-qbittorrent" {
 				forwards = append(forwards, forward)
 			}
 		}
@@ -324,11 +324,11 @@ func runArrstackTeardown(current controllerhost.LabConfig, yes bool, input io.Re
 	if _, _, err := reconcileClientServices(ctx, provider, sc, proposed); err != nil {
 		return fmt.Errorf("arrstack intent saved but provider reconciliation failed: %w", err)
 	}
-	mediaGiB := proposed.Normalize().Arrstack.MediaGiB
+	mediaGiB := proposed.Normalize().Media.MediaGiB
 	if err := arrstack.Teardown(ctx, sc.Host, mediaGiB); err != nil {
 		return fmt.Errorf("arrstack intent and provider reconciled but VM teardown failed: %w", err)
 	}
-	fmt.Fprintln(out, "ARRSTACK: disabled and VM stopped; media, reservation and VPN client retained")
+	fmt.Fprintln(out, "MEDIA: disabled and VM stopped; media, reservation and VPN client retained")
 	return nil
 }
 
@@ -337,11 +337,12 @@ func prepareArrstackModules(current clientservices.Modules) (clientservices.Modu
 	if proposed.DNS == nil || !clientservices.Enabled(proposed.DNS.Enabled) || proposed.DHCP == nil || !clientservices.Enabled(proposed.DHCP.Enabled) || proposed.VPN == nil || !clientservices.Enabled(proposed.VPN.Enabled) {
 		return clientservices.Modules{}, false, errors.New("arrstack requires enabled DNS, DHCP, and VPN intent")
 	}
-	if proposed.Arrstack == nil {
-		proposed.Arrstack = &clientservices.ArrstackConfig{Enabled: true, MediaGiB: 256, ApplicationDomain: "davebarton.cc"}
+	if proposed.Media == nil {
+		return clientservices.Modules{}, false, errors.New("modules.media.application_domain and aliases must be configured before enabling media")
 	} else {
-		proposed.Arrstack.Enabled = true
+		proposed.Media.Enabled = true
 	}
+	proposed.Arrstack = proposed.Media
 	r := arrstack.Reservation()
 	found := false
 	for _, item := range proposed.DHCP.Reservations {

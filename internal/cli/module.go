@@ -55,7 +55,7 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 	if capability == "tailnet" {
 		return runTailnetCapability(action, remaining, input, out, errOut)
 	}
-	if capability == "arrstack" {
+	if capability == "media" {
 		switch action {
 		case "plan", "apply", "status", "teardown", "test":
 			return runArrstackCapability(action, remaining, input, out, errOut)

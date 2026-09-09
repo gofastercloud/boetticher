@@ -66,24 +66,30 @@ machine approval attention is recoverable by rerunning apply with a current
 operator-approved key. Phase 4D local runtime is qualified; remote and physical
 acceptance remain separate gates.
 
-## Arrstack application capability
+## Media application capability
 
-The application lifecycle uses one fixed amd64 QEMU VM, `lab-arrstack-01`
+The media application lifecycle uses one fixed amd64 QEMU VM, `lab-media-01`
 (VMID 290, `10.10.20.230`, SERVERS VLAN 20), with a 32 GiB root disk and a
 configurable persistent media disk on `boetticher-data` (the apply default is
 256 GiB). The typed `lab.yml` intent includes:
 
 ```yaml
 modules:
-  arrstack:
+  media:
     enabled: true
-    media_gib: 256
-    application_domain: davebarton.cc
+    media_gib: 500 # reference installation override; choose explicitly for other sites
+    application_domain: media.example.com
+    aliases:
+      radarr: radarr
+      sonarr: sonarr
+      bazarr: bazarr
+      prowlarr: prowlarr
+      trailarr: trailarr
   vpn:
-    clients: [lab-arrstack-01]
+    clients: [lab-media-01]
     forwards:
-      - name: arrstack-qbittorrent
-        reservation: lab-arrstack-01
+      - name: media-qbittorrent
+        reservation: lab-media-01
         protocols: [tcp, udp]
         port: 35796
 ```
@@ -94,18 +100,18 @@ AirVPN forwarded-port setup and supply the assigned port in this intent. The
 supported operator journey is:
 
 ```text
-boetticher module arrstack plan --plan
-boetticher module arrstack apply --cloudflare-token-file /secure/path/token --yes
-boetticher module arrstack status
-boetticher module arrstack test --yes
-boetticher module arrstack teardown --plan
-boetticher module arrstack teardown --yes
+boetticher module media plan
+boetticher module media apply --cloudflare-token-file /secure/path/token --yes
+boetticher module media status
+boetticher module media test --yes
+boetticher module media teardown --plan
+boetticher module media teardown --yes
 ```
 
 The token path must be an operator-owned private regular file. It is staged only
 through the authenticated Host and guest agent, then removed; it is not printed,
 stored in intent, or included in status. The peer port comes from the existing
-`modules.vpn.forwards` entry `arrstack-qbittorrent` and preserves its TCP/UDP
+`modules.vpn.forwards` entry `media-qbittorrent` and preserves its TCP/UDP
 number. The deployed data disk and retained legacy application data are
 preserved across reapply and teardown. Applying requires the current
 protected-service state and a healthy VPN handshake before the VM or application
@@ -119,9 +125,9 @@ The VM firewall admits HTTPS only from TRUSTED (`10.10.30.0/24`) and Tailnet
 SNAT (`10.10.5.10`); the VPN appliance owns peer-forward provenance. Caddy
 rejects unknown service names, Docker forwarding is fail-closed, and IPv6 is
 disabled. The Cloudflare token must be scoped to DNS Write plus Zone Read for
-`davebarton.cc`. Published aliases are `oscar` (Radarr), `emmy` (Sonarr),
-`tony` (Bazarr), `peabody` (Prowlarr), `clio` (Trailarr), `qbittorrent`,
-`jellyfin`, and `jellyseerr`, under one `*.davebarton.cc` wildcard certificate;
+the configured application domain. The five configured service aliases plus
+`qbittorrent`, `jellyfin`, and `jellyseerr` are published under one wildcard
+certificate for that domain;
 unknown hosts return 404. `status` reports guest application health and VPN
 health separately.
 Local runtime checks are evidence for the installed guest only; remote ingress,

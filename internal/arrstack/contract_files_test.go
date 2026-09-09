@@ -6,25 +6,6 @@ import (
 	"testing"
 )
 
-func TestCaddyRoutesAndUnknownHostReject(t *testing.T) {
-	b, err := os.ReadFile("Caddyfile")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(b)
-	for _, alias := range ServiceAliases {
-		if !strings.Contains(s, alias+".davebarton.cc") {
-			t.Fatalf("missing route %s", alias)
-		}
-	}
-	if !strings.Contains(s, "handle { respond 404 }") {
-		t.Fatal("unknown hosts must be rejected")
-	}
-	if strings.Count(s, "*.davebarton.cc") != 1 {
-		t.Fatal("expected one wildcard site")
-	}
-}
-
 func TestComposeUsesOwnedBridgeAndPinnedGuestBindings(t *testing.T) {
 	b, err := os.ReadFile("compose.contract.yml")
 	if err != nil {
