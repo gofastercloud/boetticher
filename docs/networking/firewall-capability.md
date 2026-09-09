@@ -53,6 +53,10 @@ on `vmbr1`. It creates gateway interfaces at `.1` for VLANs 5, 10, 20, 30, 40,
 and 99. The capability is IPv4-only. Provider-side DHCP and DNS are disabled
 in Phase 4A.
 
+The Proxmox Host management address is `10.10.99.5/32` on MGMT. The firewall
+allows only TCP/22 to that exact address from TRUSTED `10.10.30.0/24` and the
+Tailnet router `10.10.5.10/32`; all other MGMT access remains denied by default.
+
 The fixed reference policy is default-deny for provider input and unspecified
 inter-zone forwarding. TRUSTED, SERVERS, INFRA, SANDBOX, and MGMT may use
 ordinary HOME/WAN NAT; TRANSIT may not. TRUSTED may initiate toward SERVERS,

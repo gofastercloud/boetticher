@@ -70,11 +70,13 @@ Each concern inspects native state first. Exact state is a no-op, safely absent
 state can be created, recognized Boetticher-owned partial state can be resumed,
 and conflicting or ambiguous state stops without mutation.
 
-## Fixed virtual topology
+## Fixed physical topology
 
 HOME management remains on `vmbr0`. The current Host binding uses a
-VLAN-aware `vmbr1` with no Host address and the verified `nic1` physical member
-restricted to tagged VLANs 20 and 40. The current
+VLAN-aware `vmbr1` with no untagged Host address or default gateway and the
+verified `nic1` physical member restricted to tagged VLANs 5, 10, 20, 30, 40,
+and 99. Proxmox management uses the tagged `vmbr1.99` interface at
+`10.10.99.5/24`, without a default gateway. The current
 semantic VLANs are:
 
 | VLAN | Zone | Role |
@@ -103,9 +105,9 @@ not reusable fixture identities.
 
 For the read-only `host status` health check, `vmbr1` is healthy when the link is
 up, VLAN-aware, correctly configured, and has no Host L3 address or gateway.
-Attached ports, including Module virtual ports and the approved tagged physical
-member, do not make an otherwise healthy bridge fail. Unknown physical bindings
-remain rejected by Host apply.
+The approved tagged physical member is required for the physical-trunk
+installation. Unknown or mismatched physical bindings remain rejected by Host
+apply.
 
 ## Dedicated storage
 

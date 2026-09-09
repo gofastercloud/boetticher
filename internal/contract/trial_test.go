@@ -62,7 +62,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"module=${name#boetticher-}", "[ \"$module\" = dns-blocky ] && module=dns", "-smoke \"$smoke\"", "if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact"} {
+	for _, required := range []string{"module=${name#boetticher-}", "[ \"$module\" = dns-blocky ] && module=dns", "-smoke \"$smoke\"", "if ! GOCACHE=${GOCACHE:-$(go env GOCACHE)} GOMODCACHE=${GOMODCACHE:-$(go env GOMODCACHE)} go run ./cmd/qualify-artifact"} {
 		if !strings.Contains(string(scanSource), required) {
 			t.Fatalf("artifact qualification does not derive and fail-closed validate module identity: %s", required)
 		}

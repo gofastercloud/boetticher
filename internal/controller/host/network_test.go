@@ -144,6 +144,81 @@ func TestNetworkCommandRequiresExplicitAdoption(t *testing.T) {
 	}
 }
 
+func TestPhysicalTrunkRequiresMatchingManagedMember(t *testing.T) {
+	links := []ipLink{{IfName: "vmbr1", OperState: "UP"}, {IfName: "nic2", Master: "vmbr1"}}
+	addresses := []ipAddress{{IfName: "vmbr1"}}
+	state := bridgeState(links, addresses, nil, "", "vlan_filtering 1", strings.Replace(compatibleBridge, "bridge-ports none", "bridge-ports nic1", 1))
+	if state.Adoptable || state.Configured && len(state.PhysicalMembers) != 1 {
+		t.Fatalf("mismatched physical trunk was accepted: %#v", state)
+	}
+}
+
+func TestCompatibleBridgeConfigAcceptsOnlyOneSafePhysicalPort(t *testing.T) {
+	physical := strings.Replace(compatibleBridge, "bridge-ports none", "bridge-ports nic1", 1)
+	physical = strings.Replace(physical, "bridge-vids 2-4094", "bridge-vids 5 10 20 30 40 99", 1)
+	if !compatibleBridgeConfig(physical) {
+		t.Fatal("canonical physical vmbr1 fixture was rejected")
+	}
+	if compatibleBridgeConfig(strings.Replace(physical, "bridge-ports nic1", "bridge-ports nic1 extra", 1)) {
+		t.Fatal("multi-token bridge port was accepted")
+	}
+}
+
+func TestPhysicalTrunkBindingRequiresExactAttachedMAC(t *testing.T) {
+	config := DefaultNetworkConfig()
+	config.PhysicalTrunk, config.PhysicalTrunkMAC = "nic1", "00:11:22:33:44:55"
+	links := []ipLink{{IfName: "nic1", Master: "vmbr1", LinkType: "ether", Address: "00:11:22:33:44:55"}, {IfName: "fwpr200p0", Master: "vmbr1", LinkType: "ether", Address: "02:00:00:00:02:00"}}
+	if !trunkMatches(config, links, "nic1") {
+		t.Fatal("declared physical trunk was not accepted with a guest port present")
+	}
+	if trunkMatches(config, links, "fwpr200p0") {
+		t.Fatal("guest port was accepted as the physical trunk")
+	}
+	badMAC := config
+	badMAC.PhysicalTrunkMAC = "00:11:22:33:44:56"
+	if trunkMatches(badMAC, links, "nic1") {
+		t.Fatal("MAC mismatch was accepted as the physical trunk")
+	}
+}
+
+func TestManagementRouteRequiresSelectedVLANDevice(t *testing.T) {
+	if routeUsesManagement("10.10.30.1 via 10.10.99.1 dev vmbr0 src 192.168.4.5") {
+		t.Fatal("route through HOME device was accepted")
+	}
+	if !routeUsesManagement("10.10.30.1 via 10.10.99.1 dev vmbr1.99 src 10.10.99.5") {
+		t.Fatal("effective management VLAN route was rejected")
+	}
+}
+
+func TestManagementAddressRequiresCanonical24(t *testing.T) {
+	wrong := []ipAddress{{IfName: "vmbr1.99", AddrInfo: []struct {
+		Family    string `json:"family"`
+		Local     string `json:"local"`
+		Scope     string `json:"scope"`
+		PrefixLen int    `json:"prefixlen"`
+	}{{Family: "inet", Local: "10.10.99.5", PrefixLen: 25}}}}
+	if hasIPv4Address(wrong, "vmbr1.99", "10.10.99.5") {
+		t.Fatal("management address with wrong prefix was accepted")
+	}
+}
+
+func TestPhysicalManagementCommandNormalizesOnlyDuplicateIncludeAndUsesSyntaxCheck(t *testing.T) {
+	config := DefaultNetworkConfig()
+	config.PhysicalTrunk, config.PhysicalTrunkMAC = "nic1", "00:11:22:33:44:55"
+	command, err := NetworkConfigurationCommand(NetworkPlan{State: "adoptable", Config: config}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"source /etc/network/interfaces.d/*", "source-directory /etc/network/interfaces.d", "sed '/^source-directory", "ifup --syntax-check vmbr1.99", "net/ipv6/conf/vmbr1.99/disable_ipv6=1"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("physical command missing %q", want)
+		}
+	}
+	if strings.Contains(command, "ifup --no-act vmbr1.99") {
+		t.Fatal("PVE 9.2-incompatible VLAN dry-run remains")
+	}
+}
+
 func TestNetworkDiscoveryRequiresPersistentAndLiveSuppression(t *testing.T) {
 	for _, tc := range []struct {
 		name, addr, owned, disabled, want string
@@ -154,14 +229,14 @@ func TestNetworkDiscoveryRequiresPersistentAndLiveSuppression(t *testing.T) {
 		{name: "owned enabled", addr: "", owned: "owned", disabled: "0", want: "adoptable"},
 		{name: "exact", addr: "", owned: "owned", disabled: "1", want: "exact"},
 		{name: "address remains", addr: `{"family":"inet6","local":"fe80::123","scope":"link"}`, owned: "owned", disabled: "1", want: "adoptable"},
-		{name: "owned with attached port", addr: "", owned: "owned", disabled: "1", want: "exact", member: true},
+		{name: "owned with attached port", addr: "", owned: "owned", disabled: "1", want: "conflict", member: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			script := "#!/bin/sh\nfor arg; do command=$arg; done\ncase \"$command\" in\n"
 			linkResponse := `[{"ifname":"vmbr0"},{"ifname":"nic0","master":"vmbr0"},{"ifname":"vmbr1","operstate":"UP"}]`
 			if tc.member {
-				linkResponse = `[{"ifname":"vmbr0"},{"ifname":"nic0","master":"vmbr0"},{"ifname":"nic1","master":"vmbr1"},{"ifname":"vmbr1","operstate":"UP"}]`
+				linkResponse = `[{"ifname":"vmbr0"},{"ifname":"nic0","master":"vmbr0"},{"ifname":"nic1","master":"vmbr1","link_type":"ether"},{"ifname":"vmbr1","operstate":"UP"}]`
 			}
 			responses := map[string]string{
 				"ip -json link":            linkResponse,
@@ -169,7 +244,12 @@ func TestNetworkDiscoveryRequiresPersistentAndLiveSuppression(t *testing.T) {
 				"ip -json route":           `[{"dst":"default","gateway":"192.168.4.1","dev":"vmbr0"}]`,
 				"ip route get 192.168.4.6": "192.168.4.6 dev vmbr0 src 192.168.4.5",
 				"bridge link":              "", "ip -d link show vmbr1 2>/dev/null || true": "vlan_filtering 1",
-				`set -eu; names=$(ifquery --list); if printf '%s\n' "$names" | grep -qx vmbr1; then ifquery --raw vmbr1; fi`:    compatibleBridge,
+				`set -eu; names=$(ifquery --list); if printf '%s\n' "$names" | grep -qx vmbr1; then ifquery --raw vmbr1; fi`: func() string {
+					if tc.member {
+						return strings.Replace(strings.Replace(compatibleBridge, "bridge-ports none", "bridge-ports nic1", 1), "bridge-vids 2-4094", "bridge-vids 5 10 20 30 40 99", 1)
+					}
+					return compatibleBridge
+				}(),
 				`if [ -e /proc/sys/net/ipv6/conf/vmbr1/disable_ipv6 ]; then cat /proc/sys/net/ipv6/conf/vmbr1/disable_ipv6; fi`: tc.disabled,
 				networkOwnershipCommand(): tc.owned, "ip -json -6 route": "[]",
 			}

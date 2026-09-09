@@ -62,6 +62,23 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 	}
 }
 
+func TestTrustedProxmoxSSHRuleIsExact(t *testing.T) {
+	state, err := DesiredFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, section := range state.Firewall {
+		if section.Name != "boetticher_allow_trusted_proxmox_ssh" {
+			continue
+		}
+		if section.Options["src"] != "trusted" || section.Options["dest"] != "mgmt" || section.Options["dest_ip"] != model.ProxmoxManagementAddress+"/32" || section.Options["proto"] != "tcp" || section.Options["dest_port"] != "22" {
+			t.Fatalf("TRUSTED Proxmox SSH rule is broader than required: %#v", section.Options)
+		}
+		return
+	}
+	t.Fatal("TRUSTED Proxmox SSH rule missing")
+}
+
 func TestDesiredFromSiteRejectsNetworkConflicts(t *testing.T) {
 	cases := []struct {
 		name string

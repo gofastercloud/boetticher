@@ -145,6 +145,15 @@ for proto in (6,17):
     cases.append(('10.10.5.1',53,proto,True))
     cases.append(('2001:db8:20::250',41991,proto,False))
 cases.append(('10.10.5.1',123,17,True))
+# The only Tailnet-to-MGMT exception is Proxmox SSH. These are deliberately
+# literal expectations, independent of GuestPolicy's renderer.
+cases.extend([
+    ('10.10.99.5',22,6,True),
+    ('10.10.99.5',443,6,False),
+    ('10.10.99.5',8006,6,False),
+    ('10.10.99.6',22,6,False),
+    ('10.10.99.5',22,17,False),
+])
 for i,(dst,port,proto,_) in enumerate(cases):
     assert attempt(dst,port,proto,45000+i),('positive control failed',dst,port,proto)
 subprocess.run(['nft','-f',sys.argv[1]],check=True)
