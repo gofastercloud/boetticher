@@ -2,10 +2,17 @@ package cli
 
 import (
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/arrstack"
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 )
+
+func TestMediaApplyRetainsInstallerAndTransportTimeoutMargins(t *testing.T) {
+	if mediaApplyTransportTimeout != 21*time.Minute {
+		t.Fatalf("media apply transport timeout = %s, want 21m", mediaApplyTransportTimeout)
+	}
+}
 
 func TestPrepareArrstackAddsExactIntentAndPreservesExistingPeerPort(t *testing.T) {
 	enabled := true

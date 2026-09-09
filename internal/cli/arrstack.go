@@ -137,6 +137,8 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 	}
 }
 
+const mediaApplyTransportTimeout = 21 * time.Minute
+
 func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareTokenFile string, input io.Reader, out io.Writer) error {
 	sc, err := loadClientServiceContext()
 	if err != nil {
@@ -147,8 +149,9 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 		return err
 	}
 	mediaGiB := proposed.Normalize().Media.MediaGiB
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	sc.Host.Transport.Timeout = mediaApplyTransportTimeout
 	provider, err := requireClientProvider(ctx, sc.Site, sc.Desired, sc.Host)
 	if err != nil {
 		return err
