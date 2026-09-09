@@ -50,7 +50,6 @@ const (
 	MonitorVMID                 = 120
 	GatusVMID                   = 250
 	LoggingVMID                 = 140
-	PrinterVMID                 = 230
 	LegacyStreamDeckVMID        = 220
 	AirVPNGuestVMID             = 260
 	DefaultGatewayUpstreamMAC   = "02:00:00:00:01:01"

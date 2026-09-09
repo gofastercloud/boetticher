@@ -1046,7 +1046,6 @@ case "$target" in
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
   image-bifrost) run_timed_image_target "$target" build_bifrost_target ;;
-  image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
   image-network-probe) run_timed_image_target "$target" build_network_probe_target ;;

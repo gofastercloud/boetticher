@@ -48,8 +48,6 @@
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - role: bifrost
       when: inventory_hostname in groups.get('bifrost', [])
-    - role: printer
-      when: inventory_hostname in groups.get('printer', [])
     - role: aiops
       when: inventory_hostname in groups.get('aiops', [])
     - role: gatus
