@@ -332,6 +332,12 @@ func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, ser
 	return changes + len(itemChanges), nil
 }
 
+type clientServicesDriftError struct{ packageName string }
+
+func (e *clientServicesDriftError) Error() string {
+	return fmt.Sprintf("provider %s configuration is not at the desired state", e.packageName)
+}
+
 func verifyClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState, capability string, ignoredDHCPSections ...map[string]struct{}) error {
 	ignored := map[string]struct{}{}
 	if len(ignoredDHCPSections) > 0 {
@@ -379,7 +385,7 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 				remaining = append(remaining, change)
 			}
 			if len(remaining) > 0 {
-				return fmt.Errorf("provider %s configuration is not at the desired state", item.packageName)
+				return &clientServicesDriftError{packageName: item.packageName}
 			}
 		}
 	}

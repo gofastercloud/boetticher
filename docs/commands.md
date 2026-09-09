@@ -33,7 +33,7 @@ boetticher module observability plan|apply|status|test|teardown|secrets [--yes] 
 boetticher module observability alerts pushover apply|status|test|remove [flags]
 boetticher module logging query|status [flags]
 boetticher module aiops ask QUESTION [--yes] [--json]
-boetticher module vpn plan|apply|status|teardown|add-client|remove-client [flags]
+boetticher module vpn plan|apply|status|teardown|add-client|remove-client [--location SELECTOR] [flags]
 boetticher module tailnet plan|apply|status|test|teardown [flags]
 boetticher module media plan|apply|status|test|teardown [--plan|--yes] [--cloudflare-token-file FILE]
 ```

@@ -100,6 +100,29 @@ func VPNRuntimeStatusViaHost(ctx context.Context, host HostClient) (VPNRuntimeSt
 	return parseVPNRuntimeStatus(output.Data)
 }
 
+// VPNEndpointViaHost reads only the active public WireGuard endpoint.
+func VPNEndpointViaHost(ctx context.Context, host HostClient) (string, error) {
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/sh -c 'set -eu; /usr/bin/wg show airvpn endpoints'")
+	if err != nil {
+		return "", fmt.Errorf("read provider VPN endpoint through Host guest agent: %w", err)
+	}
+	var output struct {
+		ExitCode *int   `json:"exitcode"`
+		Data     string `json:"out-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &output); err != nil || output.ExitCode == nil {
+		return "", errors.New("provider guest agent returned malformed VPN endpoint")
+	}
+	if *output.ExitCode != 0 {
+		return "", fmt.Errorf("provider VPN endpoint is unavailable (%d)", *output.ExitCode)
+	}
+	fields := strings.Fields(output.Data)
+	if len(fields) != 2 || fields[1] == "(none)" {
+		return "", errors.New("provider VPN endpoint is unavailable")
+	}
+	return fields[1], nil
+}
+
 func parseVPNRuntimeStatus(data string) (VPNRuntimeStatus, error) {
 	status := VPNRuntimeStatus{}
 	status.InterfaceUp = strings.Contains(data, "airvpn") && (strings.Contains(data, `"operstate":"UP"`) || strings.Contains(data, `"operstate": "UP"`) || strings.Contains(data, "state UP") || (strings.Contains(data, `"flags":["POINTOPOINT","NOARP","UP","LOWER_UP"`) || strings.Contains(data, `"flags": ["POINTOPOINT", "NOARP", "UP", "LOWER_UP"`)))

@@ -101,6 +101,9 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 			return ServiceState{}, err
 		}
 		state.DHCP = append(state.DHCP, generated...)
+		if normalized.Media != nil && normalized.Media.Enabled {
+			state.DHCP = append(state.DHCP, mediaDNSSections(site, normalized.Media)...)
+		}
 		state.Stubby = stubbySections(upstreams)
 	}
 	if normalized.Observability != nil && clientservices.ValidPublicDomain(normalized.Observability.PublicDomain) {
@@ -127,6 +130,18 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	}
 	state.Firewall = append(state.Firewall, observabilityFirewall...)
 	return state, nil
+}
+
+func mediaDNSSections(site model.Site, config *clientservices.MediaConfig) []Section {
+	if config == nil || !config.Enabled {
+		return nil
+	}
+	aliases := []string{config.Aliases.Radarr, config.Aliases.Sonarr, config.Aliases.Bazarr, config.Aliases.Prowlarr, config.Aliases.Trailarr, "qbittorrent", "jellyfin", "jellyseerr"}
+	result := make([]Section, 0, len(aliases))
+	for _, alias := range aliases {
+		result = append(result, Section{Name: "boetticher_media_cname_" + alias, Type: "cname", Options: map[string]string{"cname": alias + "." + config.ApplicationDomain, "target": "lab-media-01." + site.Network.Domain}, Lists: map[string][]string{}})
+	}
+	return result
 }
 
 func observabilityFirewallSections(site model.Site, modules clientservices.Modules) ([]Section, error) {

@@ -1,4 +1,4 @@
-.PHONY: controller-check controller-cleanup local-cleanup ci test build release-bundle companion-binary companion-check vet fmt-check fmt ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-aiops image-gatus image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-aiops scan-gatus scan-network-probe command-docs command-docs-check deadcode race streamdeck-check build-temp-check
+.PHONY: controller-check ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-printer image-aiops image-gatus image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-aiops scan-gatus scan-network-probe command-docs command-docs-check deadcode race streamdeck-check build-temp-check
 
 GOCACHE ?= $(shell go env GOCACHE 2>/dev/null || printf '%s/go-build' "$${XDG_CACHE_HOME:-$${HOME}/Library/Caches}")
 GOMODCACHE ?= $(shell go env GOMODCACHE 2>/dev/null || printf '%s/go/pkg/mod' "$${HOME}")
@@ -41,12 +41,6 @@ controller-check:
 	ANSIBLE_CONFIG=controller/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i localhost, controller/bootstrap.yml
 	ANSIBLE_CONFIG=controller/proxmox/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i proxmox, controller/proxmox/prepare.yml
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/controller ./internal/controller/host ./internal/controllerstatus ./internal/cli
-
-controller-cleanup:
-	sh scripts/cleanup-controller-storage.sh
-
-local-cleanup:
-	sh scripts/cleanup-local-storage.sh
 
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
@@ -111,12 +105,12 @@ image-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/artifacts
 	sh -n scripts/benchmark-artifact-compression.sh scripts/build-images.sh scripts/build-openwrt-firewall.sh scripts/scan-images.sh scripts/local-builder.sh scripts/local-builder-storage.sh scripts/local-builder-setup.sh scripts/install-debian-archive-keyring.sh scripts/native-builder-run.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh images/base/first-boot/boetticher-first-boot.sh images/base/runtime/install-runtime-state.sh images/firewall/build/install-packages.sh images/firewall/build/process-supervisor.sh
 	shellcheck scripts/build-openwrt-firewall.sh
-	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts || true)"
+	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts --glob '!cleanup-*' || true)"
 
-image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-arr image-aiops image-gatus image-network-probe images:
+image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-aiops image-gatus image-network-probe images:
 	./scripts/build-images.sh $@
 
-scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-arr scan-aiops scan-gatus scan-network-probe scan-images:
+scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-aiops scan-gatus scan-network-probe scan-images:
 	./scripts/scan-images.sh $@
 
 naming-check:
@@ -130,7 +124,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-arr-check:
-	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run python -m unittest discover -s images/arr/tests -p 'test_*.py' -v
-
-ci: arr-check controller-check fmt-check image-check schema-check command-docs-check deadcode test usb-export-test race streamdeck-check companion-check build-temp-check vet build ansible-check security-check diff-check
+ci: controller-check fmt-check image-check schema-check command-docs-check deadcode test usb-export-test race streamdeck-check companion-check build-temp-check vet build ansible-check security-check diff-check

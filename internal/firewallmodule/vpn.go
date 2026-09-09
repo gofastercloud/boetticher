@@ -50,7 +50,7 @@ func vpnSections(site model.Site, modules clientservices.Modules, profile VPNPro
 	}
 
 	firewall := []Section{
-		{Name: "boetticher_zone_vpn", Type: "zone", Options: map[string]string{"name": "vpn", "input": "DROP", "output": "ACCEPT", "forward": "DROP", "family": "ipv4", "masq": "1"}, Lists: map[string][]string{"network": {"airvpn"}}},
+		{Name: "boetticher_zone_vpn", Type: "zone", Options: map[string]string{"name": "vpn", "input": "DROP", "output": "ACCEPT", "forward": "DROP", "family": "ipv4", "masq": "1", "mtu_fix": "1"}, Lists: map[string][]string{"network": {"airvpn"}}},
 	}
 	for _, zone := range site.Network.Zones {
 		name := strings.ToLower(zone.Name)
@@ -73,10 +73,14 @@ func vpnSections(site model.Site, modules clientservices.Modules, profile VPNPro
 		if zoneName == "" {
 			continue
 		}
-		firewall = append(firewall, Section{Name: "boetticher_vpn_forward_" + forward.Name, Type: "redirect", Options: map[string]string{
+		firewall = append(firewall, Section{Name: nativeVPNForwardSectionName(forward.Name), Type: "redirect", Options: map[string]string{
 			"name": "Boetticher VPN " + forward.Name, "src": "vpn", "dest": zoneName, "dest_ip": reservation.Address,
 			"src_dport": strconv.Itoa(forward.Port), "dest_port": strconv.Itoa(forward.Port), "target": "DNAT", "family": "ipv4", "reflection": "0",
 		}, Lists: map[string][]string{"proto": append([]string(nil), forward.Protocols...)}})
 	}
 	return network, firewall
+}
+
+func nativeVPNForwardSectionName(name string) string {
+	return "boetticher_vpn_forward_" + nativeRecordSuffix(name)
 }

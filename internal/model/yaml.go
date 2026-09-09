@@ -39,7 +39,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "bifrost" && name != "aiops" && name != "gatus" && name != "airvpn" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "bifrost" && name != "printer" && name != "aiops" && name != "gatus" && name != "airvpn" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
@@ -107,8 +107,11 @@ func validateModuleConfigShape(data []byte) error {
 		allowed := map[string]bool{}
 		switch name {
 		case "dns":
-		case "monitoring", "firewall":
+		case "monitoring", "firewall", "printer":
 			allowed["enabled"] = true
+			if name == "printer" {
+				allowed["network"] = true
+			}
 		case "logging":
 			allowed["enabled"] = true
 		case "tailnet-router":

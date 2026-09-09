@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,10 +25,11 @@ import (
 )
 
 const (
-	vpnStateRootEnv = "BOETTICHER_VPN_STATE_DIR"
-	vpnProfileFile  = "wireguard.conf"
-	vpnDeviceFile   = "device-id"
-	vpnPendingFile  = "device-create.pending"
+	vpnStateRootEnv   = "BOETTICHER_VPN_STATE_DIR"
+	vpnProfileFile    = "wireguard.conf"
+	vpnDeviceFile     = "device-id"
+	vpnPendingFile    = "device-create.pending"
+	vpnSelectorPrefix = "# Boetticher-Selector: "
 )
 
 type vpnOptions struct {
@@ -35,6 +37,7 @@ type vpnOptions struct {
 	plan        bool
 	details     bool
 	apiKeyStdin bool
+	location    string
 }
 
 func runVPNCapability(action string, args []string, input io.Reader, out, errOut io.Writer) error {
@@ -206,6 +209,7 @@ func parseVPNOptions(action string, args []string) (vpnOptions, error) {
 	}
 	if action == "apply" {
 		fs.BoolVar(&opts.apiKeyStdin, "api-key-stdin", false, "read the account API key once from stdin")
+		fs.StringVar(&opts.location, "location", "", "AirVPN named server, country, or region selector")
 	}
 	if err := fs.Parse(args); err != nil {
 		return vpnOptions{}, err
@@ -279,6 +283,29 @@ func loadVPNMaterial(s model.Site) (airvpn.Profile, string, bool, error) {
 	return profile, deviceID, true, nil
 }
 
+func retainedVPNSelector(s model.Site) (string, error) {
+	data, err := readVPNStateFile(vpnStatePath(s, vpnProfileFile), 128*1024)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "europe", nil
+		}
+		return "", fmt.Errorf("load retained VPN selector: %w", err)
+	}
+	for _, raw := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, vpnSelectorPrefix) {
+			selector := strings.TrimSpace(strings.TrimPrefix(line, vpnSelectorPrefix))
+			if err := airvpn.ValidateSelector(selector); err != nil {
+				return "", fmt.Errorf("retained VPN selector is invalid: %w", err)
+			}
+			return selector, nil
+		}
+	}
+	// Profiles written before selector binding are valid only for the original
+	// Europe intent; they must not be silently reused for a named selector.
+	return "europe", nil
+}
+
 func saveVPNMaterial(s model.Site, profile airvpn.Profile, deviceID string) error {
 	if strings.TrimSpace(deviceID) == "" || strings.ContainsAny(deviceID, " \t\r\n/\\") {
 		return errors.New("VPN device identity is malformed")
@@ -290,7 +317,12 @@ func saveVPNMaterial(s model.Site, profile airvpn.Profile, deviceID string) erro
 	if err := pathguard.WriteFileWithParentMode(vpnStatePath(s, vpnDeviceFile), []byte(deviceID+"\n"), 0600, 0700); err != nil {
 		return fmt.Errorf("store retained VPN device identity: %w", err)
 	}
-	if err := pathguard.WriteFileWithParentMode(vpnStatePath(s, vpnProfileFile), []byte(profile.Config), 0600, 0700); err != nil {
+	selector := strings.TrimSpace(profile.Metadata.Selector)
+	if err := airvpn.ValidateSelector(selector); err != nil {
+		return fmt.Errorf("store AirVPN profile selector: %w", err)
+	}
+	data := []byte(strings.TrimRight(profile.Config, "\n") + "\n" + vpnSelectorPrefix + selector + "\n")
+	if err := pathguard.WriteFileWithParentMode(vpnStatePath(s, vpnProfileFile), data, 0600, 0700); err != nil {
 		return fmt.Errorf("store retained VPN profile: %w", err)
 	}
 	return nil
@@ -315,6 +347,10 @@ func readVPNAPIKey(input io.Reader) (string, error) {
 }
 
 func prepareVPNModules(current clientservices.Modules, siteModel model.Site) (clientservices.Modules, bool, error) {
+	return prepareVPNModulesWithLocation(current, siteModel, "")
+}
+
+func prepareVPNModulesWithLocation(current clientservices.Modules, siteModel model.Site, requested string) (clientservices.Modules, bool, error) {
 	proposed := current.Clone()
 	if proposed.VPN == nil {
 		proposed.VPN = &clientservices.VPNConfig{Enabled: boolPointer(true), Location: "europe"}
@@ -323,10 +359,16 @@ func prepareVPNModules(current clientservices.Modules, siteModel model.Site) (cl
 		copyVPN.Enabled = boolPointer(true)
 		proposed.VPN = &copyVPN
 	}
-	if strings.ToLower(strings.TrimSpace(proposed.VPN.Location)) != "europe" {
-		return clientservices.Modules{}, false, errors.New("VPN location must be the configured Europe selection")
+	if strings.TrimSpace(requested) != "" {
+		proposed.VPN.Location = strings.TrimSpace(requested)
 	}
-	proposed.VPN.Location = "europe"
+	proposed.VPN.Location = strings.TrimSpace(proposed.VPN.Location)
+	if proposed.VPN.Location == "" {
+		proposed.VPN.Location = "europe"
+	}
+	if err := airvpn.ValidateSelector(proposed.VPN.Location); err != nil {
+		return clientservices.Modules{}, false, err
+	}
 	if err := clientservices.Validate(proposed, siteModel); err != nil {
 		return clientservices.Modules{}, false, err
 	}
@@ -347,6 +389,13 @@ func ensureVPNProfile(ctx context.Context, serviceContext clientServiceContext, 
 		return airvpn.Profile{}, "", err
 	}
 	if present && !opts.apiKeyStdin {
+		selector, selectorErr := retainedVPNSelector(serviceContext.Site)
+		if selectorErr != nil {
+			return airvpn.Profile{}, "", selectorErr
+		}
+		if !strings.EqualFold(selector, modules.VPN.Location) {
+			return airvpn.Profile{}, "", fmt.Errorf("retained VPN profile is bound to selector %q; refresh with --location %s --api-key-stdin --yes", selector, modules.VPN.Location)
+		}
 		return profile, deviceID, nil
 	}
 	if !opts.apiKeyStdin {
@@ -357,6 +406,15 @@ func ensureVPNProfile(ctx context.Context, serviceContext clientServiceContext, 
 		return airvpn.Profile{}, "", err
 	}
 	client := airvpn.Client{}
+	if !strings.EqualFold(modules.VPN.Location, "europe") {
+		available, err := client.HasLiveSelector(ctx, modules.VPN.Location)
+		if err != nil {
+			return airvpn.Profile{}, "", err
+		}
+		if !available {
+			return airvpn.Profile{}, "", fmt.Errorf("AirVPN selector %q currently has no healthy provider servers", modules.VPN.Location)
+		}
+	}
 	if deviceID == "" {
 		pending := vpnStatePath(serviceContext.Site, vpnPendingFile)
 		if err := pathguard.MkdirAll(vpnStateDir(serviceContext.Site), 0700); err != nil {
@@ -380,6 +438,7 @@ func ensureVPNProfile(ctx context.Context, serviceContext clientServiceContext, 
 	if err != nil {
 		return airvpn.Profile{}, "", err
 	}
+	profile.Metadata.Selector = modules.VPN.Location
 	if err := saveVPNMaterial(serviceContext.Site, profile, deviceID); err != nil {
 		return airvpn.Profile{}, "", err
 	}
@@ -420,7 +479,7 @@ func vpnChangeCount(ctx context.Context, provider *openwrt.Client, serviceContex
 }
 
 func runVPNApply(ctx context.Context, serviceContext clientServiceContext, opts vpnOptions, input io.Reader, out, errOut io.Writer) error {
-	modules, configChanged, err := prepareVPNModules(serviceContext.Config.Modules, serviceContext.Site)
+	modules, configChanged, err := prepareVPNModulesWithLocation(serviceContext.Config.Modules, serviceContext.Site, opts.location)
 	if err != nil {
 		return err
 	}
@@ -445,7 +504,13 @@ func runVPNApply(ctx context.Context, serviceContext clientServiceContext, opts 
 	if err != nil {
 		return err
 	}
-	if changes == 0 && !configChanged {
+	endpoint, endpointErr := firewallmodule.VPNEndpointViaHost(ctx, serviceContext.Host)
+	if endpointErr != nil {
+		return endpointErr
+	}
+	wantEndpoint := projection.EndpointHost + ":" + strconv.Itoa(projection.EndpointPort)
+	needsActivation := endpoint != wantEndpoint
+	if changes == 0 && !configChanged && !needsActivation {
 		if _, err := verifyVPN(ctx, provider, serviceContext, modules, state, out); err != nil {
 			return err
 		}
@@ -469,12 +534,19 @@ func runVPNApply(ctx context.Context, serviceContext clientServiceContext, opts 
 		fmt.Fprintln(out, "Configuration saved; application failed.")
 		return fmt.Errorf("reconcile VPN configuration: %w", err)
 	}
+	if err := provider.ReloadInterface(ctx, "airvpn"); err != nil {
+		return fmt.Errorf("activate changed AirVPN profile: %w", err)
+	}
 	if _, err := verifyVPN(ctx, provider, serviceContext, modules, state, out); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "VPN: CONNECTED\nConfiguration: saved\nConnection: connected\nEgress: unverified\nEnforcement: present\n")
 	_ = errOut
 	return nil
+}
+
+func vpnNeedsActivation(changes int, configChanged bool, activeEndpoint, desiredEndpoint string) bool {
+	return changes != 0 || configChanged || activeEndpoint != desiredEndpoint
 }
 
 func verifyVPN(ctx context.Context, provider *openwrt.Client, serviceContext clientServiceContext, modules clientservices.Modules, state firewallmodule.ServiceState, out io.Writer) (firewallmodule.VPNRuntimeStatus, error) {
@@ -534,6 +606,13 @@ func verifyVPN(ctx context.Context, provider *openwrt.Client, serviceContext cli
 	if age := time.Since(runtime.LatestHandshake); age > 10*time.Minute {
 		fmt.Fprintln(out, "Connection: stale\nEnforcement: present; protected clients remain blocked")
 		return runtime, errors.New("VPN peer handshake is stale; protected clients remain blocked")
+	}
+	if serviceContext.VPNProfile != nil {
+		endpoint, endpointErr := firewallmodule.VPNEndpointViaHost(ctx, serviceContext.Host)
+		want := serviceContext.VPNProfile.EndpointHost + ":" + strconv.Itoa(serviceContext.VPNProfile.EndpointPort)
+		if endpointErr != nil || endpoint != want {
+			return runtime, fmt.Errorf("VPN active endpoint does not match retained profile")
+		}
 	}
 	if pendingAdditions {
 		return runtime, pendingVPNStatusError{}

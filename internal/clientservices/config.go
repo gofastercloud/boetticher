@@ -422,6 +422,13 @@ func (m Modules) Clone() Modules {
 
 func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
+	if err := validateSystems(normalized.Systems, site); err != nil {
+		return err
+	}
+	normalized = SystemsExpanded(normalized)
+	if len(normalized.Systems) > 0 && (normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
+		return errors.New("registered systems require enabled DHCP")
+	}
 	for _, system := range normalized.Systems {
 		if system.Monitoring && (normalized.Observability == nil || !Enabled(normalized.Observability.Enabled)) {
 			return errors.New("monitored systems require enabled observability")
@@ -501,6 +508,34 @@ func Validate(modules Modules, site model.Site) error {
 	if normalized.DNS != nil && normalized.DHCP != nil && Enabled(normalized.DNS.Enabled) && Enabled(normalized.DHCP.Enabled) {
 		if err := validateSharedNames(normalized.DNS, normalized.DHCP, site); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validateSystems(systems []System, site model.Site) error {
+	platformNames := make(map[string]struct{})
+	for _, component := range site.PlatformComponents() {
+		if name, err := canonicalName(component.Hostname, site.Network.Domain); err == nil {
+			platformNames[name] = struct{}{}
+		}
+		for _, alias := range component.DNSAliases {
+			if name, err := canonicalName(alias, site.Network.Domain); err == nil {
+				platformNames[name] = struct{}{}
+			}
+		}
+	}
+	for _, system := range systems {
+		name := strings.TrimSpace(system.Name)
+		if !model.IsDNSLabel(name) || name != strings.ToLower(name) {
+			return fmt.Errorf("system name %q is invalid or non-canonical", system.Name)
+		}
+		canonical, err := canonicalName(name, site.Network.Domain)
+		if err != nil {
+			return fmt.Errorf("system name %q is invalid: %w", system.Name, err)
+		}
+		if _, exists := platformNames[canonical]; exists {
+			return fmt.Errorf("system name %q conflicts with a platform name", system.Name)
 		}
 	}
 	return nil

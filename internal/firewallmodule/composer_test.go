@@ -106,6 +106,7 @@ func TestComposeApplianceWithVPNUsesNativeAirVPNIdentityAndTerminalRules(t *test
 		t.Fatal(err)
 	}
 	var airvpn, terminal bool
+	var mtuFix bool
 	var redirect Section
 	for _, section := range composition.Network {
 		if section.Name == "airvpn" && section.Options["proto"] == "wireguard" {
@@ -116,9 +117,15 @@ func TestComposeApplianceWithVPNUsesNativeAirVPNIdentityAndTerminalRules(t *test
 		}
 	}
 	for _, section := range composition.Firewall {
+		if section.Name == "boetticher_zone_vpn" && section.Options["mtu_fix"] == "1" {
+			mtuFix = true
+		}
 		if section.Type == "redirect" {
 			redirect = section
 		}
+	}
+	if !mtuFix {
+		t.Fatal("AirVPN zone is missing native MSS clamping")
 	}
 	if !airvpn || !terminal || redirect.Options["src_dport"] != "443" || redirect.Options["reflection"] != "0" {
 		t.Fatalf("VPN composition lost native interface or terminal source rule: %#v", composition.Network)
