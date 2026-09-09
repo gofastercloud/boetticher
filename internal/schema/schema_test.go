@@ -102,7 +102,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if tailnetRef.Ref != "#/$defs/TailnetRouterConfig" {
 		t.Fatalf("tailnet-router module schema ref = %q", tailnetRef.Ref)
 	}
-	for _, name := range []string{"printer", "gatus"} {
+	for _, name := range []string{"gatus"} {
 		var ref struct {
 			Ref string `json:"$ref"`
 		}

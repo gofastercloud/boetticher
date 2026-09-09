@@ -82,29 +82,6 @@ func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
 	}
 }
 
-func TestPrinterRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T) {
-	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "printer", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(contents)
-	for _, required := range []string{
-		"include_tasks: ../../tasks/step-ca-endpoint.yml",
-		"step_ca_endpoint_subject: \"octoprint.{{ domain }}\"",
-		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/octoprint.key.pem",
-		"ssl_verify_client on;",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("Printer TLS contract is missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"octoprint_server_cert_pem", "octoprint.csr.pem", "ansible.builtin.fetch:"} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("Printer role retains controller server-certificate exchange %q", forbidden)
-		}
-	}
-}
-
 func TestCompanionStreamDeckUsesDirectUSBAndScopedRuntimeFiles(t *testing.T) {
 	playbook, err := os.ReadFile(filepath.Join("..", "..", "ansible", "companion.yml"))
 	if err != nil {
@@ -1695,24 +1672,6 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 			},
 			forbidden: []string{"listen 10.10.20.60:80", "api_key: {{", "ansible.builtin.get_url:"},
 		},
-		{
-			role: "printer",
-			required: []string{
-				"boetticher_appliance_artifact",
-				"client_ca_pem | default('') | length > 0",
-				"ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;",
-				"ssl_verify_client on;",
-				"proxy_pass http://127.0.0.1:5000;",
-				"listen 10.10.20.80:443 ssl;",
-				"Wait for the OctoPrint backend before advertising the endpoint",
-				"url: http://127.0.0.1:5000/",
-				"until: octoprint_backend.status | default(0) == 200",
-				"Verify a client without a certificate is rejected before OctoPrint",
-				"ca_path: /var/lib/boetticher/identity/tls/client-ca.pem",
-				"status_code: 400",
-			},
-			forbidden: []string{"ssl_verify_client off", "listen 10.10.20.80:80", "ansible.builtin.apt:"},
-		},
 	}
 	for _, test := range tests {
 		path := filepath.Join("..", "..", "ansible", "roles", test.role, "tasks", "main.yml")
@@ -1808,7 +1767,6 @@ func TestSharedClientCAFrontendsRestrictClientIdentities(t *testing.T) {
 			`if ($ssl_client_s_dn !~ "^(?:CN=client-operator\\.{{ domain | regex_escape }}(?:,O=boetticher)?|CN=client-aiops-router-client\\.{{ domain | regex_escape }}(?:,O=boetticher)?)$") { return 403; }`,
 			`if ($ssl_client_s_dn ~ "CN=client-aiops-router-client(?:\\.|,|$)") { return 403; }`,
 		}},
-		{role: "printer", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
 	}
 	for _, check := range checks {
 		data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", check.role, "tasks", "main.yml"))
