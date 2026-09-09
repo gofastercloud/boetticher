@@ -78,6 +78,19 @@ func TestProviderInstallerStagesGatusAssetsAndOrdersAccountBeforeOwnership(t *te
 			t.Errorf("Gatus public outcome check missing %q: %s", required, config)
 		}
 	}
+	if strings.Contains(string(config), "name: bifrost") {
+		t.Fatalf("disabled Bifrost probe was retained: %s", config)
+	}
+	env = append(env, "BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=true")
+	cmd = exec.Command("sh", installerPath(t), "gatus", "--root", root)
+	cmd.Env = env
+	if output, err = cmd.CombinedOutput(); err != nil {
+		t.Fatalf("enabled Bifrost probe reinstall failed: %v\n%s", err, output)
+	}
+	config, err = os.ReadFile(filepath.Join(root, "etc", "boetticher", "gatus", "config.yaml"))
+	if err != nil || !strings.Contains(string(config), "name: bifrost") {
+		t.Fatalf("enabled Bifrost probe was not retained: err=%v config=%s", err, config)
+	}
 	for _, path := range []string{"etc/boetticher/gatus/config.yaml", "etc/systemd/system/gatus.service"} {
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
 			t.Fatal(err)

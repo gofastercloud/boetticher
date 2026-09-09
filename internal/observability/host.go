@@ -197,9 +197,13 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 	retentionEnvironment := fmt.Sprintf(" BOETTICHER_OBSERVABILITY_METRICS_RETENTION_DAYS=%d BOETTICHER_OBSERVABILITY_LOGS_RETENTION_DAYS=%d", collection.MetricsRetentionDays, collection.LogsRetentionDays)
 	pushoverEnvironment := PushoverEnvironment(modules)
 	caddyEnvironment := CaddyEnvironment(modules, collection)
+	bifrostProbeEnvironment := " BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=false"
+	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+		bifrostProbeEnvironment = " BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=true"
+	}
 	providers := []string{"victorialogs", "grafana", "gatus"}
 	for _, provider := range providers {
-		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, pushoverEnvironment, caddyEnvironment, shellQuoteValue(provider))
+		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, pushoverEnvironment, caddyEnvironment, bifrostProbeEnvironment, shellQuoteValue(provider))
 		installCommand := fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(installScript))
 		if _, err := c.Transport.Run(ctx, installCommand); err != nil {
 			return fmt.Errorf("install %s provider: %w", provider, err)

@@ -33,11 +33,13 @@ logs_retention=${BOETTICHER_OBSERVABILITY_LOGS_RETENTION_DAYS:-7}
 pushover_enabled=${BOETTICHER_OBSERVABILITY_PUSHOVER_ENABLED:-false}
 pushover_title=${BOETTICHER_OBSERVABILITY_PUSHOVER_TITLE:-Boetticher observability}
 pushover_priority=${BOETTICHER_OBSERVABILITY_PUSHOVER_PRIORITY:-0}
+bifrost_probe_enabled=${BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED:-false}
 case "$metrics_retention" in ''|*[!0-9]*) die 'metrics retention must be a day count' ;; esac
 case "$logs_retention" in ''|*[!0-9]*) die 'logs retention must be a day count' ;; esac
 [ "$metrics_retention" -ge 1 ] && [ "$metrics_retention" -le 3650 ] || die 'metrics retention must be between 1 and 3650 days'
 [ "$logs_retention" -ge 1 ] && [ "$logs_retention" -le 3650 ] || die 'logs retention must be between 1 and 3650 days'
 case "$pushover_enabled" in true|false) ;; *) die 'Pushover enabled setting must be true or false' ;; esac
+case "$bifrost_probe_enabled" in true|false) ;; *) die 'Bifrost probe enabled setting must be true or false' ;; esac
 case "$pushover_priority" in -2|-1|0|1) ;; *) die 'Pushover priority must be between -2 and 1' ;; esac
 case "$pushover_title" in *[!A-Za-z0-9._\ -]*) die 'Pushover title contains unsupported characters' ;; esac
 [ "${#pushover_title}" -le 250 ] || die 'Pushover title exceeds 250 characters'
@@ -657,6 +659,14 @@ case "$provider" in
     install -d -m 0750 "$(root_path /etc/boetticher/gatus)"
     chown_owned "$(root_path /etc/boetticher/gatus)" gatus
     gatus_config_source=$asset_root/gatus.config.yaml
+    if [ "$bifrost_probe_enabled" = false ]; then
+      awk '
+        /^  - name: bifrost$/ { skip=1; next }
+        skip && /^  - name:/ { skip=0 }
+        !skip { print }
+      ' "$gatus_config_source" > "$work/gatus-no-bifrost.config.yaml"
+      gatus_config_source=$work/gatus-no-bifrost.config.yaml
+    fi
     if [ -n "$public_domain" ]; then
       metrics_controller=${BOETTICHER_OBSERVABILITY_METRICS_CONTROLLER:-}
       metrics_host=${BOETTICHER_OBSERVABILITY_METRICS_HOST:-}
@@ -707,7 +717,7 @@ case "$provider" in
           next
         }
         { print }
-      ' "$asset_root/gatus.config.yaml" > "$work/gatus-public.config.yaml"
+      ' "$gatus_config_source" > "$work/gatus-public.config.yaml"
       gatus_config_source=$work/gatus-public.config.yaml
     fi
     if [ "$pushover_enabled" = true ]; then

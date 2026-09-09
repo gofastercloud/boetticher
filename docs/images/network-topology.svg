@@ -55,12 +55,12 @@
     <rect x="1375" y="585" width="145" height="95" class="card" fill="#f3e8ff"/><text x="1393" y="613" class="l">VLAN 99</text><text x="1393" y="635" class="b">MGMT</text><text x="1393" y="657" class="tiny">10.10.99.1 gateway</text>
   </g>
   <path d="M662 530V570M787 530V570M912 530V570M1077 530V570M1242 530V570M1407 530V570" class="soft"/>
-  <rect x="550" y="735" width="425" height="155" class="card" fill="#faf5ff" stroke="#7c3aed" stroke-dasharray="7 5"/>
-  <text x="570" y="765" class="l" fill="#6d28d9">DEPLOYING / partial · PR 120</text><text x="570" y="789" class="b">lab-monitor-01 · unprivileged CT 120 · INFRA 10.10.10.20</text><text x="570" y="812" class="b">VictoriaMetrics / Logs, Grafana, Gatus, Caddy</text><text x="570" y="835" class="b">Collection: Controller 20.10 + Host 99.5 + runtime 10.20</text><text x="570" y="858" class="tiny">CT running; provider install partial; Gatus permissions fix pending.</text>
+  <rect x="550" y="735" width="425" height="155" class="card" fill="#e0f2fe"/>
+  <text x="570" y="765" class="l" fill="#6d28d9">DEPLOYED · PR 120</text><text x="570" y="789" class="b">lab-monitor-01 · unprivileged CT 120 · INFRA 10.10.10.20</text><text x="570" y="812" class="b">VictoriaMetrics / Logs, Grafana, Gatus, Caddy</text><text x="570" y="835" class="b">Collection: Controller 20.10 + Host 99.5 + runtime 10.20</text><text x="570" y="858" class="tiny">Core services, three-target metrics/logs and web isolation verified.</text>
   <rect x="1020" y="735" width="465" height="155" class="card" fill="#faf5ff" stroke="#7c3aed" stroke-dasharray="7 5"/>
   <text x="1040" y="765" class="l" fill="#6d28d9">PLANNED · PR 121 media capability</text><text x="1040" y="789" class="b">lab-media-01 · VM 290 · SERVERS 10.10.20.230</text><text x="1040" y="812" class="b">Docker: qBittorrent / *arr / Jellyfin / Jellyseerr + Caddy</text><text x="1040" y="835" class="b">Protected VPN required · web: TRUSTED + Tailnet only</text><text x="1040" y="858" class="tiny">Port 35796 allocation and torrent / fail-closed tests: pending.</text>
-  <path d="M787 680V735" class="dash"/><path d="M952 680V705H1250V735" class="dash"/>
-  <text x="800" y="718" class="tiny" fill="#6d28d9">planned collection</text><text x="1080" y="698" class="tiny" fill="#6d28d9">planned protected workload</text>
+  <path d="M787 680V735" class="line"/><path d="M952 680V705H1250V735" class="dash"/>
+  <text x="800" y="718" class="tiny" fill="#6d28d9">active collection</text><text x="1080" y="698" class="tiny" fill="#6d28d9">planned protected workload</text>
 
   <!-- access and legend -->
   <rect x="55" y="980" width="1490" height="150" class="zone" fill="#fff" stroke="#cbd5e1"/>
