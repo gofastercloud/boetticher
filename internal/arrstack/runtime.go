@@ -349,12 +349,24 @@ func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, m
 }
 
 func requireGuestCPUFeatures(ctx context.Context, host firewallmodule.HostClient) error {
-	const required = "avx avx2 bmi1 bmi2 f16c fma lzcnt movbe popcnt sse4_1 sse4_2 xsave"
-	command := "set -eu; flags=$(awk '/^flags[[:space:]]*:/ {print $0; exit}' /proc/cpuinfo); for flag in " + required + "; do printf '%s\\n' \"$flags\" | grep -Eq \"(^|[[:space:]])$flag([[:space:]]|$)\" || { echo \"missing x86-64-v3 CPU feature: $flag\" >&2; exit 1; }; done"
-	if _, err := host.Run(ctx, command); err != nil {
+	result, err := host.Run(ctx, "awk '/^flags[[:space:]]*:/ {print; exit}' /proc/cpuinfo")
+	if err != nil || !hasGuestCPUFeatures(string(result.Stdout)) {
 		return errors.New("Host CPU lacks the x86-64-v3 features required by the media Bun runtime")
 	}
 	return nil
+}
+
+func hasGuestCPUFeatures(flags string) bool {
+	available := map[string]bool{}
+	for _, flag := range strings.Fields(flags) {
+		available[flag] = true
+	}
+	for _, flag := range []string{"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "movbe", "popcnt", "sse4_1", "sse4_2", "xsave"} {
+		if !available[flag] {
+			return false
+		}
+	}
+	return available["lzcnt"] || available["abm"]
 }
 
 func recoverGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, config map[string]string, mediaGiB int) error {

@@ -50,13 +50,23 @@ func TestNewMediaGuestRequiresX8664V3HostFeatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(commandSource)
-	for _, feature := range []string{"avx2", "bmi1", "bmi2", "f16c", "fma", "lzcnt", "movbe", "popcnt", "sse4_2", "xsave"} {
+	for _, feature := range []string{"avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "popcnt", "sse4_2", "xsave"} {
 		if !strings.Contains(text, feature) {
 			t.Fatalf("x86-64-v3 preflight missing %s", feature)
 		}
 	}
 	if !strings.Contains(text, "requireGuestCPUFeatures(ctx, host)") {
 		t.Fatal("new media guest creation does not run the CPU feature preflight")
+	}
+}
+
+func TestGuestCPUFeatureParserAcceptsAbmAliasForLzcnt(t *testing.T) {
+	flags := "flags : avx avx2 bmi1 bmi2 f16c fma abm movbe popcnt sse4_1 sse4_2 xsave"
+	if !hasGuestCPUFeatures(flags) {
+		t.Fatal("x86-64-v3 feature parser rejected the abm alias for lzcnt")
+	}
+	if hasGuestCPUFeatures(strings.Replace(flags, "abm", "", 1)) {
+		t.Fatal("x86-64-v3 feature parser accepted missing lzcnt/abm")
 	}
 }
 
