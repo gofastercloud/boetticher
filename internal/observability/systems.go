@@ -302,7 +302,7 @@ func gatusSystemsMatch(config []byte, systems []clientservices.System, mediaModu
 		}
 		found[name] = true
 	}
-	return len(found) == len(desired), nil
+	return len(found) == len(desired)+len(mediaDesired), nil
 }
 
 func isOwnedGatusSystemEndpoint(endpoint map[string]interface{}) bool {

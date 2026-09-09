@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"gopkg.in/yaml.v3"
 )
 
 func monitoredSystem() clientservices.System {
@@ -57,6 +58,32 @@ func TestMediaGatusEndpointsRejectIncompleteAliases(t *testing.T) {
 	_, err := MediaGatusEndpoints(clientservices.Modules{Media: &clientservices.MediaConfig{Enabled: true, ApplicationDomain: "media.example.test", Aliases: clientservices.MediaAliases{Radarr: "radarr"}}})
 	if err == nil || !strings.Contains(err.Error(), "alias") {
 		t.Fatalf("incomplete media aliases accepted: %v", err)
+	}
+}
+
+func TestGatusSystemsMatchCountsMediaProjection(t *testing.T) {
+	modules := clientservices.Modules{Media: &clientservices.MediaConfig{Enabled: true, ApplicationDomain: "media.example.test", Aliases: clientservices.MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"}}}
+	config, err := RenderGatusConfig([]byte("endpoints: []\n"), nil, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched, err := gatusSystemsMatch(config, nil, modules)
+	if err != nil || !matched {
+		t.Fatalf("complete media projection was not matched: matched=%v err=%v", matched, err)
+	}
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal(config, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	endpoints := parsed["endpoints"].([]interface{})
+	parsed["endpoints"] = endpoints[:len(endpoints)-1]
+	short, err := yaml.Marshal(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched, err = gatusSystemsMatch(short, nil, modules)
+	if err != nil || matched {
+		t.Fatalf("incomplete media projection was accepted: matched=%v err=%v", matched, err)
 	}
 }
 

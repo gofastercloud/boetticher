@@ -465,6 +465,17 @@ func (c HostClient) TeardownGuest(ctx context.Context, b Binding) error {
 		if err := c.TeardownCollection(ctx, b); err != nil {
 			return err
 		}
+		// Media collection is a separate QEMU guest and is not included in the
+		// observability LXC's default collection target set.
+		if _, enrolledTransport := c.Transport.(controllerhost.Transport); enrolledTransport {
+			if err := c.TeardownMediaCollection(ctx, b); err != nil {
+				return err
+			}
+		} else if _, enrolledTransport := c.Transport.(*controllerhost.Transport); enrolledTransport {
+			if err := c.TeardownMediaCollection(ctx, b); err != nil {
+				return err
+			}
+		}
 	}
 	for _, service := range Services() {
 		if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- systemctl disable --now %s || true", b.VMID, shellQuoteValue(service))); err != nil {

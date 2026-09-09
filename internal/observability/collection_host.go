@@ -40,15 +40,15 @@ func (c HostClient) TeardownMediaCollection(ctx context.Context, b Binding) erro
 	if _, err := c.GuestConfig(ctx, b); err != nil {
 		return err
 	}
-	if err := c.removeMediaScrapeJob(ctx, b); err != nil {
-		return err
-	}
 	guest, err := inspectMediaGuestFacts(ctx, c.Transport)
 	if err != nil {
 		return err
 	}
 	if !guest.Exists || !guest.Running {
 		return nil
+	}
+	if err := c.removeMediaScrapeJob(ctx, b); err != nil {
+		return err
 	}
 	host, ok := c.Transport.(StdinRunner)
 	if !ok {
