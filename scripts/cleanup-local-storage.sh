@@ -32,11 +32,10 @@ case "$keep:$age" in *[!0-9:]*|:*) die 'keep and age must be non-negative intege
 case "$root" in /*) ;; *) root=$(CDPATH='' cd -- "$root" && pwd) ;; esac
 cutoff=$(date -v-"${age}"d +%s 2>/dev/null || date -d "${age} days ago" +%s)
 count=0
-find "$root" -mindepth 1 -maxdepth 1 \( -name 'artifacts-stale-*' -o -name 'boetticher-build-*' -o -name 'boetticher-download-*' \) -type d -print | sort | while IFS= read -r path; do
+find "$root" -mindepth 1 -maxdepth 1 \( -name 'artifacts-stale-*' -o -name 'boetticher-build-*' -o -name 'boetticher-download-*' \) -type d -exec sh -c 'for path do stat -f "%m %N" "$path" 2>/dev/null || stat -c "%Y %n" "$path"; done' sh {} + | sort -nr | while IFS=' ' read -r mtime path; do
   [ -L "$path" ] && { printf 'Refused symlink: %s\n' "$path"; continue; }
   owner=$(stat -f '%Su' "$path" 2>/dev/null || stat -c '%U' "$path")
   [ "$owner" = "$(id -un)" ] || { printf 'Refused non-owned path: %s\n' "$path"; continue; }
-  mtime=$(stat -f '%m' "$path" 2>/dev/null || stat -c '%Y' "$path")
   count=$((count + 1))
   if [ "$count" -gt "$keep" ] && [ "$mtime" -lt "$cutoff" ]; then
     if [ "$yes" -eq 1 ]; then rm -rf -- "$path"; printf 'Removed stale local tree: %s\n' "$path"; else printf 'Would remove stale local tree: %s\n' "$path"; fi

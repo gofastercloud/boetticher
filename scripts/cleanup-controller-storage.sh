@@ -29,17 +29,35 @@ while [ "$#" -gt 0 ]; do
 done
 case "$keep:$age" in *[!0-9:]*|:*) die 'keep and age must be non-negative integers' ;; esac
 [ -d "$root/releases" ] || { printf '%s\n' 'No controller release directory; nothing to do.'; exit 0; }
+[ -d "$root" ] || die 'install root is not a directory'
+case "$root" in /*) ;; *) root=$(CDPATH='' cd -- "$root" && pwd) ;; esac
 current=$(readlink "$root/current" 2>/dev/null || true)
 rollback=$(readlink "$root/rollback" 2>/dev/null || true)
-case "$current:$rollback" in *..*) die 'active symlink escapes the install root' ;; esac
+normalize_link() {
+  link_name=$1
+  link_target=$2
+  [ -n "$link_target" ] || die "$link_name symlink is missing or unreadable"
+  case "$link_target" in
+    "$root"/releases/*) relative=${link_target#"$root/"} ;;
+    releases/*) relative=$link_target ;;
+    *) die "$link_name symlink points outside the release directory" ;;
+  esac
+  [ -d "$root/$relative" ] || die "$link_name symlink target is missing"
+  printf '%s\n' "$relative"
+}
+current=$(normalize_link current "$current")
+if [ -L "$root/rollback" ]; then
+  rollback=$(normalize_link rollback "$rollback")
+else
+  rollback=''
+fi
 cutoff=$(date -v-"${age}"d +%s 2>/dev/null || date -d "${age} days ago" +%s)
 index=0
-find "$root/releases" -mindepth 1 -maxdepth 1 -type d -name '[A-Za-z0-9._-]*' -print | while IFS= read -r release; do
+find "$root/releases" -mindepth 1 -maxdepth 1 -type d -name '[A-Za-z0-9._-]*' -exec sh -c 'for path do stat -f "%m %N" "$path" 2>/dev/null || stat -c "%Y %n" "$path"; done' sh {} + | sort -nr | while IFS=' ' read -r mtime release; do
   [ "$(stat -f '%Su' "$release" 2>/dev/null || stat -c '%U' "$release")" = root ] || continue
   target=${release#"$root/"}
   [ "$target" = "$current" ] && continue
   [ "$target" = "$rollback" ] && continue
-  mtime=$(stat -f '%m' "$release" 2>/dev/null || stat -c '%Y' "$release")
   index=$((index + 1))
   if [ "$index" -gt "$keep" ] && [ "$mtime" -lt "$cutoff" ]; then
     if [ "$yes" -eq 1 ]; then rm -rf -- "$release"; printf 'Removed stale release: %s\n' "$release"; else printf 'Would remove stale release: %s\n' "$release"; fi
