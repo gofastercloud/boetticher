@@ -518,7 +518,7 @@ func policyAgreementCommand(peerPort int) string {
 	return "set -eu; receipt=" + shellQuote(GuestPolicyReceipt) + "; test -f \"$receipt\"; test ! -L \"$receipt\"; test \"$(stat -c %a \"$receipt\")\" = 600; actual_script=$(sha256sum " + shellQuote(GuestPolicyPath) + " | awk '{print $1}'); test \"$actual_script\" = " + shellQuote(expected) + "; recorded_script=$(awk -F= '$1 == \"script_sha256\" { print $2 }' \"$receipt\"); test \"$recorded_script\" = \"$actual_script\"; rules=$(mktemp /run/boetticher/arrstack/status-rules.XXXXXX); trap 'rm -f \"$rules\"' EXIT HUP INT TERM; nft --stateless list table inet boetticher_arrstack >\"$rules\"; iptables -S DOCKER-USER >>\"$rules\"; iptables -S FORWARD >>\"$rules\"; grep -Fx -- '-A FORWARD -j DOCKER-USER' \"$rules\" >/dev/null; actual_rules=$(sha256sum \"$rules\" | awk '{print $1}'); recorded_rules=$(awk -F= '$1 == \"rules_sha256\" { print $2 }' \"$receipt\"); test -n \"$recorded_rules\"; test \"$recorded_rules\" = \"$actual_rules\""
 }
 
-func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) error {
+func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) (err error) {
 	info, err := os.Lstat(AdapterPath)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
 		return errors.New("arrstack adapter is not a private regular file")
@@ -539,10 +539,22 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) e
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("rewind arrstack adapter: %w", err)
 	}
-	if err := guestExecJSON(ctx, host, "rm -f /run/boetticher-arrstack; install -d -m 0700 /run"); err != nil {
+	const transferDir = "/run/boetticher/arrstack-transfer"
+	const transferPath = transferDir + "/adapter"
+	if err := guestExecJSON(ctx, host, "test -d /run/boetticher; test ! -L /run/boetticher; install -d -m 0700 "+transferDir+"; rm -f "+transferPath); err != nil {
 		return fmt.Errorf("prepare guest adapter transfer: %w", err)
 	}
-	const chunkSize = 64 << 10
+	defer func() {
+		cleanupErr := guestExecJSON(ctx, host, "rm -f "+transferPath+"; rmdir "+transferDir)
+		if cleanupErr != nil {
+			if err == nil {
+				err = fmt.Errorf("cleanup guest adapter transfer: %w", cleanupErr)
+			} else {
+				err = fmt.Errorf("%w; cleanup guest adapter transfer: %v", err, cleanupErr)
+			}
+		}
+	}()
+	const chunkSize = 512 << 10
 	remaining := info.Size()
 	for remaining > 0 {
 		n := int64(chunkSize)
@@ -553,12 +565,12 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) e
 		if _, err := io.ReadFull(file, chunk); err != nil {
 			return fmt.Errorf("read arrstack adapter chunk: %w", err)
 		}
-		if _, err := guestExecWithStdinJSON(ctx, host, "cat >> /run/boetticher-arrstack", bytes.NewReader(chunk)); err != nil {
+		if _, err := guestExecWithStdinJSON(ctx, host, "cat >> "+transferPath, bytes.NewReader(chunk)); err != nil {
 			return fmt.Errorf("stream arrstack adapter through guest agent: %w", err)
 		}
 		remaining -= n
 	}
-	result, err := guestExecOutput(ctx, host, "sha256sum /run/boetticher-arrstack")
+	result, err := guestExecOutput(ctx, host, "sha256sum "+transferPath)
 	if err != nil {
 		return fmt.Errorf("verify guest adapter transfer: %w", err)
 	}
@@ -566,7 +578,7 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) e
 	if len(got) == 0 || got[0] != want {
 		return errors.New("arrstack adapter checksum changed during guest transfer")
 	}
-	if err := guestExecJSON(ctx, host, "install -m 0755 /run/boetticher-arrstack "+shellQuote(GuestAdapterPath)+"; rm -f /run/boetticher-arrstack"); err != nil {
+	if err := guestExecJSON(ctx, host, "install -m 0755 "+transferPath+" "+shellQuote(GuestAdapterPath)); err != nil {
 		return fmt.Errorf("install arrstack adapter in guest: %w", err)
 	}
 	return nil

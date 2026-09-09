@@ -194,6 +194,38 @@ func TestMediaPreparationUsesPathNeutralGuestAgentCheck(t *testing.T) {
 	}
 }
 
+func TestAdapterTransferDoesNotChangeRunPermissions(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Contains(text, "chmod 0700 /run") || strings.Contains(text, "install -d -m 0700 /run\"") {
+		t.Fatal("adapter transfer changes /run permissions")
+	}
+	for _, want := range []string{"/run/boetticher/arrstack-transfer", "rmdir \"+transferDir", "cleanup guest adapter transfer"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("adapter transfer missing bounded cleanup %q", want)
+		}
+	}
+}
+
+func TestAdapterTransferUsesMeasuredChunkBoundAndRetainsSizeChecksumGuards(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "const chunkSize = 512 << 10") {
+		t.Fatal("adapter transfer does not use the measured 512 KiB RPC chunk")
+	}
+	for _, want := range []string{"info.Size() > 256<<20", "sha256.New()", "adapter checksum changed during guest transfer"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("adapter transfer guard missing %q", want)
+		}
+	}
+}
+
 func TestMediaBlankCheckAcceptsOnlyBoundedZeroDevice(t *testing.T) {
 	bin := t.TempDir()
 	for name, body := range map[string]string{
