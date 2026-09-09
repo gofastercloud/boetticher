@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -209,32 +210,42 @@ func wipeTailnetAuthKey(key []byte) {
 }
 
 const tailnetBuilderPrepareScript = `set -eu
-p=$(mktemp /var/tmp/boetticher-tailnet-builder.XXXXXX)
+p=$(mktemp -d /var/tmp/boetticher-tailnet-builder.XXXXXX)
 case "$p" in
   /var/tmp/boetticher-tailnet-builder.*) ;;
   *) exit 1 ;;
 esac
+printf '%s\n' '{"version":1,"outer":true}' >"$p/.boetticher-build-owned"
+: >"$p/.boetticher-build.lock"
+chmod 600 "$p/.boetticher-build-owned" "$p/.boetticher-build.lock"
 printf '%s\n' "$p"`
 
-func buildTailnetImage(ctx context.Context, host firewallmodule.HostClient) error {
+func buildTailnetImage(ctx context.Context, host firewallmodule.HostClient) (retErr error) {
 	result, err := host.Run(ctx, tailnetBuilderPrepareScript)
 	if err != nil {
 		return fmt.Errorf("prepare Tailnet builder on Host: %w", err)
 	}
 	remote := strings.TrimSpace(string(result.Stdout))
-	if remote == "" || strings.ContainsAny(remote, "\r\n\x00") || !strings.HasPrefix(remote, "/var/tmp/boetticher-tailnet-builder.") {
+	if remote == "" || strings.ContainsAny(remote, "\r\n\x00") || filepath.Dir(remote) != "/var/tmp" || !strings.HasPrefix(filepath.Base(remote), "boetticher-tailnet-builder.") {
 		return errors.New("Host returned an unsafe Tailnet builder path")
 	}
+	remoteBuilder := remote + "/build-tailnet.sh"
+	remoteHelper := remote + "/build-temp.py"
 	cleanup := func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_, _ = host.Run(cleanupCtx, "case "+tailnetShellQuote(remote)+" in /var/tmp/boetticher-tailnet-builder.*) rm -f -- "+tailnetShellQuote(remote)+";; *) exit 1;; esac")
+		if _, cleanupErr := host.Run(cleanupCtx, "case "+tailnetShellQuote(remote)+" in /var/tmp/boetticher-tailnet-builder.*) exec 9>"+tailnetShellQuote(remote+"/.boetticher-build.lock")+"; flock -n 9; rm -rf -- "+tailnetShellQuote(remote)+";; *) exit 1;; esac"); cleanupErr != nil && retErr == nil {
+			retErr = fmt.Errorf("cleanup Tailnet Host build directory: %w", cleanupErr)
+		}
 	}
 	defer cleanup()
-	if err := host.Copy(ctx, tailnetBuilderPath, remote); err != nil {
+	if err := host.Copy(ctx, tailnetBuilderPath, remoteBuilder); err != nil {
 		return fmt.Errorf("copy Tailnet builder to Host: %w", err)
 	}
-	if _, err := host.Run(ctx, "sh "+tailnetShellQuote(remote)); err != nil {
+	if err := host.Copy(ctx, filepath.Join(filepath.Dir(tailnetBuilderPath), "build-temp.py"), remoteHelper); err != nil {
+		return fmt.Errorf("copy build temporary helper to Host: %w", err)
+	}
+	if _, err := host.Run(ctx, "set -eu; exec 9>"+tailnetShellQuote(remote+"/.boetticher-build.lock")+"; flock -n 9; chmod 700 "+tailnetShellQuote(remoteBuilder)+" "+tailnetShellQuote(remoteHelper)+"; sh "+tailnetShellQuote(remoteBuilder)); err != nil {
 		return fmt.Errorf("build Tailnet image: %w", err)
 	}
 	return nil
@@ -309,9 +320,10 @@ func runTailnetApply(a []string, in io.Reader, out, errOut io.Writer) error {
 			runtimeHealthy = report.State == tailnet.Healthy
 			enrollmentNeeded = report.NeedsAuth
 		} else {
-			// Runtime repair may leave the node needing enrollment; require the
-			// bootstrap key rather than silently attempting preference-only setup.
-			enrollmentNeeded = true
+			// Runtime assets are replaceable, but the established node identity is
+			// durable Tailscale state. Repair first and let the native post-repair
+			// status prove whether enrollment is actually still required.
+			enrollmentNeeded = false
 		}
 	}
 	intentChanged := sc.Config.Modules.Tailnet == nil || !sc.Config.Modules.Tailnet.Enabled || len(sc.Config.Modules.DHCP.Reservations) != len(n.Modules.DHCP.Reservations)

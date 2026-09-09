@@ -73,12 +73,23 @@ type MediaConfig struct {
 type ArrstackConfig = MediaConfig
 
 type ObservabilityConfig struct {
-	Enabled      *bool            `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	PublicDomain string           `yaml:"public_domain,omitempty" json:"public_domain,omitempty"`
-	Logging      LoggingConfig    `yaml:"logging,omitempty" json:"logging,omitempty"`
-	Monitoring   MonitoringConfig `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
-	StatusPage   StatusPageConfig `yaml:"statuspage,omitempty" json:"statuspage,omitempty"`
-	Alerts       AlertsConfig     `yaml:"alerts,omitempty" json:"alerts,omitempty"`
+	Enabled      *bool                           `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	PublicDomain string                          `yaml:"public_domain,omitempty" json:"public_domain,omitempty"`
+	Collection   ObservabilityCollectionBindings `yaml:"collection,omitempty" json:"collection,omitempty"`
+	Logging      LoggingConfig                   `yaml:"logging,omitempty" json:"logging,omitempty"`
+	Monitoring   MonitoringConfig                `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+	StatusPage   StatusPageConfig                `yaml:"statuspage,omitempty" json:"statuspage,omitempty"`
+	Alerts       AlertsConfig                    `yaml:"alerts,omitempty" json:"alerts,omitempty"`
+}
+
+// ObservabilityCollectionBindings is the persisted, fixed-role allowlist for
+// the shared observability runtime. Empty bindings are allowed before the
+// first approved apply; once populated all three canonical IPv4 addresses are
+// required and must be distinct.
+type ObservabilityCollectionBindings struct {
+	Controller  string `yaml:"controller,omitempty" json:"controller,omitempty"`
+	ProxmoxHost string `yaml:"proxmox_host,omitempty" json:"proxmox_host,omitempty"`
+	Runtime     string `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 }
 type AlertsConfig struct {
 	Pushover *PushoverConfig `yaml:"pushover,omitempty" json:"pushover,omitempty"`
@@ -142,9 +153,10 @@ type TailnetConfig struct {
 }
 
 type DNSConfig struct {
-	Enabled   *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Upstreams []DNSUpstream `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Records   []DNSRecord   `yaml:"records,omitempty" json:"records,omitempty"`
+	Enabled        *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Upstreams      []DNSUpstream `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Records        []DNSRecord   `yaml:"records,omitempty" json:"records,omitempty"`
+	Infrastructure []DNSRecord   `yaml:"infrastructure,omitempty" json:"infrastructure,omitempty"`
 }
 
 type DNSUpstream struct {
@@ -252,6 +264,7 @@ func (m Modules) Normalize() Modules {
 		}
 		copyDNS.Upstreams = append([]DNSUpstream(nil), result.DNS.Upstreams...)
 		copyDNS.Records = append([]DNSRecord(nil), result.DNS.Records...)
+		copyDNS.Infrastructure = append([]DNSRecord(nil), result.DNS.Infrastructure...)
 		if Enabled(copyDNS.Enabled) && len(copyDNS.Upstreams) == 0 {
 			copyDNS.Upstreams = DefaultDNSUpstreams()
 		}
@@ -316,6 +329,7 @@ func (m Modules) Clone() Modules {
 		}
 		copyDNS.Upstreams = append([]DNSUpstream(nil), m.DNS.Upstreams...)
 		copyDNS.Records = append([]DNSRecord(nil), m.DNS.Records...)
+		copyDNS.Infrastructure = append([]DNSRecord(nil), m.DNS.Infrastructure...)
 		result.DNS = &copyDNS
 	}
 	if m.DHCP != nil {
@@ -461,6 +475,23 @@ func Validate(modules Modules, site model.Site) error {
 }
 
 func validateObservability(modules Modules) error {
+	if modules.Observability != nil {
+		bindings := modules.Observability.Collection
+		if bindings.Controller != "" || bindings.ProxmoxHost != "" || bindings.Runtime != "" {
+			addresses := []string{bindings.Controller, bindings.ProxmoxHost, bindings.Runtime}
+			seen := make(map[string]struct{}, len(addresses))
+			for _, address := range addresses {
+				parsed, err := netip.ParseAddr(address)
+				if err != nil || !parsed.Is4() || parsed.String() != address {
+					return errors.New("modules.observability.collection bindings must be canonical IPv4 addresses")
+				}
+				if _, ok := seen[address]; ok {
+					return errors.New("modules.observability.collection bindings must use unique IPv4 addresses")
+				}
+				seen[address] = struct{}{}
+			}
+		}
+	}
 	if modules.Observability != nil && modules.Observability.PublicDomain != "" && !ValidPublicDomain(modules.Observability.PublicDomain) {
 		return errors.New("modules.observability.public_domain must be a valid public DNS domain")
 	}

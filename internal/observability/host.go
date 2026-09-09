@@ -126,10 +126,15 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 			return errors.New("observability payload transport cannot stage the base helper")
 		}
 		helperPath := payloadRoot + "/controller/proxmox/libexec/boetticher-build-observability-base"
+		tempHelperPath := payloadRoot + "/controller/proxmox/libexec/build-temp.py"
 		definitionPath := payloadRoot + "/controller/observability/base/debian.yaml"
 		helperData, err := os.ReadFile(helperPath)
 		if err != nil {
 			return fmt.Errorf("read observability base helper: %w", err)
+		}
+		tempHelperData, err := os.ReadFile(tempHelperPath)
+		if err != nil {
+			return fmt.Errorf("read build temporary helper: %w", err)
 		}
 		definitionData, err := os.ReadFile(definitionPath)
 		if err != nil {
@@ -138,6 +143,7 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 		inputDigest := baseImageInputDigest(helperData, definitionData)
 		hostStageRoot := fmt.Sprintf("/tmp/boetticher-observability-%d-base-stage", b.VMID)
 		hostBaseHelper := hostStageRoot + "/build-base"
+		hostTempHelper := hostStageRoot + "/build-temp.py"
 		hostBaseDefinition := hostStageRoot + "/debian.yaml"
 		if err := validateHostStageRoot(hostStageRoot); err != nil {
 			return err
@@ -153,6 +159,12 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 		}
 		if err := stageHostBytes(ctx, stager, hostBaseHelper, helperData); err != nil {
 			return fmt.Errorf("stage observability base helper: %w", err)
+		}
+		if err := stageHostBytes(ctx, stager, hostTempHelper, tempHelperData); err != nil {
+			return fmt.Errorf("stage build temporary helper: %w", err)
+		}
+		if _, err := c.Transport.Run(ctx, fmt.Sprintf("chmod 0700 %s", shellQuoteValue(hostTempHelper))); err != nil {
+			return fmt.Errorf("make build temporary helper executable: %w", err)
 		}
 		if _, err := c.Transport.Run(ctx, fmt.Sprintf("chmod 0700 %s", shellQuoteValue(hostBaseHelper))); err != nil {
 			return fmt.Errorf("make observability base helper executable: %w", err)
@@ -185,9 +197,13 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 	retentionEnvironment := fmt.Sprintf(" BOETTICHER_OBSERVABILITY_METRICS_RETENTION_DAYS=%d BOETTICHER_OBSERVABILITY_LOGS_RETENTION_DAYS=%d", collection.MetricsRetentionDays, collection.LogsRetentionDays)
 	pushoverEnvironment := PushoverEnvironment(modules)
 	caddyEnvironment := CaddyEnvironment(modules, collection)
+	bifrostProbeEnvironment := " BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=false"
+	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+		bifrostProbeEnvironment = " BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=true"
+	}
 	providers := []string{"victorialogs", "grafana", "gatus"}
 	for _, provider := range providers {
-		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, pushoverEnvironment, caddyEnvironment, shellQuoteValue(provider))
+		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, pushoverEnvironment, caddyEnvironment, bifrostProbeEnvironment, shellQuoteValue(provider))
 		installCommand := fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(installScript))
 		if _, err := c.Transport.Run(ctx, installCommand); err != nil {
 			return fmt.Errorf("install %s provider: %w", provider, err)
@@ -304,6 +320,9 @@ func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadR
 		}
 		if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct push %d %s %s", b.VMID, shellQuoteValue(binary.host), shellQuoteValue(binary.guest))); err != nil {
 			return err
+		}
+		if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- chmod 0755 %s", b.VMID, shellQuoteValue(binary.guest))); err != nil {
+			return fmt.Errorf("set executable mode on observability binary: %w", err)
 		}
 	}
 	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
@@ -718,7 +737,7 @@ func BifrostConfig(modules clientservices.Modules) (bifrost.Config, error) {
 }
 
 func RequiredSecretNames(modules clientservices.Modules) []string {
-	names := []string{"grafana-admin-password", "statuspage-password"}
+	names := []string{"grafana-admin-password"}
 	if modules.AIOps != nil && modules.AIOps.Holmes != nil {
 		names = append(names, modules.AIOps.Holmes.Bifrost.ClientCredential)
 		for _, upstream := range modules.AIOps.Holmes.Bifrost.Upstreams {

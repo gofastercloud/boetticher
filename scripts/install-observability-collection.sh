@@ -138,6 +138,13 @@ basic_auth_users:
   boetticher: $read_token_hash
 EOF
 install -m 0640 "$work/web.yml" "$web_config.new"
+if [ "$root" = / ]; then
+  chown "root:$service_user" "$web_config.new"
+else
+  service_gid=$(awk -F: -v account="$service_user" '$1 == account { print $4; exit }' "$passwd_file")
+  [ -n "$service_gid" ] || die 'staged exporter service group is missing'
+  chown "0:$service_gid" "$web_config.new"
+fi
 mv -f "$web_config.new" "$web_config"
 cat > "$work/unit" <<EOF
 # Boetticher observability collection
@@ -171,7 +178,9 @@ cat > "$work/journal-dropin" <<EOF
 # Boetticher observability collection
 [Service]
 ExecStart=
-ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --trust=/etc/ssl/certs/ca-certificates.crt --save-state=/var/lib/systemd/journal-upload/state
+ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --save-state=/var/lib/systemd/journal-upload/state
+Restart=on-failure
+RestartSec=10s
 EOF
 install -m 0644 "$work/journal-dropin" "$journal_dropin.new"
 mv -f "$journal_dropin.new" "$journal_dropin"
@@ -179,7 +188,7 @@ printf '%s\n' 'owned' > "$marker.new"
 mv -f "$marker.new" "$marker"
 
 if [ "$root" = / ]; then
-  chown "$service_user:$service_user" "$binary_path" "$web_config"
+  chown "$service_user:$service_user" "$binary_path"
   systemctl daemon-reload
   systemctl enable boetticher-node-exporter.service
   systemctl restart boetticher-node-exporter.service

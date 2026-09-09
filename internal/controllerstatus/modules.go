@@ -110,6 +110,9 @@ func (c ModuleChecker) checkVPN(ctx context.Context) CheckResult {
 		case line == "VPN: CONNECTED" && err == nil:
 			return CheckResult{Configured: true, Healthy: true, State: Healthy, Detail: "VPN connection is available; enforcement is reported separately"}
 		case strings.HasPrefix(line, "VPN: "):
+			if line == "VPN: CHECKING" {
+				return CheckResult{Configured: true, State: Attention, Detail: "VPN configuration has a pending additive intent"}
+			}
 			return CheckResult{Configured: true, State: Failed, Detail: "VPN status is not healthy"}
 		}
 	}
@@ -183,6 +186,9 @@ func (c ModuleChecker) checkCapability(ctx context.Context, args ...string) Chec
 	}
 	if strings.Contains(text, ": PASS") {
 		return CheckResult{Configured: true, Healthy: true, State: Healthy, Detail: label + " capability is healthy"}
+	}
+	if strings.Contains(text, ": CHECKING") {
+		return CheckResult{Configured: true, State: Attention, Detail: label + " has pending additive intent"}
 	}
 	return CheckResult{Configured: true, State: Failed, Detail: label + " capability is not healthy"}
 }

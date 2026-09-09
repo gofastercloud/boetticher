@@ -26,8 +26,7 @@ func tailnetFirewallSections(home string) []Section {
 		rule("dns", map[string]string{"dest_ip": tailnet.Gateway, "proto": "tcp udp", "dest_port": "53"}),
 		rule("ntp", map[string]string{"dest_ip": tailnet.Gateway, "proto": "udp", "dest_port": "123"}),
 		rule("trusted", map[string]string{"dest": "trusted", "proto": "all"}),
-		rule("mgmt_ssh", map[string]string{"dest": "mgmt", "proto": "tcp", "dest_port": "22"}),
-		rule("observability_https", map[string]string{"dest": "infra", "dest_ip": "10.10.10.20/32", "proto": "tcp", "dest_port": "443"}),
+		rule("proxmox_ssh", map[string]string{"dest": "mgmt", "dest_ip": model.ProxmoxManagementAddress + "/32", "proto": "tcp", "dest_port": "22"}),
 	)
 	for _, d := range model.TrustedRoutedDestinations() {
 		result = append(result, rule(strings.ToLower(d.Zone), map[string]string{"dest": strings.ToLower(d.Zone), "proto": "all"}))
@@ -48,6 +47,14 @@ func FirewallScope(current map[string]openwrt.UCISection, desired []Section) map
 	reference := model.NewSite("scope", "controller-local", model.GatewayModeManaged)
 	for _, s := range serviceFirewallSections(reference, true, true, true) {
 		owned[s.Name] = true
+	}
+	for _, name := range []string{
+		observabilityControllerExporterRule, observabilityHostExporterRule,
+		observabilityControllerIngressRule, observabilityHostIngressRule,
+		observabilityRuntimeIngressRule, observabilityTrustedIngressRule,
+		observabilityTailnetIngressRule,
+	} {
+		owned[name] = true
 	}
 	result := map[string]openwrt.UCISection{}
 	for name, s := range current {

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
@@ -32,7 +31,7 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 	for _, section := range state.Firewall {
 		joined += section.Name + " " + section.Options["src"] + " " + section.Options["dest"] + "\n"
 	}
-	for _, want := range []string{"boetticher_home_wan", "boetticher_forward_trusted_servers", "boetticher_forward_trusted_home_wan", "boetticher_forward_sandbox_home_wan", "boetticher_deny_sandbox_home_management", "boetticher_allow_home_api", "boetticher_allow_trusted_mgmt_ssh"} {
+	for _, want := range []string{"boetticher_home_wan", "boetticher_forward_trusted_servers", "boetticher_forward_trusted_home_wan", "boetticher_forward_sandbox_home_wan", "boetticher_deny_sandbox_home_management", "boetticher_allow_home_api"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("policy is missing %q: %s", want, joined)
 		}
@@ -63,36 +62,21 @@ func TestDesiredFromReferenceSiteBuildsSixGatewayInterfacesAndPolicy(t *testing.
 	}
 }
 
-func TestObservabilityFirewallRulesUseExactInternalSourcesAndReservation(t *testing.T) {
-	enabled := true
-	services := clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled}, DHCP: &clientservices.DHCPConfig{Reservations: []clientservices.Reservation{{Name: "lab-companion", Zone: "SERVERS", MAC: "dc:a6:32:e9:dd:82", Address: "10.10.20.10"}}}}
-	state, err := DesiredFromSiteWithServices(model.NewSite("installation", "age1example", model.GatewayModeManaged), services)
+func TestTrustedProxmoxSSHRuleIsExact(t *testing.T) {
+	state, err := DesiredFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := map[string]Section{}
 	for _, section := range state.Firewall {
-		seen[section.Name] = section
-	}
-	for _, test := range []struct {
-		name, source, destination, sourceIP, destinationIP, port string
-	}{
-		{"boetticher_allow_controller_host_ssh", "servers", "mgmt", "10.10.20.10/32", "10.10.99.5/32", "22"},
-		{"boetticher_allow_trusted_observability_https", "trusted", "infra", "", "10.10.10.20/32", "443"},
-		{"boetticher_observability_metrics_proxmox", "infra", "mgmt", "10.10.10.20/32", "10.10.99.5/32", "9100"},
-		{"boetticher_observability_metrics_controller", "infra", "servers", "10.10.10.20/32", "10.10.20.10/32", "9100"},
-		{"boetticher_observability_logs_proxmox", "mgmt", "infra", "10.10.99.5/32", "10.10.10.20/32", "443"},
-		{"boetticher_observability_logs_controller", "servers", "infra", "10.10.20.10/32", "10.10.10.20/32", "443"},
-	} {
-		section, ok := seen[test.name]
-		if !ok || section.Options["src"] != test.source || section.Options["dest"] != test.destination || section.Options["src_ip"] != test.sourceIP || section.Options["dest_ip"] != test.destinationIP || section.Options["dest_port"] != test.port {
-			t.Fatalf("observability rule %s = %#v", test.name, section)
+		if section.Name != "boetticher_allow_trusted_proxmox_ssh" {
+			continue
 		}
+		if section.Options["src"] != "trusted" || section.Options["dest"] != "mgmt" || section.Options["dest_ip"] != model.ProxmoxManagementAddress+"/32" || section.Options["proto"] != "tcp" || section.Options["dest_port"] != "22" {
+			t.Fatalf("TRUSTED Proxmox SSH rule is broader than required: %#v", section.Options)
+		}
+		return
 	}
-	services.DHCP.Reservations[0].Address = "10.10.20.11"
-	if _, err := DesiredFromSiteWithServices(model.NewSite("installation", "age1example", model.GatewayModeManaged), services); err != nil {
-		t.Fatal("reservation address should remain intent-driven: ", err)
-	}
+	t.Fatal("TRUSTED Proxmox SSH rule missing")
 }
 
 func TestDesiredFromSiteRejectsNetworkConflicts(t *testing.T) {

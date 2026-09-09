@@ -156,7 +156,7 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 	if err != nil {
 		return err
 	}
-	configCommand := fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue("install -d -m 0750 /etc/boetticher/observability; install -D -m 0640 /dev/stdin "+CollectionConfigPath))
+	configCommand := fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue("set -eu; install -d -m 0755 /etc/boetticher/observability; tmp=$(mktemp /etc/boetticher/observability/.collection.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; cat >\"$tmp\"; chmod 0640 \"$tmp\"; chown root:root \"$tmp\"; mv -f \"$tmp\" "+CollectionConfigPath))
 	if _, err := host.RunWithStdin(ctx, configCommand, bytes.NewReader([]byte(configText))); err != nil {
 		return fmt.Errorf("install collection scrape configuration: %w", err)
 	}
@@ -220,7 +220,8 @@ func collectionReadCredential() ([]byte, string, error) {
 }
 
 func stageTarget(ctx context.Context, runner LocalRunner, prefix, targetPath string, data []byte, mode int) error {
-	command := fmt.Sprintf("install -D -m %04o /dev/stdin %s", mode, shellQuoteValue(targetPath))
+	tmpPath := shellQuoteValue(targetPath + ".tmp.XXXXXX")
+	command := fmt.Sprintf("set -eu; install -d -m 0750 %s; tmp=$(mktemp %s); trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; cat >\"$tmp\"; chmod %04o \"$tmp\"; mv -f \"$tmp\" %s", shellQuoteValue(pathpkg.Dir(targetPath)), tmpPath, mode, shellQuoteValue(targetPath))
 	if prefix == "" {
 		// The Controller may be macOS, whose BSD install has no -D flag.
 		command = fmt.Sprintf("install -d -m 0750 %s; cat > %s; chmod %04o %s", shellQuoteValue(pathpkg.Dir(targetPath)), shellQuoteValue(targetPath), mode, shellQuoteValue(targetPath))

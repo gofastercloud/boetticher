@@ -885,7 +885,7 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	for _, required := range []string{
 		"module=${name#boetticher-}",
 		"[ \"$module\" = dns-blocky ] && module=dns",
-		"if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact",
+		"if ! GOCACHE=${GOCACHE:-$(go env GOCACHE)} GOMODCACHE=${GOMODCACHE:-$(go env GOMODCACHE)} go run ./cmd/qualify-artifact",
 	} {
 		if !strings.Contains(scanText, required) {
 			t.Fatalf("qualification does not derive or fail-closed validate artifact module identity: missing %q", required)

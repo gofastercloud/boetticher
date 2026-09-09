@@ -49,8 +49,9 @@ const (
 )
 
 type ControllerIdentity struct {
-	Address string
-	MAC     string
+	Interface string
+	Address   string
+	MAC       string
 }
 
 func CollectionConfigForLab(config controllerhost.LabConfig, controllerAddress string) (CollectionConfig, error) {
@@ -60,11 +61,24 @@ func CollectionConfigForLab(config controllerhost.LabConfig, controllerAddress s
 	if _, err := collectionIPv4(config.Proxmox.Address); err != nil {
 		return CollectionConfig{}, errors.New("Proxmox collection address is invalid")
 	}
+	addresses := clientservices.ObservabilityCollectionBindings{
+		Controller:  controllerAddress,
+		ProxmoxHost: model.ProxmoxManagementAddress,
+		Runtime:     binding.Address,
+	}
+	if config.Modules.Observability != nil {
+		persisted := config.Modules.Observability.Collection
+		if persisted.Controller != "" || persisted.ProxmoxHost != "" || persisted.Runtime != "" {
+			if persisted != addresses {
+				return CollectionConfig{}, errors.New("observability collection bindings do not match verified lab identities")
+			}
+		}
+	}
 	result := CollectionConfig{
 		Targets: []Target{
-			{Name: "controller", Hostname: "controller", Address: controllerAddress, Kind: TargetController, Arch: "arm64", Port: NodeExporterPort},
-			{Name: "proxmox-host", Hostname: "proxmox-host", Address: model.ProxmoxManagementAddress, Kind: TargetHost, Arch: "amd64", Port: NodeExporterPort},
-			{Name: "lab-monitor-01", Hostname: "lab-monitor-01", Address: "10.10.10.20", Kind: TargetRuntime, VMID: model.MonitorVMID, Arch: "amd64", Port: NodeExporterPort},
+			{Name: "controller", Hostname: "controller", Address: addresses.Controller, Kind: TargetController, Arch: "arm64", Port: NodeExporterPort},
+			{Name: "proxmox-host", Hostname: "proxmox-host", Address: addresses.ProxmoxHost, Kind: TargetHost, Arch: "amd64", Port: NodeExporterPort},
+			{Name: "lab-monitor-01", Hostname: "lab-monitor-01", Address: addresses.Runtime, Kind: TargetRuntime, VMID: model.MonitorVMID, Arch: "amd64", Port: NodeExporterPort},
 		},
 		MetricsRetentionDays: collectionRetention(config.Modules, true),
 		LogsRetentionDays:    collectionRetention(config.Modules, false),
@@ -145,7 +159,7 @@ func (c CollectionConfig) Validate() error {
 		if err != nil {
 			return fmt.Errorf("collection target %s has invalid IPv4 address", target.Name)
 		}
-		if target.Kind == TargetRuntime && (target.VMID != model.MonitorVMID || target.Address != "10.10.10.20") {
+		if target.Kind == TargetRuntime && (target.VMID != model.MonitorVMID || target.Address != binding.Address) {
 			return fmt.Errorf("collection runtime target has an unexpected VMID or address")
 		}
 		if target.Kind != TargetRuntime && target.VMID != 0 {
@@ -215,48 +229,63 @@ func ObservedControllerIP() (string, error) {
 // to the operator's existing DHCP reservation. It never infers identity from
 // SSH peer or HOME-side addresses.
 func ControllerCollectionAddress(config controllerhost.LabConfig) (string, error) {
-	identity, err := LocalControllerIdentityLookup()
+	identities, err := LocalControllerIdentityLookup()
 	if err != nil {
 		return "", err
-	}
-	if _, err := collectionIPv4(identity.Address); err != nil {
-		return "", errors.New("Controller collection identity has an invalid IPv4 address")
-	}
-	mac, err := net.ParseMAC(identity.MAC)
-	if err != nil || len(mac) != 6 {
-		return "", errors.New("Controller collection identity has an invalid interface MAC")
 	}
 	if config.Modules.DHCP == nil {
 		return "", errors.New("Controller collection identity has no DHCP reservation intent")
 	}
-	for _, reservation := range config.Modules.DHCP.Reservations {
-		reservationMAC, macErr := net.ParseMAC(reservation.MAC)
-		if macErr != nil || len(reservationMAC) != 6 {
+	matches := make([]string, 0)
+	for _, identity := range identities {
+		if _, parseErr := collectionIPv4(identity.Address); parseErr != nil {
 			continue
 		}
-		if !strings.EqualFold(reservationMAC.String(), mac.String()) {
+		mac, parseErr := net.ParseMAC(identity.MAC)
+		if parseErr != nil || len(mac) != 6 {
 			continue
 		}
-		if reservation.Zone != "SERVERS" || reservation.Address != identity.Address {
-			return "", errors.New("Controller interface does not match its SERVERS DHCP reservation")
+		for _, reservation := range config.Modules.DHCP.Reservations {
+			if reservation.Zone != "SERVERS" {
+				continue
+			}
+			reservationMAC, macErr := net.ParseMAC(reservation.MAC)
+			if macErr != nil || len(reservationMAC) != 6 || !strings.EqualFold(reservationMAC.String(), mac.String()) {
+				continue
+			}
+			if reservation.Address != identity.Address {
+				continue
+			}
+			matches = append(matches, identity.Interface+"\x00"+identity.Address)
 		}
-		return identity.Address, nil
+	}
+	if len(matches) == 1 {
+		return strings.SplitN(matches[0], "\x00", 2)[1], nil
+	}
+	if len(matches) > 1 {
+		return "", errors.New("multiple Controller interfaces match SERVERS DHCP reservations")
 	}
 	return "", errors.New("Controller interface MAC has no matching SERVERS DHCP reservation")
 }
 
 var LocalControllerIdentityLookup = defaultLocalControllerIdentityLookup
 
-func defaultLocalControllerIdentityLookup() (ControllerIdentity, error) {
-	result, err := (BoundedLocalRunner{}).Run(context.Background(), "set -eu; route=$(ip -4 route get 1.1.1.1); dev=$(printf '%s\\n' \"$route\" | awk '{ for (i=1; i<=NF; i++) if ($i == \"dev\") { print $(i+1); exit } }'); address=$(printf '%s\\n' \"$route\" | awk '{ for (i=1; i<=NF; i++) if ($i == \"src\") { print $(i+1); exit } }'); case \"$dev\" in ''|*[!A-Za-z0-9_.-]*) exit 1 ;; esac; mac=$(cat \"/sys/class/net/$dev/address\"); printf '%s %s\\n' \"$address\" \"$mac\"")
+func defaultLocalControllerIdentityLookup() ([]ControllerIdentity, error) {
+	result, err := (BoundedLocalRunner{}).Run(context.Background(), "set -eu; ip -o -4 addr show up | awk '$3 == \"inet\" { split($4, a, \"/\"); sub(/@.*/, \"\", $2); print $2, a[1] }' | while read -r dev address; do case \"$dev\" in ''|*[!A-Za-z0-9_.-]*) continue ;; esac; mac=$(cat \"/sys/class/net/$dev/address\"); printf '%s %s %s\\n' \"$dev\" \"$address\" \"$mac\"; done")
 	if err != nil {
-		return ControllerIdentity{}, fmt.Errorf("observe Controller interface identity: %w", err)
+		return nil, fmt.Errorf("observe Controller interfaces: %w", err)
 	}
-	fields := strings.Fields(string(result.Stdout))
-	if len(fields) != 2 {
-		return ControllerIdentity{}, errors.New("observe Controller interface identity returned no address and MAC")
+	identities := make([]ControllerIdentity, 0)
+	for _, line := range strings.Split(strings.TrimSpace(string(result.Stdout)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 {
+			identities = append(identities, ControllerIdentity{Interface: fields[0], Address: fields[1], MAC: fields[2]})
+		}
 	}
-	return ControllerIdentity{Address: fields[0], MAC: fields[1]}, nil
+	if len(identities) == 0 {
+		return nil, errors.New("observe Controller interfaces returned no IPv4 identities")
+	}
+	return identities, nil
 }
 
 func defaultLocalRouteLookup() (string, error) {

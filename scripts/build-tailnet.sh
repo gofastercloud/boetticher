@@ -1,6 +1,17 @@
 #!/bin/sh
 # Fixed Host-native Tailnet template builder; no private site or credentials.
 set -eu
+
+if [ "${BOETTICHER_BUILD_TEMP_ACTIVE:-0}" != 1 ] || [ ! -f "${BOETTICHER_BUILD_TEMP_DIR:-}/.boetticher-build-token" ] || [ ! -f "${BOETTICHER_BUILD_TEMP_LOCK:-}" ] || ! grep -F -x -q -- "${BOETTICHER_BUILD_TEMP_TOKEN:-}" "${BOETTICHER_BUILD_TEMP_DIR:-}/.boetticher-build-token"; then
+ keep_flag=
+ if [ "${1:-}" = --keep-build-files ]; then
+  keep_flag=--keep-build-files
+  shift
+ fi
+ script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+ exec python3 "$script_dir/build-temp.py" run "${BOETTICHER_BUILD_TEMP_ROOT:-${TMPDIR:-/var/tmp}/boetticher-builds}" $keep_flag -- "$0" "$@"
+fi
+
 [ "$(id -u)" = 0 ] || { echo "Tailnet image construction requires the enrolled Host root" >&2; exit 1; }
 [ "$(uname -m)" = x86_64 ] || { echo "Tailnet image construction requires x86_64" >&2; exit 1; }
 cache=/var/lib/boetticher/tailnet-image
@@ -23,11 +34,8 @@ for tool in mmdebstrap zstd curl; do
   break
  fi
 done
-work=$(mktemp -d /var/tmp/boetticher-tailnet-build.XXXXXX)
-cleanup() {
- case "$work" in /var/tmp/boetticher-tailnet-build.*) rm -rf -- "$work";; *) exit 1;; esac
-}
-trap cleanup EXIT HUP INT TERM
+work="$BOETTICHER_BUILD_TEMP_DIR/tailnet-image"
+mkdir -m 0700 "$work"
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 180 \
  "https://pkgs.tailscale.com/stable/debian/pool/tailscale_${version}_amd64.deb" -o "$work/tailscale.deb"
 printf '%s  %s\n' "$digest" "$work/tailscale.deb" | sha256sum -c -

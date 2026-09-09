@@ -7,6 +7,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
+	"github.com/gofastercloud/boetticher/internal/tailnet"
 )
 
 func TestObservabilityDNSSectionsUseOwnedPublicNamesAndMonitorAddress(t *testing.T) {
@@ -86,6 +87,82 @@ func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 	}
 }
 
+func TestObservabilityFirewallProjectionUsesPersistedRoleBindings(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	enabled := true
+	modules := clientservices.Modules{Observability: &clientservices.ObservabilityConfig{
+		Enabled:    &enabled,
+		Collection: clientservices.ObservabilityCollectionBindings{Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20"},
+	}}
+	state, err := ServiceStateFromModules(site, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	find := func(name string) Section {
+		for _, section := range state.Firewall {
+			if section.Name == name {
+				return section
+			}
+		}
+		t.Fatalf("missing firewall section %s", name)
+		return Section{}
+	}
+	rule := find(observabilityControllerExporterRule)
+	if rule.Options["src"] != "infra" || rule.Options["src_ip"] != "10.10.10.20/32" || rule.Options["dest"] != "servers" || rule.Options["dest_ip"] != "10.10.20.10/32" || rule.Options["dest_port"] != "9100" {
+		t.Fatalf("controller exporter rule is not exact: %#v", rule.Options)
+	}
+	trusted := find(observabilityTrustedIngressRule)
+	if trusted.Options["src"] != "trusted" || trusted.Options["src_ip"] != "10.10.30.0/24" || trusted.Options["dest_ip"] != "10.10.10.20/32" || trusted.Options["dest_port"] != "443" {
+		t.Fatalf("trusted observability rule is not exact: %#v", trusted.Options)
+	}
+}
+
+func TestObservabilityFirewallProjectionTailnetRequiresExactReservation(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	enabled := true
+	modules := clientservices.Modules{Tailnet: &clientservices.TailnetConfig{Enabled: true}, Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, Collection: clientservices.ObservabilityCollectionBindings{Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20"}}, DNS: &clientservices.DNSConfig{Enabled: &enabled}, DHCP: &clientservices.DHCPConfig{Enabled: &enabled, Reservations: []clientservices.Reservation{{Name: tailnet.GuestName, Zone: "TRANSIT", MAC: "02:00:00:00:05:11", Address: tailnet.GuestAddress}}}}
+	state, err := ServiceStateFromModules(site, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, section := range state.Firewall {
+		if section.Name == observabilityTailnetIngressRule {
+			t.Fatal("spoofed Tailnet MAC produced observability rule")
+		}
+	}
+	modules.DHCP.Reservations[0].MAC = tailnet.GuestMAC
+	state, err = ServiceStateFromModules(site, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, section := range state.Firewall {
+		if section.Name == observabilityTailnetIngressRule {
+			found = true
+			if section.Options["src_mac"] != tailnet.GuestMAC || section.Options["dest_ip"] != "10.10.10.20/32" || section.Options["dest_port"] != "443" {
+				t.Fatalf("Tailnet observability rule is not exact: %#v", section.Options)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("exact Tailnet reservation did not produce observability rule")
+	}
+}
+
+func TestObservabilityFirewallProjectionDisabledAndCleanupScoped(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	disabled := false
+	state, err := ServiceStateFromModules(site, clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &disabled}})
+	if err != nil || len(state.Firewall) != 0 {
+		t.Fatalf("disabled observability projected firewall rules: %#v %v", state.Firewall, err)
+	}
+	name := observabilityRuntimeIngressRule
+	current := map[string]openwrt.UCISection{name: {Type: "rule", Options: map[string]string{"name": "old"}}}
+	if _, ok := FirewallScope(current, nil)[name]; !ok {
+		t.Fatal("observability rule was not retained for exact cleanup")
+	}
+}
+
 func TestServiceStateKeepsUpstreamTimeWhenClientDHCPIsDisabled(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	disabled := false
@@ -141,6 +218,89 @@ func TestNativeHostSectionNamesAcceptDNSHyphensWithoutCollisions(t *testing.T) {
 	right := nativeHostSectionName("client_hone")
 	if strings.Contains(left, "-") || left == right {
 		t.Fatalf("host identities were not safely encoded: %q and %q", left, right)
+	}
+}
+
+func TestInfrastructureDNSHasOnePTROwnerPerAddressAndStableAliases(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	site.Components[0].DNSAliases = []string{"pve"}
+	sections, err := bindingDNSSections(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostrecords, cnames := 0, 0
+	for _, section := range sections {
+		switch section.Type {
+		case "hostrecord":
+			hostrecords++
+		case "cname":
+			cnames++
+		}
+	}
+	if hostrecords != len(site.Components)+len(site.Network.Zones)+1 || cnames != 1 {
+		t.Fatalf("unexpected infrastructure DNS projection: hostrecords=%d cnames=%d", hostrecords, cnames)
+	}
+}
+
+func TestInfrastructureDNSRejectsNameCollision(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	site.Components = append(site.Components, model.Component{Hostname: "servers-gateway", Address: "10.10.99.8"})
+	if _, err := InfrastructureDNSRecords(site); err == nil {
+		t.Fatal("conflicting infrastructure DNS name was accepted")
+	}
+}
+
+func TestServiceStateRejectsUserAThatWouldCreateSecondPTR(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	enabled := true
+	state, err := InfrastructureDNSRecords(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted := make([]clientservices.DNSRecord, 0, len(state))
+	for _, record := range state {
+		persisted = append(persisted, clientservices.DNSRecord{Name: record.Name, Type: record.Type, Value: record.Address})
+	}
+	_, err = ServiceStateFromModules(site, clientservices.Modules{DNS: &clientservices.DNSConfig{
+		Enabled: &enabled, Infrastructure: persisted,
+		Records: []clientservices.DNSRecord{{Name: "same-address", Type: "A", Value: site.Components[0].Address}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "use a CNAME alias") {
+		t.Fatalf("same-address user A was not refused clearly: %v", err)
+	}
+}
+
+func TestInfrastructureAddressChangeRemovesOnlyOwnedRecord(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	want, err := bindingDNSSections(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := want[0]
+	current := map[string]openwrt.UCISection{
+		old.Name:  {Type: old.Type, Options: old.Options, Lists: old.Lists},
+		"foreign": {Type: "hostrecord", Options: map[string]string{"name": "foreign." + site.Network.Domain, "ip": old.Options["ip"]}},
+	}
+	site.Components[0].Address = "10.10.99.8"
+	updated, err := bindingDNSSections(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations, err := DiffOwned(current, updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedOld, keptForeign := false, false
+	for _, mutation := range mutations {
+		if mutation.Kind == MutationDelete && mutation.Section.Name == old.Name {
+			deletedOld = true
+		}
+		if mutation.Section.Name == "foreign" {
+			keptForeign = true
+		}
+	}
+	if !deletedOld || keptForeign {
+		t.Fatalf("address change cleanup was not exact: %#v", mutations)
 	}
 }
 

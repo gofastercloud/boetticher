@@ -245,6 +245,11 @@ func applyObservability(b observability.Binding, yes bool, publicDomain, holmesM
 	if collectionErr != nil {
 		return collectionErr
 	}
+	config.Modules.Observability.Collection = clientservices.ObservabilityCollectionBindings{
+		Controller:  collectionAddressForTarget(collection, observability.TargetController),
+		ProxmoxHost: collectionAddressForTarget(collection, observability.TargetHost),
+		Runtime:     collectionAddressForTarget(collection, observability.TargetRuntime),
+	}
 	if observability.Enabled(config.Modules) && observation.State == "owned" {
 		desiredDigest, digestErr := observabilityDigest(config.Modules, secrets, payloadDigest, collection)
 		servicesHealthy := true
@@ -291,6 +296,15 @@ func applyObservability(b observability.Binding, yes bool, publicDomain, holmesM
 	return nil
 }
 
+func collectionAddressForTarget(config observability.CollectionConfig, kind observability.TargetKind) string {
+	for _, target := range config.Targets {
+		if target.Kind == kind {
+			return target.Address
+		}
+	}
+	return ""
+}
+
 func reconcileObservabilityDependencies(ctx context.Context, config controllerhost.LabConfig) error {
 	current, desired, host, err := loadFirewallContext()
 	if err != nil {
@@ -300,7 +314,13 @@ func reconcileObservabilityDependencies(ctx context.Context, config controllerho
 	if err != nil {
 		return err
 	}
-	serviceContext := clientServiceContext{Config: config, Site: current, Desired: desired, Host: host}
+	serviceContext, err := loadClientServiceContext()
+	if err != nil {
+		return err
+	}
+	// The caller's config is the just-prepared observability intent; retain the
+	// loaded VPN projection from the normal client-service context.
+	serviceContext.Config = config
 	if _, _, err := reconcileClientServices(ctx, provider, serviceContext, config.Modules); err != nil {
 		return err
 	}

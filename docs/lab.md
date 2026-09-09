@@ -7,6 +7,18 @@ description: The Boetticher Controller, Host, and Module boundary.
 
 # Your lab, demystified
 
+## Reference topology
+
+The [logical reference-lab topology](images/network-topology.svg) separates
+deployed logical services from observability/media rollout work. The
+[physical wiring reference](images/physical-network.svg) shows the
+operator-specified switch-port map, equipment, and cable colours. Each has an
+editable source: [logical draw.io](images/network-topology.drawio) and
+[physical draw.io](images/physical-network.drawio). These are concise IPv4 and
+wiring views, not firewall-rule inventories, IPv6-isolation proof, complete
+live-link audits, or deployment acceptance records. Status and current-address
+labels are dated 9 September 2026.
+
 Boetticher currently manages one Proxmox Host from one Controller. The Host is
 the product object below the Controller; storage and networking are Host
 configuration, not separate lifecycle objects.
@@ -70,12 +82,13 @@ Each concern inspects native state first. Exact state is a no-op, safely absent
 state can be created, recognized Boetticher-owned partial state can be resumed,
 and conflicting or ambiguous state stops without mutation.
 
-## Fixed virtual topology
+## Fixed physical topology
 
 HOME management remains on `vmbr0`. The current Host binding uses a
-VLAN-aware `vmbr1` with no parent Host address, the owned `vmbr1.99`
-management address `10.10.99.5/24`, and the verified `nic1` physical member
-restricted to tagged VLANs 20 and 40. The current
+VLAN-aware `vmbr1` with no untagged Host address or default gateway and the
+verified `nic1` physical member restricted to tagged VLANs 5, 10, 20, 30, 40,
+and 99. Proxmox management uses the tagged `vmbr1.99` interface at
+`10.10.99.5/24`, without a default gateway. The current
 semantic VLANs are:
 
 | VLAN | Zone | Role |
@@ -104,9 +117,9 @@ not reusable fixture identities.
 
 For the read-only `host status` health check, `vmbr1` is healthy when the link is
 up, VLAN-aware, correctly configured, and has no Host L3 address or gateway.
-Attached ports, including Module virtual ports and the approved tagged physical
-member, do not make an otherwise healthy bridge fail. Unknown physical bindings
-remain rejected by Host apply.
+The approved tagged physical member is required for the physical-trunk
+installation. Unknown or mismatched physical bindings remain rejected by Host
+apply.
 
 ## Dedicated storage
 

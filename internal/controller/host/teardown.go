@@ -26,6 +26,9 @@ func HostBaselineTeardownCommand() string {
 // NetworkTeardownCommand removes an exact, owned vmbr1 and its host IPv6
 // suppression while protecting vmbr0 and the management route.
 func NetworkTeardownCommand(plan NetworkPlan) (string, error) {
+	if plan.Config.PhysicalTrunk != "" {
+		return "", errors.New("physical vmbr1 trunk is preserved by Host teardown; detach it through a separately reviewed Host lifecycle")
+	}
 	if plan.State != "exact" || !plan.Bridge.Owned || !plan.Bridge.IPv6Disabled || len(plan.Bridge.PhysicalMembers) != 0 || len(plan.Bridge.HostAddresses) != 0 || plan.Bridge.Gateway != "" {
 		return "", fmt.Errorf("network state %s is not an exact owned vmbr1 teardown target: %s", plan.State, plan.Detail)
 	}
@@ -39,9 +42,11 @@ printf '%s\n' '#!/bin/sh' '# Managed by Boetticher: vmbr1 host IPv6 suppression.
 test -z "$(bridge link | awk '$NF == "vmbr1" { print; exit }')"
 test -z "$(ip -json address show dev vmbr1 | grep -F '"local"' || true)"
 ip -d link show vmbr1 | grep -Eq 'vlan_filtering (1|on)'
-if ifquery --state vmbr1 >/dev/null 2>&1; then ifdown vmbr1; fi
-if ip link show vmbr1 >/dev/null 2>&1; then ip link delete vmbr1 type bridge; fi
-test ! -e /sys/class/net/vmbr1
+	if ifquery --state vmbr1.99 >/dev/null 2>&1; then ifdown vmbr1.99; fi
+	if [ -e /etc/network/interfaces.d/boetticher-management ]; then test ! -L /etc/network/interfaces.d/boetticher-management; printf '%s\n' '# Managed by Boetticher: Proxmox MGMT' 'auto vmbr1.99' 'iface vmbr1.99 inet static' '    address 10.10.99.5/24' '    vlan-raw-device vmbr1' '    up sysctl -q -w net/ipv6/conf/vmbr1.99/disable_ipv6=1' '    up ip route replace 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99' | cmp -s - /etc/network/interfaces.d/boetticher-management; rm -f /etc/network/interfaces.d/boetticher-management; fi
+	if ifquery --state vmbr1 >/dev/null 2>&1; then ifdown vmbr1; fi
+	if ip link show vmbr1 >/dev/null 2>&1; then ip link delete vmbr1 type bridge; fi
+	test ! -e /sys/class/net/vmbr1
 tmp=$(mktemp /etc/network/interfaces.boetticher.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
 awk '

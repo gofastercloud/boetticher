@@ -33,11 +33,13 @@ logs_retention=${BOETTICHER_OBSERVABILITY_LOGS_RETENTION_DAYS:-7}
 pushover_enabled=${BOETTICHER_OBSERVABILITY_PUSHOVER_ENABLED:-false}
 pushover_title=${BOETTICHER_OBSERVABILITY_PUSHOVER_TITLE:-Boetticher observability}
 pushover_priority=${BOETTICHER_OBSERVABILITY_PUSHOVER_PRIORITY:-0}
+bifrost_probe_enabled=${BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED:-false}
 case "$metrics_retention" in ''|*[!0-9]*) die 'metrics retention must be a day count' ;; esac
 case "$logs_retention" in ''|*[!0-9]*) die 'logs retention must be a day count' ;; esac
 [ "$metrics_retention" -ge 1 ] && [ "$metrics_retention" -le 3650 ] || die 'metrics retention must be between 1 and 3650 days'
 [ "$logs_retention" -ge 1 ] && [ "$logs_retention" -le 3650 ] || die 'logs retention must be between 1 and 3650 days'
 case "$pushover_enabled" in true|false) ;; *) die 'Pushover enabled setting must be true or false' ;; esac
+case "$bifrost_probe_enabled" in true|false) ;; *) die 'Bifrost probe enabled setting must be true or false' ;; esac
 case "$pushover_priority" in -2|-1|0|1) ;; *) die 'Pushover priority must be between -2 and 1' ;; esac
 case "$pushover_title" in *[!A-Za-z0-9._\ -]*) die 'Pushover title contains unsupported characters' ;; esac
 [ "${#pushover_title}" -le 250 ] || die 'Pushover title exceeds 250 characters'
@@ -405,7 +407,6 @@ install_caddy_files() {
   ingest_sources=${BOETTICHER_OBSERVABILITY_INGEST_SOURCES:-}
   [ -x "$caddy_source" ] || die "packaged Caddy binary is missing: $caddy_source"
   [ -s "$(root_path /var/lib/boetticher/credentials/cloudflare-dns-token.cred)" ] || die 'Cloudflare DNS credential is missing before Caddy activation'
-  [ -s "$(root_path /var/lib/boetticher/credentials/statuspage-password.cred)" ] || die 'status page password credential is missing before Caddy activation'
   for address in "$metrics_controller" "$metrics_host" "$metrics_runtime"; do
     case "$address" in ''|*[!0-9.]*) die 'Caddy metrics target address is invalid' ;; esac
     printf '%s\n' "$address" | awk -F. 'NF == 4 { for (i = 1; i <= 4; i++) if ($i < 0 || $i > 255) exit 1; exit 0 } { exit 1 }' || die 'Caddy metrics target address is invalid'
@@ -431,6 +432,9 @@ https://observability.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    # ACME validates DNS independently; skip only blocked local propagation polling.
+    propagation_delay 30s
+    propagation_timeout -1
   }
   reverse_proxy 127.0.0.1:3000
 }
@@ -439,9 +443,8 @@ https://status.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-  }
-  basic_auth {
-    status {\$BOETTICHER_STATUS_PASSWORD_HASH}
+    propagation_delay 30s
+    propagation_timeout -1
   }
   reverse_proxy 127.0.0.1:8080
 }
@@ -450,6 +453,8 @@ https://metrics.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    propagation_delay 30s
+    propagation_timeout -1
   }
   basic_auth {
     boetticher {\$BOETTICHER_METRICS_PASSWORD_HASH}
@@ -494,6 +499,8 @@ https://ingest.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    propagation_delay 30s
+    propagation_timeout -1
   }
   @journald {
     method POST
@@ -509,27 +516,14 @@ https://ingest.$public_domain {
 EOF
   target=$(root_path /etc/boetticher/caddy/Caddyfile)
   if [ "$root" = / ]; then
-    status_hash=$(cat /var/lib/boetticher/credentials/statuspage-password.cred | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy status password hash generation failed'
-    node_hash=$(cat /var/lib/boetticher/credentials/node-exporter-read-token.cred | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy metrics password hash generation failed'
-    CLOUDFLARE_API_TOKEN=$(cat /var/lib/boetticher/credentials/cloudflare-dns-token.cred) BOETTICHER_STATUS_PASSWORD_HASH="$status_hash" BOETTICHER_METRICS_PASSWORD_HASH="$node_hash" "$caddy_source" validate --config "$work/Caddyfile" --adapter caddyfile >/dev/null || die 'Caddy configuration validation failed'
-    unset status_hash node_hash
-  fi
-  previous="$work/Caddyfile.previous"
-  if [ -f "$target" ]; then
-    install -m 0640 "$target" "$previous"
+    node_hash=$({ cat /var/lib/boetticher/credentials/node-exporter-read-token.cred; printf '\n'; } | "$caddy_source" hash-password --algorithm bcrypt) || die 'Caddy metrics password hash generation failed'
+    CLOUDFLARE_API_TOKEN=$(cat /var/lib/boetticher/credentials/cloudflare-dns-token.cred) BOETTICHER_METRICS_PASSWORD_HASH="$node_hash" "$caddy_source" validate --config "$work/Caddyfile" --adapter caddyfile >/dev/null || die 'Caddy configuration validation failed'
+    unset node_hash
   fi
   install_atomic 0640 "$work/Caddyfile" "$target"
   chown_root_group "$target" caddy
-  if [ "$root" = / ] && systemctl is-active --quiet caddy.service; then
-    if ! systemctl reload caddy.service; then
-      if [ -f "$previous" ]; then
-        install_atomic 0640 "$previous" "$target"
-        chown_root_group "$target" caddy
-        systemctl reload caddy.service || true
-      fi
-      die 'Caddy configuration reload failed; previous configuration restored'
-    fi
-  fi
+  # The common activation below restarts the unit after its assets are ready.
+  # LoadCredential snapshots must refresh together with collection credentials.
   install_owned_dir "$(root_path /var/lib/boetticher/observability/state/caddy)" caddy 0750
 }
 
@@ -624,6 +618,12 @@ case "$provider" in
     install_atomic 0755 "$work/victoria-logs.ready" "$(root_path /usr/local/bin/victoria-logs)"
     ;;
   victoriametrics)
+    # Account creation above precedes ownership, including the first install.
+    collection_config=$(root_path /etc/boetticher/observability/collection.yml)
+    [ -f "$collection_config" ] || die 'metrics collection configuration is missing'
+    install -d -m 0755 "$(dirname "$collection_config")"
+    chown_root_group "$collection_config" victoriametrics
+    chmod 0640 "$collection_config"
     extract_tar_binary "$work/$archive_name" victoria-metrics-prod "$work/victoria-metrics"
     install_atomic 0755 "$work/victoria-metrics.ready" "$(root_path /usr/local/bin/victoria-metrics)"
     ;;
@@ -654,6 +654,14 @@ case "$provider" in
     install -d -m 0750 "$(root_path /etc/boetticher/gatus)"
     chown_owned "$(root_path /etc/boetticher/gatus)" gatus
     gatus_config_source=$asset_root/gatus.config.yaml
+    if [ "$bifrost_probe_enabled" = false ]; then
+      awk '
+        /^  - name: bifrost$/ { skip=1; next }
+        skip && /^  - name:/ { skip=0 }
+        !skip { print }
+      ' "$gatus_config_source" > "$work/gatus-no-bifrost.config.yaml"
+      gatus_config_source=$work/gatus-no-bifrost.config.yaml
+    fi
     if [ -n "$public_domain" ]; then
       metrics_controller=${BOETTICHER_OBSERVABILITY_METRICS_CONTROLLER:-}
       metrics_host=${BOETTICHER_OBSERVABILITY_METRICS_HOST:-}
@@ -694,7 +702,7 @@ case "$provider" in
           print "    url: https://status." domain "/health"
           print "    interval: 30s"
           print "    conditions:"
-          print "      - \"[STATUS] == 401\""
+          print "      - \"[STATUS] == 200\""
           print "  - name: caddy-metrics"
           print "    group: observability"
           print "    url: https://metrics." domain "/lab-monitor-01/metrics"
@@ -704,7 +712,7 @@ case "$provider" in
           next
         }
         { print }
-      ' "$asset_root/gatus.config.yaml" > "$work/gatus-public.config.yaml"
+      ' "$gatus_config_source" > "$work/gatus-public.config.yaml"
       gatus_config_source=$work/gatus-public.config.yaml
     fi
     if [ "$pushover_enabled" = true ]; then

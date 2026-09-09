@@ -73,10 +73,23 @@ func TestProviderInstallerStagesGatusAssetsAndOrdersAccountBeforeOwnership(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"https://observability.davebarton.cc/api/health", "https://status.davebarton.cc/health", "https://metrics.davebarton.cc/lab-monitor-01/metrics", "query-name: observability.davebarton.cc", "tcp://10.10.99.5:9100", "tcp://10.10.20.10:9100", "[DNS_RCODE] == NOERROR", "[CONNECTED] == true", "[STATUS] == 401"} {
+	for _, required := range []string{"https://observability.davebarton.cc/api/health", "https://status.davebarton.cc/health", "https://metrics.davebarton.cc/lab-monitor-01/metrics", "query-name: observability.davebarton.cc", "tcp://10.10.99.5:9100", "tcp://10.10.20.10:9100", "[DNS_RCODE] == NOERROR", "[CONNECTED] == true", "[STATUS] == 200", "[STATUS] == 401"} {
 		if !strings.Contains(string(config), required) {
 			t.Errorf("Gatus public outcome check missing %q: %s", required, config)
 		}
+	}
+	if strings.Contains(string(config), "name: bifrost") {
+		t.Fatalf("disabled Bifrost probe was retained: %s", config)
+	}
+	env = append(env, "BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=true")
+	cmd = exec.Command("sh", installerPath(t), "gatus", "--root", root)
+	cmd.Env = env
+	if output, err = cmd.CombinedOutput(); err != nil {
+		t.Fatalf("enabled Bifrost probe reinstall failed: %v\n%s", err, output)
+	}
+	config, err = os.ReadFile(filepath.Join(root, "etc", "boetticher", "gatus", "config.yaml"))
+	if err != nil || !strings.Contains(string(config), "name: bifrost") {
+		t.Fatalf("enabled Bifrost probe was not retained: err=%v config=%s", err, config)
 	}
 	for _, path := range []string{"etc/boetticher/gatus/config.yaml", "etc/systemd/system/gatus.service"} {
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
@@ -428,6 +441,11 @@ func TestProviderInstallerUsesCaddyFrontendAsset(t *testing.T) {
 			t.Errorf("Caddy frontend asset is missing %q", required)
 		}
 	}
+	for _, forbidden := range []string{"LoadCredential=statuspage-password", "BOETTICHER_STATUS_PASSWORD_HASH", "statuspage-password"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("Caddy frontend asset retains status password handling %q", forbidden)
+		}
+	}
 }
 
 func TestProviderInstallerStagesInternalOnlyCaddyConfig(t *testing.T) {
@@ -477,6 +495,9 @@ func TestProviderInstallerStagesInternalOnlyCaddyConfig(t *testing.T) {
 			t.Errorf("Caddy config missing %q: %s", required, text)
 		}
 	}
+	if strings.Contains(text, "BOETTICHER_STATUS_PASSWORD_HASH") || strings.Contains(text, "statuspage-password") {
+		t.Fatalf("Caddy status route retains password authentication: %s", text)
+	}
 	if strings.Contains(text, "bind 0.0.0.0") || strings.Contains(text, "http://") {
 		t.Fatalf("Caddy config exposes an unapproved public or unresolved route: %s", text)
 	}
@@ -489,7 +510,7 @@ func TestCollectionInstallerPinsTargetsAndKeepsTLSOutOfArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(script)
-	for _, required := range []string{"node-exporter-$arch", "--continue-at -", "--proto '=https'", "basic_auth_users:", "--read-token-hash", "--key=-", "--cert=-", "--trust=/etc/ssl/certs/ca-certificates.crt", "systemd-journal-upload.service", "boetticher-node-exporter.service"} {
+	for _, required := range []string{"node-exporter-$arch", "--continue-at -", "--proto '=https'", "basic_auth_users:", "--read-token-hash", "--key=-", "--cert=-", "systemd-journal-upload.service", "boetticher-node-exporter.service"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("collection installer is missing %q", required)
 		}
@@ -497,7 +518,7 @@ func TestCollectionInstallerPinsTargetsAndKeepsTLSOutOfArguments(t *testing.T) {
 	if strings.Contains(text, "--key ") || strings.Contains(text, "--password ") {
 		t.Fatal("collection installer passes private material as an argument")
 	}
-	for _, required := range []string{"TrustedCertificateFile=/etc/ssl/certs/ca-certificates.crt", "ReadOnlyPaths=$guest_web_config", "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --trust=/etc/ssl/certs/ca-certificates.crt --save-state=/var/lib/systemd/journal-upload/state", "systemctl restart systemd-journal-upload.service"} {
+	for _, required := range []string{"TrustedCertificateFile=/etc/ssl/certs/ca-certificates.crt", "chown \"root:$service_user\" \"$web_config.new\"", "--web.config.file=$guest_web_config", "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --save-state=/var/lib/systemd/journal-upload/state", "Restart=on-failure", "RestartSec=10s", "systemctl restart systemd-journal-upload.service"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("collection TLS permission contract missing %q", required)
 		}
@@ -542,6 +563,10 @@ func TestCollectionInstallerExecutesAgainstStagedRoot(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("staged collection installer failed: %v\n%s", err, output)
 	}
+	webInfo, err := os.Stat(filepath.Join(root, "etc", "boetticher", "observability", "node-exporter-web.yml"))
+	if err != nil || webInfo.Mode().Perm() != 0640 {
+		t.Fatalf("exporter authentication configuration must remain private: %v", err)
+	}
 	unit := string(mustReadFile(t, filepath.Join(root, "etc", "systemd", "system", "systemd-journal-upload.service.d", "boetticher.conf")))
 	if !strings.Contains(unit, "--save-state=/var/lib/systemd/journal-upload/state") || strings.Contains(unit, "$tls_dir") {
 		t.Fatalf("staged uploader unit has incorrect native state configuration: %s", unit)
@@ -555,4 +580,22 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestProviderInstallerTerminatesCredentialHashInput(t *testing.T) {
+	script := mustReadFile(t, "../../scripts/install-observability-providers.sh")
+	text := string(script)
+	for _, credential := range []string{"node-exporter-read-token.cred"} {
+		if !strings.Contains(text, "cat /var/lib/boetticher/credentials/"+credential+"; printf '\\n'") {
+			t.Fatalf("credential %s is not terminated before Caddy hashing", credential)
+		}
+	}
+}
+
+func TestCollectionUploaderUsesSingleTrustConfiguration(t *testing.T) {
+	script := mustReadFile(t, "../../scripts/install-observability-collection.sh")
+	text := string(script)
+	if !strings.Contains(text, "TrustedCertificateFile=/etc/ssl/certs/ca-certificates.crt") || strings.Contains(text, "ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --trust=") {
+		t.Fatal("journal upload configured duplicate trust options")
+	}
 }
