@@ -73,6 +73,7 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	if err := clientservices.Validate(normalized, site); err != nil {
 		return ServiceState{}, err
 	}
+	normalized = clientservices.SystemsExpanded(normalized)
 	dnsEnabled := normalized.DNS != nil && clientservices.Enabled(normalized.DNS.Enabled)
 	dhcpEnabled := normalized.DHCP != nil && clientservices.Enabled(normalized.DHCP.Enabled)
 	state := ServiceState{}
@@ -103,6 +104,7 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	state.System = append(state.System, ntpSections(site, ntpUpstreams, ntpServe)...)
 	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
+	state.Firewall = append(state.Firewall, systemFirewallSections(normalized.Systems)...)
 	return state, nil
 }
 
@@ -334,6 +336,26 @@ func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled, vpnEnable
 			if vpnEnabled {
 				sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_ntp_vpn", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external NTP via VPN", "src": name, "dest": "vpn", "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
 			}
+		}
+	}
+	return sections
+}
+
+func systemFirewallSections(systems []clientservices.System) []Section {
+	sections := make([]Section, 0, len(systems)*2)
+	for _, s := range systems {
+		id := nativeIdentifier(strings.ToLower(s.Name))
+		for _, item := range []struct{ name, src, srcIP string }{
+			{"trusted", "trusted", ""}, {"monitoring", "infra", "10.10.10.20"},
+		} {
+			if item.name == "monitoring" && !s.Monitoring {
+				continue
+			}
+			o := map[string]string{"name": "Boetticher system " + s.Name + " " + item.name, "src": item.src, "dest": "servers", "dest_ip": s.Address, "proto": "tcp", "dest_port": strconv.Itoa(s.Port), "family": "ipv4", "target": "ACCEPT"}
+			if item.srcIP != "" {
+				o["src_ip"] = item.srcIP
+			}
+			sections = append(sections, Section{Name: "boetticher_system_" + id + "_" + item.name, Type: "rule", Options: o, Lists: map[string][]string{}})
 		}
 	}
 	return sections

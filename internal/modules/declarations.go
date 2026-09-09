@@ -151,21 +151,6 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-bifrost-01", Checks: []string{"nginx", "https", "mtls"}, Description: "Bifrost mTLS frontend health"},
 			model.MonitoringDeclaration{Name: "bifrost", Kind: "service", Target: "lab-bifrost-01", Checks: []string{"bifrost", "loopback"}, Description: "Bifrost loopback backend health"},
 		)
-	case "printer":
-		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
-		declaration.DNSRecords = []model.DNSRecord{{Name: "octoprint." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}, {Name: "printer." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}}
-		declaration.NetworkIntents = []model.NetworkIntent{
-			{Source: "lab-printer-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "OctoPrint DNS resolution"},
-			{Source: "lab-printer-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "OctoPrint time synchronisation"},
-		}
-		if IsEnabled(site, "logging") {
-			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-printer-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
-		}
-		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "octoprint." + site.Network.Domain, SANs: []string{"octoprint." + site.Network.Domain, "printer." + site.Network.Domain}, Consumer: "nginx"})
-		declaration.Monitoring = append(declaration.Monitoring,
-			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-printer-01", Checks: []string{"nginx", "https", "mtls"}, Description: "OctoPrint mTLS frontend health"},
-			model.MonitoringDeclaration{Name: "octoprint", Kind: "service", Target: "lab-printer-01", Checks: []string{"octoprint", "loopback", "serial"}, Description: "OctoPrint backend and printer serial availability"},
-		)
 	case "aiops":
 		config := site.ModuleConfig[name]
 		if _, err := model.ResolveBifrostAlias(site.ModuleConfig["bifrost"], config.ModelAlias); err != nil {
@@ -254,11 +239,6 @@ func persistentFor(module, guest string) []model.PersistentState {
 		}
 	case "bifrost":
 		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
-	case "printer":
-		return []model.PersistentState{identity,
-			{Name: "octoprint-state", Guest: guest, Path: "/var/lib/octoprint", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
-			{Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
-		}
 	case "aiops":
 		return []model.PersistentState{identity, {Name: "aiops-state", Guest: guest, Path: "/var/lib/boetticher/aiops", Kind: "incident-state-and-endpoint-identities", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	default:
@@ -291,8 +271,6 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("arr-state", "/var/lib/arr", 16, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true), downloads}
 	case "bifrost":
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
-	case "printer":
-		return []model.PersistentVolumeDeclaration{identity, volume("octoprint-state", "/var/lib/octoprint", 8, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "aiops":
 		return []model.PersistentVolumeDeclaration{identity, volume("aiops-state", "/var/lib/boetticher/aiops", 1, true)}
 	case "logging":

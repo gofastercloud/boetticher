@@ -25,68 +25,6 @@ func writeConfigureSite(t *testing.T, dir string, config model.SiteConfig) {
 	}
 }
 
-func TestConfigureJSONDryRunIsRedactedAndDoesNotMutate(t *testing.T) {
-	dir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
-	disabled := false
-	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &disabled}
-	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
-	writeConfigureSite(t, dir, config)
-	original, err := os.ReadFile(filepath.Join(dir, "site.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--dry-run", "--json"}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	var report moduleConfigureReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
-		t.Fatalf("configure JSON is invalid: %v: %s", err, output.String())
-	}
-	if report.Status != "DRY_RUN" || !report.ProposedEnabled || len(report.Changes) == 0 {
-		t.Fatalf("unexpected configure report: %#v", report)
-	}
-	current, err := os.ReadFile(filepath.Join(dir, "site.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(original, current) {
-		t.Fatal("dry-run changed site.yml")
-	}
-}
-
-func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
-	disabled := false
-	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &disabled}
-	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
-	writeConfigureSite(t, dir, config)
-	var output bytes.Buffer
-	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json", "--confirm"}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	var report moduleConfigureReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.Status != "APPLIED" {
-		t.Fatalf("unexpected apply report: %v %#v", err, report)
-	}
-	loaded, err := site.LoadConfig(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Modules.Printer == nil || loaded.Modules.Printer.Enabled == nil || !*loaded.Modules.Printer.Enabled {
-		t.Fatal("configure did not persist desired printer enablement")
-	}
-	output.Reset()
-	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json", "--confirm"}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), `"status":"NO_CHANGES"`) {
-		t.Fatalf("configure rerun was not idempotent: %s", output.String())
-	}
-}
-
 func TestConfigureBifrostWithARRKeepsOwnedReservationUnique(t *testing.T) {
 	dir := t.TempDir()
 	identityPath, recipient := writeTestAgeIdentity(t)
@@ -122,27 +60,6 @@ func TestConfigureBifrostWithARRKeepsOwnedReservationUnique(t *testing.T) {
 	}
 	if len(resolved.DHCPReservations) != 1 || resolved.DHCPReservations[0].Address != model.ArrGuestAddress {
 		t.Fatalf("ARR reservation was duplicated or missing: %#v", resolved.DHCPReservations)
-	}
-}
-
-func TestConfigureNonInteractiveHoldsForMissingUSB(t *testing.T) {
-	dir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
-	writeConfigureSite(t, dir, config)
-	var output bytes.Buffer
-	err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
-	if err == nil || !strings.Contains(err.Error(), "required USB printer/serial is not configured") {
-		t.Fatalf("missing USB was not held: %v; output=%s", err, output.String())
-	}
-	if strings.Contains(output.String(), "super-secret") {
-		t.Fatal("secret value appeared in configure output")
-	}
-	var report moduleConfigureReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
-		t.Fatalf("HOLD JSON is invalid: %v: %s", err, output.String())
-	}
-	if report.Status != "HOLD" {
-		t.Fatalf("unexpected HOLD report: %#v", report)
 	}
 }
 

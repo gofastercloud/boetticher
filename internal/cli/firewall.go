@@ -22,9 +22,6 @@ func runFirewall(args []string, out io.Writer) error {
 		return errors.New("usage: boetticher firewall status|show|diff|counters|logs|verify")
 	}
 	command := args[0]
-	if command == "rule" {
-		return runFirewallRules(args[1:], out)
-	}
 	fs := flag.NewFlagSet("firewall "+command, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

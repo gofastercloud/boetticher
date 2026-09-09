@@ -39,8 +39,8 @@ remote_native_root="$remote_root/root"
 remote_native_source="$remote_native_root$remote_source"
 remote_native_output="$remote_native_root$remote_output"
 
-native_image_targets='image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-printer image-arr image-network-probe'
-native_scan_names='boetticher-base boetticher-dns-blocky boetticher-firewall boetticher-tailnet-router boetticher-airvpn boetticher-printer boetticher-arr boetticher-network-probe'
+native_image_targets='image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-arr image-network-probe'
+native_scan_names='boetticher-base boetticher-dns-blocky boetticher-firewall boetticher-tailnet-router boetticher-airvpn boetticher-arr boetticher-network-probe'
 
 case "$builder_ssh" in
   *[![:alnum:]@._:-]*) fail 'BOETTICHER_LOCAL_BUILDER_SSH contains unsupported characters' ;;
@@ -141,8 +141,8 @@ validate_remote_target() {
   shift
   for target in "$@"; do
     case "$runner:$target" in
-	  build:image-base|build:image-dns-blocky|build:image-firewall|build:image-tailnet-router|build:image-airvpn|build:image-printer|build:image-arr|build:image-network-probe|build:images) ;;
-	  scan:scan-base|scan:scan-dns-blocky|scan:scan-firewall|scan:scan-tailnet-router|scan:scan-airvpn|scan:scan-printer|scan:scan-arr|scan:scan-network-probe|scan:scan-images) ;;
+	  build:image-base|build:image-dns-blocky|build:image-firewall|build:image-tailnet-router|build:image-airvpn|build:image-arr|build:image-network-probe|build:images) ;;
+	  scan:scan-base|scan:scan-dns-blocky|scan:scan-firewall|scan:scan-tailnet-router|scan:scan-airvpn|scan:scan-arr|scan:scan-network-probe|scan:scan-images) ;;
       *) fail "unsupported native builder target: $target" ;;
     esac
   done

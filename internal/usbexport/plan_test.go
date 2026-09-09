@@ -4,36 +4,14 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
-func TestPrinterSerialExportUsesDeterministicSlot(t *testing.T) {
-	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
-	enabled := true
-	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &enabled}
-	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523"}}
-	site, _, err := modules.Compose(config)
+func TestPlanFromSiteIgnoresModulesWithoutUSBRequirements(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PlanFromSite(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plan) != 1 || plan[0].VMID != model.PrinterVMID || len(plan[0].Exports) != 1 {
-		t.Fatalf("unexpected printer USB plan: %#v", plan)
-	}
-	export := plan[0].Exports[0]
-	if export.Slot != "dev0" || export.DeviceType != "serial" || export.Access != "rw" {
-		t.Fatalf("unexpected printer serial export: %#v", export)
-	}
-}
-
-func TestEnabledPrinterRequiresSerialBinding(t *testing.T) {
-	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
-	enabled := true
-	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &enabled}
-	if _, _, err := modules.Compose(config); err == nil {
-		t.Fatal("enabled printer accepted without required serial binding")
+	if len(plan) != 0 {
+		t.Fatalf("unexpected USB manifests for modules without USB requirements: %#v", plan)
 	}
 }

@@ -230,6 +230,16 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 			return fmt.Errorf("install %s provider: %w", provider, err)
 		}
 	}
+	// Provider installation rebuilds the base Gatus file. Re-project the full
+	// canonical slice afterwards, including an empty slice, so unregistering the
+	// final system removes its owned check on the next normal apply.
+	gatusConfig, err := c.GatusConfigStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("read installed Gatus configuration: %w", err)
+	}
+	if err := c.ReconcileGatus(ctx, []byte(gatusConfig), modules.Systems); err != nil {
+		return fmt.Errorf("reconcile Gatus registered-system checks: %w", err)
+	}
 	state := fmt.Sprintf("install -d -o root -g root -m 0755 /var/lib/boetticher/observability; printf '%%s\\n' %s > /var/lib/boetticher/observability/boetticher-config.digest; chmod 0600 /var/lib/boetticher/observability/boetticher-config.digest", shellQuoteValue(digest))
 	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(state))); err != nil {
 		return fmt.Errorf("record observability runtime digest: %w", err)

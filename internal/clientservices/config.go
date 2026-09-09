@@ -31,12 +31,26 @@ const (
 // deliberately different from a disabled block: read-only commands report
 // nil as not configured and approved apply operations may materialise defaults.
 type Modules struct {
+	Systems       []System             `yaml:"systems,omitempty" json:"systems,omitempty"`
 	Tailnet       *TailnetConfig       `yaml:"tailnet,omitempty" json:"tailnet,omitempty"`
 	DNS           *DNSConfig           `yaml:"dns,omitempty" json:"dns,omitempty"`
 	DHCP          *DHCPConfig          `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
 	VPN           *VPNConfig           `yaml:"vpn,omitempty" json:"vpn,omitempty"`
 	Observability *ObservabilityConfig `yaml:"observability,omitempty" json:"observability,omitempty"`
 	AIOps         *AIOpsConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
+}
+
+// System is an operator registration for an existing Proxmox guest. Boetticher
+// owns only the network intent derived from this record; it never owns the guest.
+type System struct {
+	Name       string `yaml:"name" json:"name"`
+	VMID       int    `yaml:"vmid" json:"vmid"`
+	Kind       string `yaml:"kind" json:"kind"`
+	GuestName  string `yaml:"guest_name" json:"guest_name"`
+	MAC        string `yaml:"mac" json:"mac"`
+	Address    string `yaml:"address" json:"address"`
+	Port       int    `yaml:"port" json:"port"`
+	Monitoring bool   `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
 }
 
 type ObservabilityConfig struct {
@@ -200,6 +214,7 @@ func ResolveReservation(modules Modules, name string) (Reservation, bool) {
 
 func (m Modules) Normalize() Modules {
 	result := m
+	result.Systems = append([]System(nil), m.Systems...)
 	if result.DNS != nil {
 		copyDNS := *result.DNS
 		if result.DNS.Enabled != nil {
@@ -256,6 +271,7 @@ func (m Modules) Normalize() Modules {
 
 func (m Modules) Clone() Modules {
 	result := Modules{}
+	result.Systems = append([]System(nil), m.Systems...)
 	if m.Tailnet != nil {
 		copyTailnet := *m.Tailnet
 		result.Tailnet = &copyTailnet
@@ -333,6 +349,13 @@ func (m Modules) Clone() Modules {
 
 func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
+	if err := ValidateSystems(normalized, site); err != nil {
+		return err
+	}
+	// Systems are canonical operator intent, but their DHCP reservations are
+	// native derived state. Validate that projection with the ordinary DHCP/DNS
+	// contracts before a caller can save it.
+	normalized = SystemsExpanded(normalized)
 	if err := validateObservability(normalized); err != nil {
 		return err
 	}
@@ -368,6 +391,89 @@ func Validate(modules Modules, site model.Site) error {
 		}
 	}
 	return nil
+}
+
+func ValidateSystems(modules Modules, site model.Site) error {
+	seen := map[string]bool{}
+	for _, s := range modules.Systems {
+		name := strings.ToLower(strings.TrimSpace(s.Name))
+		if name == "" || !safeSystemName(name) {
+			return fmt.Errorf("system name %q is invalid", s.Name)
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate system %s", name)
+		}
+		seen[name] = true
+		if s.VMID <= 0 || s.Kind != "qemu" && s.Kind != "lxc" || s.GuestName == "" {
+			return fmt.Errorf("system %s has invalid guest identity", name)
+		}
+		if s.VMID < model.UserGuestIDMin || s.VMID > model.UserGuestIDMax {
+			return fmt.Errorf("system %s VMID must be in the user-workload range %d-%d", name, model.UserGuestIDMin, model.UserGuestIDMax)
+		}
+		mac, err := CanonicalMAC(s.MAC)
+		if err != nil {
+			return fmt.Errorf("system %s MAC: %w", name, err)
+		}
+		if mac != s.MAC {
+			return fmt.Errorf("system %s MAC is not canonical", name)
+		}
+		ip := net.ParseIP(s.Address)
+		if ip == nil || ip.To4() == nil || ip.To4().String() != s.Address {
+			return fmt.Errorf("system %s address must be canonical IPv4", name)
+		}
+		last := ip.To4()[3]
+		if !strings.HasPrefix(s.Address, "10.10.20.") || last < 2 || last > 249 || last >= 100 && last <= 199 {
+			return fmt.Errorf("system %s address must be on SERVERS", name)
+		}
+		if modules.DHCP == nil || !Enabled(modules.DHCP.Enabled) || modules.DNS == nil || !Enabled(modules.DNS.Enabled) {
+			return errors.New("registered systems require enabled DNS and DHCP")
+		}
+		if s.Monitoring && (modules.Observability == nil || !Enabled(modules.Observability.Enabled)) {
+			return fmt.Errorf("system %s monitoring requires enabled observability", name)
+		}
+		if s.Port < 1 || s.Port > 65535 {
+			return fmt.Errorf("system %s port is invalid", name)
+		}
+		for _, other := range modules.Systems {
+			if other.Name != s.Name && (other.VMID == s.VMID || strings.EqualFold(other.MAC, s.MAC) || other.Address == s.Address) {
+				return fmt.Errorf("system %s conflicts with another system", name)
+			}
+		}
+		if modules.DHCP != nil {
+			for _, r := range modules.DHCP.Reservations {
+				if strings.EqualFold(r.Name, name) || strings.EqualFold(r.MAC, s.MAC) || r.Address == s.Address {
+					return fmt.Errorf("system %s conflicts with DHCP reservation", name)
+				}
+			}
+		}
+		_ = site
+	}
+	return nil
+}
+
+func safeSystemName(v string) bool {
+	for _, r := range v {
+		if !(r == '-' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// SystemsExpanded projects registrations into native DHCP host sections while
+// keeping the canonical file's single source of truth in Systems.
+func SystemsExpanded(modules Modules) Modules {
+	result := modules.Clone()
+	if len(result.Systems) == 0 {
+		return result
+	}
+	if result.DHCP == nil {
+		return result
+	}
+	for _, s := range result.Systems {
+		result.DHCP.Reservations = append(result.DHCP.Reservations, Reservation{Name: strings.ToLower(s.Name), Zone: "SERVERS", MAC: s.MAC, Address: s.Address})
+	}
+	return result
 }
 
 func validateObservability(modules Modules) error {
@@ -724,19 +830,26 @@ func validateDHCP(config *DHCPConfig, site model.Site) error {
 
 func validateSharedNames(dns *DNSConfig, dhcp *DHCPConfig, site model.Site) error {
 	seen := map[string]struct{}{}
-	for _, reservation := range dhcp.Reservations {
-		name := strings.ToLower(reservation.Name) + "." + strings.ToLower(strings.TrimSuffix(site.Network.Domain, "."))
-		seen[name] = struct{}{}
-	}
+	platform := map[string]struct{}{}
 	for _, component := range site.PlatformComponents() {
 		if name, err := canonicalName(component.Hostname, site.Network.Domain); err == nil {
-			seen[name] = struct{}{}
+			platform[name] = struct{}{}
 		}
 		for _, alias := range component.DNSAliases {
 			if name, err := canonicalName(alias, site.Network.Domain); err == nil {
-				seen[name] = struct{}{}
+				platform[name] = struct{}{}
 			}
 		}
+	}
+	for name := range platform {
+		seen[name] = struct{}{}
+	}
+	for _, reservation := range dhcp.Reservations {
+		name := strings.ToLower(reservation.Name) + "." + strings.ToLower(strings.TrimSuffix(site.Network.Domain, "."))
+		if _, conflict := platform[name]; conflict {
+			return fmt.Errorf("DHCP reservation %s conflicts with a platform name", name)
+		}
+		seen[name] = struct{}{}
 	}
 	cnameTargets := map[string]string{}
 	for _, record := range dns.Records {

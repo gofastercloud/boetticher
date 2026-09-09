@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "logging", "printer", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "logging", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -218,7 +218,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "airvpn", "bifrost", "printer", "aiops", "gatus"} {
+	for _, name := range []string{"tailnet-router", "airvpn", "bifrost", "aiops", "gatus"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -231,10 +231,6 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	bifrost, _ := registry.Definition("bifrost")
 	if bifrost.ReservedVMIDStart != 210 || bifrost.ReservedVMIDEnd != 219 || bifrost.Guests[0].VMID != 210 || bifrost.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("bifrost identity contract is incomplete: %#v", bifrost)
-	}
-	printer, _ := registry.Definition("printer")
-	if printer.ReservedVMIDStart != 230 || printer.ReservedVMIDEnd != 239 || printer.Guests[0].VMID != model.PrinterVMID || printer.Placement.ZoneType != model.ZoneTypeServers {
-		t.Fatalf("printer identity contract is incomplete: %#v", printer)
 	}
 	aiops, _ := registry.Definition("aiops")
 	if aiops.ReservedVMIDStart != 240 || aiops.ReservedVMIDEnd != 249 || aiops.Guests[0].VMID != 240 || aiops.Guests[0].Address != "10.10.20.90" || aiops.Placement.ZoneType != model.ZoneTypeServers {
@@ -378,38 +374,6 @@ func TestAIOpsRejectsUndeclaredAliasAndExplicitlyDisabledDependency(t *testing.T
 	config.Modules.AIOps.ModelAlias = "other"
 	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "explicitly disabled") {
 		t.Fatalf("disabled dependency was accepted: %v", err)
-	}
-}
-
-func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &enabled}
-	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523"}}
-	site, _, err := Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	printer, ok := findDeclaration(site, "printer")
-	if !ok {
-		t.Fatal("printer declaration is missing")
-	}
-	if len(printer.Guests) != 1 || printer.Guests[0].Address != "10.10.20.80" || printer.Guests[0].URL != "https://octoprint."+site.Network.Domain || !printer.Guests[0].MTLS {
-		t.Fatalf("printer guest contract is incomplete: %#v", printer.Guests)
-	}
-	if !printer.Security.Unprivileged || len(printer.USBRequirements) != 1 || printer.USBRequirements[0].DeviceType != "serial" {
-		t.Fatalf("printer USB security contract is incomplete: %#v", printer)
-	}
-	foundState, foundTLS := false, false
-	for _, state := range printer.Persistent {
-		foundState = foundState || state.Path == "/var/lib/octoprint" && state.Sensitive && state.Backup
-		foundTLS = foundTLS || state.Path == "/var/lib/boetticher/identity/tls" && state.Sensitive && state.Backup
-	}
-	if !foundState || !foundTLS {
-		t.Fatalf("printer persistent state contract is incomplete: %#v", printer.Persistent)
-	}
-	if len(printer.Secrets) != 0 {
-		t.Fatalf("printer declaration invented controller-owned secrets: %#v", printer.Secrets)
 	}
 }
 
