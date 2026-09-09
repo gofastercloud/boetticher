@@ -42,7 +42,10 @@ const (
 	GuestPrefix          = 24
 	GuestRootDisk        = "scsi0"
 	GuestMediaDisk       = "scsi1"
+	GuestCPU             = "x86-64-v3"
 	GuestAgentTimeout    = 90 * time.Second
+	GuestExecTimeout     = 30
+	GuestInstallTimeout  = 20 * 60
 )
 
 type GuestFacts struct {
@@ -210,7 +213,10 @@ func ValidateGuestConfigForSize(config map[string]string, mediaGiB int) error {
 			return fail()
 		}
 	}
-	if config["name"] != GuestName || config["cores"] != strconv.Itoa(CPUs) || config["memory"] != strconv.Itoa(MemoryMiB) || config["onboot"] != "0" || config["agent"] != "1" || config["ostype"] != "l26" || config["scsihw"] != "virtio-scsi-single" || !hasTag(config["tags"], "boetticher") || !hasTag(config["tags"], "managed") || !hasTag(config["tags"], "module") || !hasTag(config["tags"], GuestOwnerTag) {
+	if config["name"] != GuestName || config["cpu"] != GuestCPU || config["cores"] != strconv.Itoa(CPUs) || config["memory"] != strconv.Itoa(MemoryMiB) || config["onboot"] != "0" || config["agent"] != "1" || config["ostype"] != "l26" || config["scsihw"] != "virtio-scsi-single" || !hasTag(config["tags"], "boetticher") || !hasTag(config["tags"], "managed") || !hasTag(config["tags"], "module") || !hasTag(config["tags"], GuestOwnerTag) {
+		if config["name"] == GuestName && config["cpu"] != GuestCPU {
+			return errors.New("media VM CPU must be x86-64-v3; update the owned VM while stopped before retrying")
+		}
 		return fail()
 	}
 	if !strings.Contains(config["boot"], "order=scsi0") || config["ipconfig0"] != "ip="+GuestAddress+"/24,gw="+GuestGateway || config["nameserver"] != GuestGateway {
@@ -261,7 +267,10 @@ func ValidateRecoverableGuestConfigForSize(config map[string]string, mediaGiB in
 			return fail()
 		}
 	}
-	if config["name"] != GuestName || config["cores"] != strconv.Itoa(CPUs) || config["memory"] != strconv.Itoa(MemoryMiB) || config["onboot"] != "0" || config["agent"] != "1" || config["ostype"] != "l26" || config["scsihw"] != "virtio-scsi-single" || !hasTag(config["tags"], "boetticher") || !hasTag(config["tags"], "managed") || !hasTag(config["tags"], "module") || !hasTag(config["tags"], GuestOwnerTag) {
+	if config["name"] != GuestName || config["cpu"] != GuestCPU || config["cores"] != strconv.Itoa(CPUs) || config["memory"] != strconv.Itoa(MemoryMiB) || config["onboot"] != "0" || config["agent"] != "1" || config["ostype"] != "l26" || config["scsihw"] != "virtio-scsi-single" || !hasTag(config["tags"], "boetticher") || !hasTag(config["tags"], "managed") || !hasTag(config["tags"], "module") || !hasTag(config["tags"], GuestOwnerTag) {
+		if config["name"] == GuestName && config["cpu"] != GuestCPU {
+			return errors.New("media VM CPU must be x86-64-v3; update the owned VM while stopped before retrying")
+		}
 		return fail()
 	}
 	if !strings.Contains(config["boot"], "order=scsi0") || config["ipconfig0"] != "ip="+GuestAddress+"/24,gw="+GuestGateway || config["nameserver"] != GuestGateway || config["serial0"] != "socket" {
@@ -316,6 +325,9 @@ func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, m
 		}
 		return recoverGuestWithMedia(ctx, host, guest.Config, mediaGiB)
 	}
+	if err := requireGuestCPUFeatures(ctx, host); err != nil {
+		return err
+	}
 	remoteImage, cleanup, err := copyAssetToHost(ctx, host, BuilderPath, "arrstack-builder")
 	if err != nil {
 		return err
@@ -324,7 +336,7 @@ func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, m
 	if _, err := host.Run(ctx, "sh "+shellQuote(remoteImage)+" "+shellQuote(ImagePath)); err != nil {
 		return fmt.Errorf("build pinned arrstack VM image: %w", err)
 	}
-	command := "set -eu; test -r " + shellQuote(ImagePath) + "; image=" + shellQuote(ImagePath) + "; qm create " + strconv.Itoa(GuestVMID) + " --name " + shellQuote(GuestName) + " --memory " + strconv.Itoa(MemoryMiB) + " --cores " + strconv.Itoa(CPUs) + " --ostype l26 --onboot 0 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+GuestOwnerTag+";"+GuestMediaPendingTag) + " --net0 " + shellQuote("virtio="+GuestMAC+",bridge=vmbr1,tag="+strconv.Itoa(GuestVLAN)+",firewall=1") + " --ipconfig0 " + shellQuote("ip="+GuestAddress+"/24,gw="+GuestGateway) + " --nameserver " + shellQuote(GuestGateway) + " --ide2 " + shellQuote(StorageID+":cloudinit") + "; qm importdisk " + strconv.Itoa(GuestVMID) + " \"$image\" " + shellQuote(StorageID) + " --format raw >/dev/null; disk=$(qm config " + strconv.Itoa(GuestVMID) + " | awk -F': ' '/^unused[0-9]+:/ {print $2; exit}'); test -n \"$disk\"; case \"$disk\" in " + shellQuote(StorageID+":vm-290-disk-") + "*) ;; *) echo 'unexpected arrstack root disk identity' >&2; exit 1 ;; esac; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestRootDisk + " \"$disk,ssd=1\"; qm resize " + strconv.Itoa(GuestVMID) + " " + GuestRootDisk + " " + strconv.Itoa(RootDiskGiB) + "G; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestMediaDisk + " " + shellQuote(StorageID+":"+strconv.Itoa(mediaGiB)+",format=raw,ssd=1") + ""
+	command := "set -eu; test -r " + shellQuote(ImagePath) + "; image=" + shellQuote(ImagePath) + "; qm create " + strconv.Itoa(GuestVMID) + " --name " + shellQuote(GuestName) + " --cpu " + shellQuote(GuestCPU) + " --memory " + strconv.Itoa(MemoryMiB) + " --cores " + strconv.Itoa(CPUs) + " --ostype l26 --onboot 0 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+GuestOwnerTag+";"+GuestMediaPendingTag) + " --net0 " + shellQuote("virtio="+GuestMAC+",bridge=vmbr1,tag="+strconv.Itoa(GuestVLAN)+",firewall=1") + " --ipconfig0 " + shellQuote("ip="+GuestAddress+"/24,gw="+GuestGateway) + " --nameserver " + shellQuote(GuestGateway) + " --ide2 " + shellQuote(StorageID+":cloudinit") + "; qm importdisk " + strconv.Itoa(GuestVMID) + " \"$image\" " + shellQuote(StorageID) + " --format raw >/dev/null; disk=$(qm config " + strconv.Itoa(GuestVMID) + " | awk -F': ' '/^unused[0-9]+:/ {print $2; exit}'); test -n \"$disk\"; case \"$disk\" in " + shellQuote(StorageID+":vm-290-disk-") + "*) ;; *) echo 'unexpected arrstack root disk identity' >&2; exit 1 ;; esac; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestRootDisk + " \"$disk,ssd=1\"; qm resize " + strconv.Itoa(GuestVMID) + " " + GuestRootDisk + " " + strconv.Itoa(RootDiskGiB) + "G; qm set " + strconv.Itoa(GuestVMID) + " --" + GuestMediaDisk + " " + shellQuote(StorageID+":"+strconv.Itoa(mediaGiB)+",format=raw,ssd=1") + ""
 	if _, err := host.Run(ctx, command); err != nil {
 		return fmt.Errorf("create arrstack VM: %w", err)
 	}
@@ -336,6 +348,27 @@ func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, m
 		return errors.New("arrstack VM was not present after creation")
 	}
 	return nil
+}
+
+func requireGuestCPUFeatures(ctx context.Context, host firewallmodule.HostClient) error {
+	result, err := host.Run(ctx, "awk '/^flags[[:space:]]*:/ {print; exit}' /proc/cpuinfo")
+	if err != nil || !hasGuestCPUFeatures(string(result.Stdout)) {
+		return errors.New("Host CPU lacks the x86-64-v3 features required by the media Bun runtime")
+	}
+	return nil
+}
+
+func hasGuestCPUFeatures(flags string) bool {
+	available := map[string]bool{}
+	for _, flag := range strings.Fields(flags) {
+		available[flag] = true
+	}
+	for _, flag := range []string{"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "movbe", "popcnt", "sse4_1", "sse4_2", "xsave"} {
+		if !available[flag] {
+			return false
+		}
+	}
+	return available["lzcnt"] || available["abm"]
 }
 
 func recoverGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, config map[string]string, mediaGiB int) error {
@@ -379,7 +412,11 @@ func recoveryCommand(config map[string]string, mediaGiB int) string {
 }
 
 func guestExec(command string) string {
-	return "qm guest exec " + strconv.Itoa(GuestVMID) + " --synchronous 1 -- /bin/sh -c " + shellQuote("set -eu; "+command)
+	return guestExecWithTimeout(command, GuestExecTimeout)
+}
+
+func guestExecWithTimeout(command string, timeoutSeconds int) string {
+	return "qm guest exec " + strconv.Itoa(GuestVMID) + " --synchronous 1 --timeout " + strconv.Itoa(timeoutSeconds) + " -- /bin/sh -c " + shellQuote("set -eu; "+command)
 }
 
 func guestExecJSON(ctx context.Context, host firewallmodule.HostClient, command string) error {
@@ -388,7 +425,24 @@ func guestExecJSON(ctx context.Context, host firewallmodule.HostClient, command 
 }
 
 func guestExecWithStdinJSON(ctx context.Context, host firewallmodule.HostClient, command string, input io.Reader) (string, error) {
-	result, err := host.RunWithStdin(ctx, "qm guest exec "+strconv.Itoa(GuestVMID)+" --synchronous 1 --pass-stdin -- /bin/sh -c "+shellQuote("set -eu; "+command), input)
+	return guestExecWithStdinTimeoutJSON(ctx, host, command, input, GuestExecTimeout)
+}
+
+func guestExecWithStdinTimeoutJSON(ctx context.Context, host firewallmodule.HostClient, command string, input io.Reader, timeoutSeconds int) (string, error) {
+	result, err := host.RunWithStdin(ctx, "qm guest exec "+strconv.Itoa(GuestVMID)+" --synchronous 1 --timeout "+strconv.Itoa(timeoutSeconds)+" --pass-stdin -- /bin/sh -c "+shellQuote("set -eu; "+command), input)
+	if err != nil {
+		return "", err
+	}
+	return parseGuestResponse(result.Stdout)
+}
+
+func guestExecLongJSON(ctx context.Context, host firewallmodule.HostClient, command string, timeoutSeconds int) error {
+	_, err := guestExecLongOutput(ctx, host, command, timeoutSeconds)
+	return err
+}
+
+func guestExecLongOutput(ctx context.Context, host firewallmodule.HostClient, command string, timeoutSeconds int) (string, error) {
+	result, err := host.Run(ctx, guestExecWithTimeout(command, timeoutSeconds))
 	if err != nil {
 		return "", err
 	}
@@ -467,7 +521,7 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	}
 	mediaPending := hasTag(guest.Config["tags"], GuestMediaPendingTag)
 	// The VM-owned marker, rather than caller history, authorizes first-use formatting.
-	if err := guestExecJSON(ctx, host, "test -x /usr/bin/qemu-ga; "+mediaMountScript(mediaPending)); err != nil {
+	if err := guestExecJSON(ctx, host, "command -v qemu-ga >/dev/null; "+mediaMountScript(mediaPending)); err != nil {
 		return fmt.Errorf("prepare arrstack media disk: %w", err)
 	}
 	if mediaPending {
@@ -480,7 +534,9 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 		return err
 	}
 	policyUnit := "[Unit]\nDescription=Boetticher arrstack fail-closed firewall\nBefore=docker.service\nAfter=network-online.target nftables.service\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=" + GuestPolicyPath + "\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n"
-	policyInstall := "install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policy + "\nARRSTACK_POLICY\ncat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
+	policyInstall := "command -v docker >/dev/null; docker compose version >/dev/null; install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policy + "\nARRSTACK_POLICY\ncat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
+	dockerDropinInstall := "install -d -m 0755 /etc/systemd/system/docker.service.d; cat > /etc/systemd/system/docker.service.d/boetticher-arrstack-firewall.conf <<'DOCKER_DROPIN'\n[Unit]\nRequires=boetticher-arrstack-firewall.service\nAfter=boetticher-arrstack-firewall.service\nDOCKER_DROPIN\n"
+	policyInstall = dockerDropinInstall + strings.Replace(policyInstall, "systemctl start docker;", "systemctl enable docker.service; systemctl start docker;", 1)
 	if err := guestExecJSON(ctx, host, policyInstall); err != nil {
 		return fmt.Errorf("arrstack guest prerequisites are not ready: %w", err)
 	}
@@ -488,21 +544,46 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 		return err
 	}
 	command := "ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
+	installTimeout, err := installerTimeoutSeconds(ctx)
+	if err != nil {
+		return err
+	}
 	if len(cloudflareToken) > 0 {
 		if len(cloudflareToken) > 16<<10 {
 			return errors.New("Cloudflare token exceeds the bounded credential size")
 		}
 		command = "tmp=$(mktemp /run/boetticher-cloudflare-token.XXXXXX); trap 'rm -f \"$tmp\"' EXIT HUP INT TERM; chmod 0600 \"$tmp\"; cat >\"$tmp\"; CF_API_TOKEN=\"$(cat \"$tmp\")\" " + command
-		if _, err := guestExecWithStdinJSON(ctx, host, command, bytes.NewReader(cloudflareToken)); err != nil {
-			return errors.New("run headless arrstack installer with Cloudflare token: guest command failed")
+		if _, err := guestExecWithStdinTimeoutJSON(ctx, host, installerGuardCommand(command, installTimeout), bytes.NewReader(cloudflareToken), installTimeout+35); err != nil {
+			return fmt.Errorf("run headless arrstack installer with Cloudflare token: %w", err)
 		}
-	} else if err := guestExecJSON(ctx, host, command); err != nil {
+	} else if err := guestExecLongJSON(ctx, host, installerGuardCommand(command, installTimeout), installTimeout+35); err != nil {
 		return fmt.Errorf("run headless arrstack installer: %w", err)
 	}
 	if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {
 		return fmt.Errorf("capture applied arrstack firewall receipt: %w", err)
 	}
 	return nil
+}
+
+func installerGuardCommand(command string, timeoutSeconds int) string {
+	return "flock -n /run/boetticher/arrstack-install.lock timeout --signal TERM --kill-after 30s " + strconv.Itoa(timeoutSeconds) + "s sh -c " + shellQuote(command)
+}
+
+func installerTimeoutSeconds(ctx context.Context) (int, error) {
+	const cleanupMargin = 65 * time.Second
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return GuestInstallTimeout, nil
+	}
+	remaining := time.Until(deadline) - cleanupMargin
+	seconds := int(remaining / time.Second)
+	if seconds < 1 {
+		return 0, errors.New("insufficient Controller deadline remains for the media installer")
+	}
+	if seconds > GuestInstallTimeout {
+		return GuestInstallTimeout, nil
+	}
+	return seconds, nil
 }
 
 func policyReceiptCaptureCommand() string {
@@ -518,7 +599,7 @@ func policyAgreementCommand(peerPort int) string {
 	return "set -eu; receipt=" + shellQuote(GuestPolicyReceipt) + "; test -f \"$receipt\"; test ! -L \"$receipt\"; test \"$(stat -c %a \"$receipt\")\" = 600; actual_script=$(sha256sum " + shellQuote(GuestPolicyPath) + " | awk '{print $1}'); test \"$actual_script\" = " + shellQuote(expected) + "; recorded_script=$(awk -F= '$1 == \"script_sha256\" { print $2 }' \"$receipt\"); test \"$recorded_script\" = \"$actual_script\"; rules=$(mktemp /run/boetticher/arrstack/status-rules.XXXXXX); trap 'rm -f \"$rules\"' EXIT HUP INT TERM; nft --stateless list table inet boetticher_arrstack >\"$rules\"; iptables -S DOCKER-USER >>\"$rules\"; iptables -S FORWARD >>\"$rules\"; grep -Fx -- '-A FORWARD -j DOCKER-USER' \"$rules\" >/dev/null; actual_rules=$(sha256sum \"$rules\" | awk '{print $1}'); recorded_rules=$(awk -F= '$1 == \"rules_sha256\" { print $2 }' \"$receipt\"); test -n \"$recorded_rules\"; test \"$recorded_rules\" = \"$actual_rules\""
 }
 
-func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) error {
+func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) (err error) {
 	info, err := os.Lstat(AdapterPath)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
 		return errors.New("arrstack adapter is not a private regular file")
@@ -539,10 +620,29 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) e
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("rewind arrstack adapter: %w", err)
 	}
-	if err := guestExecJSON(ctx, host, "rm -f /run/boetticher-arrstack; install -d -m 0700 /run"); err != nil {
+	const transferDir = "/run/boetticher/arrstack-transfer"
+	const transferPath = transferDir + "/adapter"
+	prepareTransfer := "set -eu; test -d /run; test ! -L /run; if test -e /run/boetticher; then test -d /run/boetticher; test ! -L /run/boetticher; else install -d -m 0700 /run/boetticher; fi; if test -e " + transferDir + "; then test -d " + transferDir + "; test ! -L " + transferDir + "; fi; install -d -m 0700 " + transferDir + "; rm -f " + transferPath
+	if err := guestExecJSON(ctx, host, prepareTransfer); err != nil {
 		return fmt.Errorf("prepare guest adapter transfer: %w", err)
 	}
-	const chunkSize = 64 << 10
+	defer func() {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancelCleanup()
+		cleanupErr := guestExecJSON(cleanupCtx, host, "if test -e "+transferDir+"; then test ! -L "+transferDir+"; test -d "+transferDir+"; rm -f "+transferPath+"; rmdir "+transferDir+"; fi")
+		if cleanupErr != nil {
+			if err == nil {
+				err = fmt.Errorf("cleanup guest adapter transfer: %w", cleanupErr)
+			} else {
+				err = fmt.Errorf("%w; cleanup guest adapter transfer: %v", err, cleanupErr)
+			}
+		}
+	}()
+	installed, err := guestExecOutput(ctx, host, "if test -f "+shellQuote(GuestAdapterPath)+" && test ! -L "+shellQuote(GuestAdapterPath)+" && test \"$(stat -c '%u %a' "+shellQuote(GuestAdapterPath)+")\" = '0 755'; then sha256sum "+shellQuote(GuestAdapterPath)+"; else printf '%s\\n' MISSING; fi")
+	if err == nil && strings.HasPrefix(installed, want+" ") {
+		return nil
+	}
+	const chunkSize = 512 << 10
 	remaining := info.Size()
 	for remaining > 0 {
 		n := int64(chunkSize)
@@ -553,12 +653,12 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) e
 		if _, err := io.ReadFull(file, chunk); err != nil {
 			return fmt.Errorf("read arrstack adapter chunk: %w", err)
 		}
-		if _, err := guestExecWithStdinJSON(ctx, host, "cat >> /run/boetticher-arrstack", bytes.NewReader(chunk)); err != nil {
+		if _, err := guestExecWithStdinJSON(ctx, host, "cat >> "+transferPath, bytes.NewReader(chunk)); err != nil {
 			return fmt.Errorf("stream arrstack adapter through guest agent: %w", err)
 		}
 		remaining -= n
 	}
-	result, err := guestExecOutput(ctx, host, "sha256sum /run/boetticher-arrstack")
+	result, err := guestExecOutput(ctx, host, "sha256sum "+transferPath)
 	if err != nil {
 		return fmt.Errorf("verify guest adapter transfer: %w", err)
 	}
@@ -566,7 +666,7 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) e
 	if len(got) == 0 || got[0] != want {
 		return errors.New("arrstack adapter checksum changed during guest transfer")
 	}
-	if err := guestExecJSON(ctx, host, "install -m 0755 /run/boetticher-arrstack "+shellQuote(GuestAdapterPath)+"; rm -f /run/boetticher-arrstack"); err != nil {
+	if err := guestExecJSON(ctx, host, "install -m 0755 "+transferPath+" "+shellQuote(GuestAdapterPath)); err != nil {
 		return fmt.Errorf("install arrstack adapter in guest: %w", err)
 	}
 	return nil

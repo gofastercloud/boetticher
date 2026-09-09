@@ -1,17 +1,19 @@
 package arrstack
 
 import (
+	"context"
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateGuestConfigRequiresExactOwnedQEMUShape(t *testing.T) {
 	config := map[string]string{
-		"agent": "1", "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
+		"agent": "1", "cpu": GuestCPU, "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
 		"memory": "8192", "name": GuestName, "net0": "virtio=" + GuestMAC + ",bridge=vmbr1,tag=20,firewall=1",
 		"onboot": "0", "ostype": "l26", "scsi0": "boetticher-data:vm-290-disk-0,ssd=1,size=32G",
 		"scsi1": "boetticher-data:vm-290-disk-1,format=raw,ssd=1,size=256G", "scsihw": "virtio-scsi-single",
@@ -22,12 +24,15 @@ func TestValidateGuestConfigRequiresExactOwnedQEMUShape(t *testing.T) {
 		t.Fatalf("valid arrstack VM rejected: %v", err)
 	}
 	for name, value := range map[string]string{
+		"wrong CPU":    "kvm64",
 		"foreign disk": "other-storage:vm-290-disk-0,ssd=1,size=32G",
 		"wrong bridge": "virtio=" + GuestMAC + ",bridge=vmbr0,tag=20,firewall=1",
 		"wrong owner":  "boetticher;managed;module;boetticher-module-other",
 	} {
 		bad := cloneConfig(config)
 		switch name {
+		case "wrong CPU":
+			bad["cpu"] = value
 		case "foreign disk":
 			bad["scsi0"] = value
 		case "wrong bridge":
@@ -41,6 +46,113 @@ func TestValidateGuestConfigRequiresExactOwnedQEMUShape(t *testing.T) {
 	}
 }
 
+func TestNewMediaGuestRequiresX8664V3HostFeatures(t *testing.T) {
+	commandSource, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(commandSource)
+	for _, feature := range []string{"avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "popcnt", "sse4_2", "xsave"} {
+		if !strings.Contains(text, feature) {
+			t.Fatalf("x86-64-v3 preflight missing %s", feature)
+		}
+	}
+	if !strings.Contains(text, "requireGuestCPUFeatures(ctx, host)") {
+		t.Fatal("new media guest creation does not run the CPU feature preflight")
+	}
+}
+
+func TestGuestCPUFeatureParserAcceptsAbmAliasForLzcnt(t *testing.T) {
+	flags := "flags : avx avx2 bmi1 bmi2 f16c fma abm movbe popcnt sse4_1 sse4_2 xsave"
+	if !hasGuestCPUFeatures(flags) {
+		t.Fatal("x86-64-v3 feature parser rejected the abm alias for lzcnt")
+	}
+	if hasGuestCPUFeatures(strings.Replace(flags, "abm", "", 1)) {
+		t.Fatal("x86-64-v3 feature parser accepted missing lzcnt/abm")
+	}
+}
+
+func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "docker compose version >/dev/null") {
+		t.Fatal("media runtime does not preflight Docker Compose")
+	}
+}
+
+func TestMediaDockerDependsOnFailClosedFirewallPolicy(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{"docker.service.d/boetticher-arrstack-firewall.conf", "Requires=boetticher-arrstack-firewall.service", "After=boetticher-arrstack-firewall.service", "systemctl enable docker.service"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Docker recovery dependency missing %q", want)
+		}
+	}
+	if strings.Contains(text, "Requires=docker.service") {
+		t.Fatal("firewall policy must not require Docker")
+	}
+}
+
+func TestGuestExecCommandsHaveBoundedNativeTimeouts(t *testing.T) {
+	if !strings.Contains(guestExec("true"), "--synchronous 1 --timeout 30 --") {
+		t.Fatal("short guest exec is not bounded")
+	}
+	if !strings.Contains(guestExecWithTimeout("true", GuestInstallTimeout), "--synchronous 1 --timeout 1200 --") {
+		t.Fatal("installer guest exec does not use the 20-minute timeout")
+	}
+	if strings.Contains(guestExecWithTimeout("true", GuestInstallTimeout), "--synchronous 1 --pass-stdin") {
+		t.Fatal("timeout helper unexpectedly implies stdin")
+	}
+}
+
+func TestInstallerGuardRefusesOverlapAndBoundsChildTermination(t *testing.T) {
+	command := installerGuardCommand("sleep 120", GuestInstallTimeout)
+	for _, want := range []string{"flock -n /run/boetticher/arrstack-install.lock", "timeout --signal TERM --kill-after 30s 1200s", "sh -c"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("installer guard missing %q", want)
+		}
+	}
+}
+
+func TestInstallerTimeoutLeavesCleanupMarginAndCapsAtTwentyMinutes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	seconds, err := installerTimeoutSeconds(ctx)
+	if err != nil || seconds < 525 || seconds > 545 {
+		t.Fatalf("installer timeout = %d, err=%v; want about 540 seconds", seconds, err)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := installerTimeoutSeconds(ctx); err == nil {
+		t.Fatal("installer timeout accepted a deadline without cleanup margin")
+	}
+}
+
+func TestInstallerGuardLinuxBehavior(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("Docker is unavailable")
+	}
+	const script = `set -eu
+lock=/tmp/boetticher-installer.lock
+flock -n "$lock" sh -c 'sleep 2' & first=$!
+sleep .1
+if flock -n "$lock" true; then exit 11; fi
+wait "$first"
+if timeout --signal TERM --kill-after 1s 1s sh -c 'trap "" TERM; while :; do :; done'; then exit 12; else status=$?; fi
+test "$status" = 124 || test "$status" = 137
+`
+	cmd := exec.Command("docker", "run", "--rm", "--platform", "linux/amd64", "debian:13-slim", "sh", "-ec", script)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Linux installer guard behavior failed: %v: %s", err, output)
+	}
+}
+
 func TestValidateGuestConfigRejectsUnknownConfigAndMissingMediaDisk(t *testing.T) {
 	config := map[string]string{"name": GuestName, "scsi0": "boetticher-data:vm-290-disk-0,size=32G", "scsi1": "boetticher-data:vm-290-disk-1,size=256G"}
 	config["unexpected"] = "foreign"
@@ -51,7 +163,7 @@ func TestValidateGuestConfigRejectsUnknownConfigAndMissingMediaDisk(t *testing.T
 
 func TestRecoverableGuestAcceptsOnlyAnExactOwnedInterruptedImport(t *testing.T) {
 	config := map[string]string{
-		"agent": "1", "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
+		"agent": "1", "cpu": GuestCPU, "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
 		"memory": "8192", "name": GuestName, "net0": "virtio=" + GuestMAC + ",bridge=vmbr1,tag=20,firewall=1",
 		"onboot": "0", "ostype": "l26", "scsihw": "virtio-scsi-single", "serial0": "socket",
 		"tags":      "boetticher;managed;module;" + GuestOwnerTag,
@@ -115,7 +227,7 @@ func TestPolicyReceiptIsCapturedOnlyAfterTheInstallerSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	installer := strings.Index(text, "if err := guestExecJSON(ctx, host, command); err != nil {")
+	installer := strings.Index(text, "if err := guestExecLongJSON(ctx, host, installerGuardCommand(command, installTimeout), installTimeout+35); err != nil {")
 	capture := strings.Index(text, "if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {")
 	if installer < 0 || capture < installer {
 		t.Fatalf("policy receipt capture must follow successful adapter installation: installer=%d capture=%d", installer, capture)
@@ -163,7 +275,7 @@ func TestMediaFormattingRequiresPendingMarkerAndBlankOwnedDisk(t *testing.T) {
 		t.Fatal("existing media preparation may not format an unmarked disk")
 	}
 	command := recoveryCommand(map[string]string{
-		"agent": "1", "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
+		"agent": "1", "cpu": GuestCPU, "boot": "order=scsi0", "cores": "4", "ide2": "boetticher-data:cloudinit",
 		"memory": "8192", "name": GuestName, "net0": "virtio=" + GuestMAC + ",bridge=vmbr1,tag=20,firewall=1",
 		"onboot": "0", "ostype": "l26", "scsihw": "virtio-scsi-single", "serial0": "socket",
 		"tags":      "boetticher;managed;module;" + GuestOwnerTag,
@@ -177,6 +289,52 @@ func TestMediaFormattingRequiresPendingMarkerAndBlankOwnedDisk(t *testing.T) {
 	}
 	if failure := strings.Index(command[guard:attach], "exit 1"); failure < 0 {
 		t.Fatal("unmarked media allocation has no failing guard branch")
+	}
+}
+
+func TestMediaPreparationUsesPathNeutralGuestAgentCheck(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "command -v qemu-ga >/dev/null") {
+		t.Fatal("media preparation does not use a path-neutral qemu-agent check")
+	}
+	if strings.Contains(text, "test -x /usr/bin/qemu-ga") {
+		t.Fatal("media preparation relies on a distro-specific qemu-agent path")
+	}
+}
+
+func TestAdapterTransferDoesNotChangeRunPermissions(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Contains(text, "chmod 0700 /run") || strings.Contains(text, "install -d -m 0700 /run\"") {
+		t.Fatal("adapter transfer changes /run permissions")
+	}
+	for _, want := range []string{"/run/boetticher/arrstack-transfer", "rmdir \"+transferDir", "context.WithTimeout(context.Background(), 15*time.Second)", "cleanup guest adapter transfer", "stat -c '%u %a'", "sha256sum \"+shellQuote(GuestAdapterPath)"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("adapter transfer missing bounded cleanup %q", want)
+		}
+	}
+}
+
+func TestAdapterTransferUsesMeasuredChunkBoundAndRetainsSizeChecksumGuards(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "const chunkSize = 512 << 10") {
+		t.Fatal("adapter transfer does not use the measured 512 KiB RPC chunk")
+	}
+	for _, want := range []string{"info.Size() > 256<<20", "sha256.New()", "adapter checksum changed during guest transfer"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("adapter transfer guard missing %q", want)
+		}
 	}
 }
 

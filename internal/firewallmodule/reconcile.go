@@ -73,6 +73,10 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 }
 
 func managedStaleSection(name string, section openwrt.UCISection) bool {
+	if section.Type == "route" && strings.HasPrefix(name, "boetticher_vpn_client_mtu_") {
+		address := section.Options["target"]
+		return address != "" && section.Options["interface"] == "airvpn" && section.Options["netmask"] == "255.255.255.255" && name == nativeVPNClientMTUSectionName(address) && section.Options["mtu"] != ""
+	}
 	if section.Type == "redirect" && strings.HasPrefix(name, "boetticher_vpn_forward_") {
 		label := strings.TrimPrefix(section.Options["name"], "Boetticher VPN ")
 		if label == "" || label == section.Options["name"] {
@@ -88,7 +92,7 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 	}
 	if strings.HasPrefix(name, "boetticher_vpn_") {
 		switch section.Type {
-		case "interface", "wireguard_airvpn", "route", "rule", "zone", "forwarding":
+		case "interface", "wireguard_airvpn", "rule", "zone", "forwarding":
 			return true
 		}
 	}

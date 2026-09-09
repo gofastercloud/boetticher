@@ -100,7 +100,8 @@ func VPNRuntimeStatusViaHost(ctx context.Context, host HostClient) (VPNRuntimeSt
 	return parseVPNRuntimeStatus(output.Data)
 }
 
-// VPNEndpointViaHost reads only the active public WireGuard endpoint.
+// VPNEndpointViaHost reads only the active public WireGuard endpoint. It is
+// used to prevent a stale already-up interface from satisfying profile state.
 func VPNEndpointViaHost(ctx context.Context, host HostClient) (string, error) {
 	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/sh -c 'set -eu; /usr/bin/wg show airvpn endpoints'")
 	if err != nil {
@@ -121,6 +122,41 @@ func VPNEndpointViaHost(ctx context.Context, host HostClient) (string, error) {
 		return "", errors.New("provider VPN endpoint is unavailable")
 	}
 	return fields[1], nil
+}
+
+func VPNClientMTURoutesViaHost(ctx context.Context, host HostClient, addresses []string, mtu int) error {
+	if mtu < 576 || mtu > 9000 || len(addresses) == 0 {
+		return errors.New("VPN client MTU route requirements are invalid")
+	}
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/sh -c 'set -eu; ip -4 route show table main'")
+	if err != nil {
+		return fmt.Errorf("read provider VPN client MTU routes: %w", err)
+	}
+	var output struct {
+		ExitCode *int   `json:"exitcode"`
+		Data     string `json:"out-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &output); err != nil || output.ExitCode == nil || *output.ExitCode != 0 {
+		return errors.New("provider VPN client MTU route readback failed")
+	}
+	want := strconv.Itoa(mtu)
+	for _, address := range addresses {
+		found := false
+		for _, line := range strings.Split(output.Data, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 6 && fields[0] == address+"/32" && fields[1] == "dev" && fields[2] == "airvpn" {
+				for i := 3; i+1 < len(fields); i++ {
+					if fields[i] == "mtu" && fields[i+1] == want {
+						found = true
+					}
+				}
+			}
+		}
+		if !found {
+			return fmt.Errorf("provider VPN client MTU route missing for %s", address)
+		}
+	}
+	return nil
 }
 
 func parseVPNRuntimeStatus(data string) (VPNRuntimeStatus, error) {

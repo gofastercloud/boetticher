@@ -613,6 +613,15 @@ func verifyVPN(ctx context.Context, provider *openwrt.Client, serviceContext cli
 		if endpointErr != nil || endpoint != want {
 			return runtime, fmt.Errorf("VPN active endpoint does not match retained profile")
 		}
+		addresses := make([]string, 0, len(modules.VPN.Clients))
+		for _, name := range modules.VPN.Clients {
+			if reservation, ok := clientservices.ResolveReservation(modules, name); ok {
+				addresses = append(addresses, reservation.Address)
+			}
+		}
+		if err := firewallmodule.VPNClientMTURoutesViaHost(ctx, serviceContext.Host, addresses, serviceContext.VPNProfile.MTU); err != nil {
+			return runtime, err
+		}
 	}
 	if pendingAdditions {
 		return runtime, pendingVPNStatusError{}
