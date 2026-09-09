@@ -36,6 +36,30 @@ func TestRenderGatusConfigProjectsAndRemovesOnlyOwnedSystems(t *testing.T) {
 	}
 }
 
+func TestMediaGatusEndpointsUsePinnedHealthPathsAndInternalListener(t *testing.T) {
+	m := clientservices.Modules{Media: &clientservices.MediaConfig{Enabled: true, ApplicationDomain: "media.example.test", Aliases: clientservices.MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"}}}
+	endpoints, err := MediaGatusEndpoints(m)
+	if err != nil || len(endpoints) != 11 {
+		t.Fatalf("media endpoints = %d, err=%v", len(endpoints), err)
+	}
+	for _, endpoint := range endpoints {
+		if endpoint["method"] != "GET" || endpoint["url"].(string)[:len("http://10.10.20.230:9110")] != "http://10.10.20.230:9110" {
+			t.Fatalf("unsafe media endpoint: %#v", endpoint)
+		}
+		headers := endpoint["headers"].(map[string]string)
+		if headers["Cookie"] != "" || headers["Authorization"] != "" {
+			t.Fatalf("media endpoint forwards credentials: %#v", headers)
+		}
+	}
+}
+
+func TestMediaGatusEndpointsRejectIncompleteAliases(t *testing.T) {
+	_, err := MediaGatusEndpoints(clientservices.Modules{Media: &clientservices.MediaConfig{Enabled: true, ApplicationDomain: "media.example.test", Aliases: clientservices.MediaAliases{Radarr: "radarr"}}})
+	if err == nil || !strings.Contains(err.Error(), "alias") {
+		t.Fatalf("incomplete media aliases accepted: %v", err)
+	}
+}
+
 func TestRenderGatusConfigRefusesReservedNameCollision(t *testing.T) {
 	base := []byte("endpoints:\n  - name: boetticher-system-print\n    group: foreign\n    url: tcp://10.10.20.50:631\n")
 	if _, err := RenderGatusConfig(base, []clientservices.System{monitoredSystem()}); err == nil || !strings.Contains(err.Error(), "reserved") {

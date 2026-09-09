@@ -497,14 +497,18 @@ func copyAssetToHost(ctx context.Context, host firewallmodule.HostClient, source
 }
 
 func InstallRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, mediaSizes ...int) error {
-	return installRuntime(ctx, host, peerPort, cloudflareToken, clientservices.MediaConfig{ApplicationDomain: clientservices.DefaultMediaReference.ApplicationDomain, Aliases: clientservices.DefaultMediaReference.Aliases}, mediaSizes...)
+	return installRuntime(ctx, host, peerPort, cloudflareToken, clientservices.MediaConfig{ApplicationDomain: clientservices.DefaultMediaReference.ApplicationDomain, Aliases: clientservices.DefaultMediaReference.Aliases}, false, mediaSizes...)
 }
 
 func InstallRuntimeWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, config clientservices.MediaConfig, mediaSizes ...int) error {
-	return installRuntime(ctx, host, peerPort, cloudflareToken, config, mediaSizes...)
+	return installRuntime(ctx, host, peerPort, cloudflareToken, config, false, mediaSizes...)
 }
 
-func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, config clientservices.MediaConfig, mediaSizes ...int) error {
+func InstallRuntimeWithConfigAndMonitoring(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, config clientservices.MediaConfig, monitoring bool, mediaSizes ...int) error {
+	return installRuntime(ctx, host, peerPort, cloudflareToken, config, monitoring, mediaSizes...)
+}
+
+func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, config clientservices.MediaConfig, monitoring bool, mediaSizes ...int) error {
 	if peerPort < 1 || peerPort > 65535 {
 		return errors.New("arrstack peer port must be 1..65535")
 	}
@@ -529,7 +533,7 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 			return fmt.Errorf("clear arrstack media pending marker: %w", err)
 		}
 	}
-	policy, err := GuestPolicyScript(peerPort)
+	policy, err := GuestPolicyScript(peerPort, monitoring)
 	if err != nil {
 		return err
 	}
@@ -547,11 +551,11 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	if err != nil {
 		return err
 	}
-	pullTimeout := installTimeout - int((5 * time.Minute) / time.Second)
+	pullTimeout := installTimeout - int((5*time.Minute)/time.Second)
 	if pullTimeout < 1 {
 		return errors.New("insufficient Controller deadline remains for the headless media image pull")
 	}
-	command := "ARRSTACK_HEADLESS_PULL_TIMEOUT_MS=" + strconv.Itoa(pullTimeout*1000) + " ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
+	command := "ARRSTACK_MEDIA_MONITORING=" + strconv.FormatBool(monitoring) + " ARRSTACK_HEADLESS_PULL_TIMEOUT_MS=" + strconv.Itoa(pullTimeout*1000) + " ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
 	if len(cloudflareToken) > 0 {
 		if len(cloudflareToken) > 16<<10 {
 			return errors.New("Cloudflare token exceeds the bounded credential size")

@@ -227,7 +227,8 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 			return errors.New("arrstack runtime repair requires --cloudflare-token-file because no retained private Caddy credential is available")
 		}
 	}
-	if err := arrstack.InstallRuntimeWithConfig(ctx, sc.Host, port, cloudflareToken, *proposed.Media, mediaGiB); err != nil {
+	monitoring := proposed.Observability != nil && clientservices.Enabled(proposed.Observability.Enabled)
+	if err := arrstack.InstallRuntimeWithConfigAndMonitoring(ctx, sc.Host, port, cloudflareToken, *proposed.Media, monitoring, mediaGiB); err != nil {
 		return err
 	}
 	runtime, err = arrstack.ReadStatusWithConfig(ctx, sc.Host, port, *proposed.Media, mediaGiB)

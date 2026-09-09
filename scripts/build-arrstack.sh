@@ -136,6 +136,48 @@ s = caddy.read_text()
 s = s.replace('.filter((svc) => svc.adminPort !== undefined)', '.filter((svc) => svc.adminPort !== undefined && new Set(["radarr", "sonarr", "bazarr", "prowlarr", "trailarr", "qbittorrent", "jellyfin", "jellyseerr"]).has(svc.id))')
 import re
 s = re.sub(r'id: svc\.id,\s*port:', lambda _: 'id: ({radarr: process.env.ARRSTACK_ALIAS_RADARR, sonarr: process.env.ARRSTACK_ALIAS_SONARR, bazarr: process.env.ARRSTACK_ALIAS_BAZARR, prowlarr: process.env.ARRSTACK_ALIAS_PROWLARR, trailarr: process.env.ARRSTACK_ALIAS_TRAILARR} as Record<string, string | undefined>)[svc.id] ?? svc.id,' + chr(10) + '      port:', s, count=1)
+s = s.replace('''interface CaddyContext {
+  mode: CaddyMode;
+  domain: string;
+  localDnsEnabled: boolean;
+  localDnsTld: string;
+  services: CaddyServiceEntry[];
+}''', '''interface CaddyHealthEntry {
+  id: string;
+  port: number;
+  path: string;
+  upstream: string;
+}
+
+interface CaddyContext {
+  mode: CaddyMode;
+  domain: string;
+  localDnsEnabled: boolean;
+  localDnsTld: string;
+  services: CaddyServiceEntry[];
+  healthListener: boolean;
+  healthServices: CaddyHealthEntry[];
+}''')
+s = s.replace('''  return {
+    mode: opts.mode,''', '''  const healthListener = process.env.ARRSTACK_MEDIA_MONITORING === "true";
+  const healthServices: CaddyHealthEntry[] = healthListener
+    ? services
+        .filter((svc) => svc.default && svc.health?.type === "http" && svc.health.port > 0 && svc.health.path)
+        .map((svc) => ({
+          id: svc.id,
+          port: svc.health!.port,
+          path: svc.health!.path!,
+          upstream: vpnEnabled && svc.id === "qbittorrent" ? "gluetun" : svc.id,
+        }))
+    : [];
+
+  return {
+    mode: opts.mode,''')
+s = s.replace('''    services: entries,
+  };''', '''    services: entries,
+    healthListener: healthServices.length > 0,
+    healthServices,
+  };''')
 caddy.write_text(s)
 s = compose.read_text().replace('`0.0.0.0:${p}:${p}`', '`${svc.id === "caddy" ? "10.10.20.230" : "127.0.0.1"}:${p}:${p}`')
 s = s.replace('return {\n    image: CADDY_PREBUILT_IMAGE,\n    tag: CADDY_PREBUILT_TAG,\n    build: svc.build,\n  };', 'return { image: svc.image, tag: svc.tag, build: svc.build };')
@@ -149,7 +191,8 @@ replacement = needle + '''
       const peerBindAddress = process.env.ARRSTACK_BIND_ADDRESS ?? "10.10.20.230";
       if (!/^10\\.10\\.20\\.230$/.test(peerBindAddress)) throw new Error("ARRSTACK_BIND_ADDRESS must be 10.10.20.230");
       ports.push({ binding: `${peerBindAddress}:${peerPort}:${peerPort}/tcp` }, { binding: `${peerBindAddress}:${peerPort}:${peerPort}/udp` });
-    }'''
+    }
+    if (svc.id === "caddy" && process.env.ARRSTACK_MEDIA_MONITORING === "true") ports.push({ binding: "10.10.20.230:9110:9110/tcp" });'''
 if needle not in s: raise SystemExit("compose port anchor missing")
 s = s.replace(needle, replacement, 1)
 # All services use the template's `arrstack` network. Its fixed Linux bridge
@@ -198,6 +241,36 @@ catalog.write_text(text)
 compose.write_text(s)
 s = template.read_text().replace('    image: {{image}}:{{tag}}', '    image: {{image}}{{#if tag}}:{{tag}}{{/if}}')
 template.write_text(s)
+health_listener = '''
+# Internal health listener: only the monitoring VM may use it. It is separate
+# from the public TLS listener and never exposes service admin ports.
+{{#if healthListener}}
+:9110 {
+{{#each healthServices}}
+    @{{id}}_health {
+        path /{{id}}
+        remote_ip 10.10.10.20
+        method GET
+    }
+    handle @{{id}}_health {
+        rewrite * {{path}}?
+        reverse_proxy {{upstream}}:{{port}} {
+            header_up -Authorization
+            header_up -Cookie
+            header_up -X-Forwarded-For
+            header_up -X-Forwarded-Host
+            header_up -X-Forwarded-Proto
+        }
+    }
+{{/each}}
+    respond 404
+}
+{{/if}}
+'''
+caddy_template = root / "templates/Caddyfile.hbs"
+caddy_text = caddy_template.read_text()
+if ':9110 {' not in caddy_text:
+    caddy_template.write_text(caddy_text + health_listener)
 s = catalog.read_text()
 for service in ("tdarr", "gluetun", "dnsmasq", "duckdns-updater", "cloudflare-ddns", "deunhealth"):
     start = s.find("  - id: " + service)

@@ -46,6 +46,7 @@ const (
 	TargetController TargetKind = "controller"
 	TargetHost       TargetKind = "host"
 	TargetRuntime    TargetKind = "runtime"
+	TargetMedia      TargetKind = "media"
 )
 
 type ControllerIdentity struct {
@@ -82,6 +83,9 @@ func CollectionConfigForLab(config controllerhost.LabConfig, controllerAddress s
 		},
 		MetricsRetentionDays: collectionRetention(config.Modules, true),
 		LogsRetentionDays:    collectionRetention(config.Modules, false),
+	}
+	if config.Modules.Observability != nil && clientservices.Enabled(config.Modules.Observability.Enabled) && config.Modules.Media != nil && config.Modules.Media.Enabled {
+		result.Targets = append(result.Targets, Target{Name: "lab-media-01", Hostname: "lab-media-01", Address: "10.10.20.230", Kind: TargetMedia, VMID: 290, Arch: "amd64", Port: NodeExporterPort})
 	}
 	if err := result.Validate(); err != nil {
 		return CollectionConfig{}, err
@@ -149,6 +153,8 @@ func (c CollectionConfig) Validate() error {
 			expectedName, expectedHostname, expectedArch = "proxmox-host", "proxmox-host", "amd64"
 		case TargetRuntime:
 			expectedName, expectedHostname, expectedArch = "lab-monitor-01", "lab-monitor-01", "amd64"
+		case TargetMedia:
+			expectedName, expectedHostname, expectedArch = "lab-media-01", "lab-media-01", "amd64"
 		default:
 			return fmt.Errorf("collection target %s has an unknown kind", target.Name)
 		}
@@ -162,7 +168,10 @@ func (c CollectionConfig) Validate() error {
 		if target.Kind == TargetRuntime && (target.VMID != model.MonitorVMID || target.Address != binding.Address) {
 			return fmt.Errorf("collection runtime target has an unexpected VMID or address")
 		}
-		if target.Kind != TargetRuntime && target.VMID != 0 {
+		if target.Kind == TargetMedia && (target.VMID != 290 || target.Address != "10.10.20.230") {
+			return fmt.Errorf("collection media target has an unexpected VMID or address")
+		}
+		if target.Kind != TargetRuntime && target.Kind != TargetMedia && target.VMID != 0 {
 			return fmt.Errorf("collection target %s must not carry a VMID", target.Name)
 		}
 		if _, ok := seen[target.Name]; ok {
@@ -175,8 +184,8 @@ func (c CollectionConfig) Validate() error {
 		}
 		seenAddress[canonicalAddress] = struct{}{}
 	}
-	if len(c.Targets) != 3 {
-		return errors.New("collection requires exactly three managed Linux targets")
+	if len(c.Targets) != 3 && len(c.Targets) != 4 {
+		return errors.New("collection requires three managed Linux targets, plus media when enabled")
 	}
 	for _, kind := range []TargetKind{TargetController, TargetHost, TargetRuntime} {
 		found := false
@@ -190,7 +199,21 @@ func (c CollectionConfig) Validate() error {
 			return fmt.Errorf("collection target kind %s is missing", kind)
 		}
 	}
+	mediaCount := countTargetKind(c.Targets, TargetMedia)
+	if mediaCount > 1 || (len(c.Targets) == 4 && mediaCount != 1) || (len(c.Targets) == 3 && mediaCount != 0) {
+		return errors.New("duplicate collection media target")
+	}
 	return nil
+}
+
+func countTargetKind(targets []Target, kind TargetKind) int {
+	count := 0
+	for _, target := range targets {
+		if target.Kind == kind {
+			count++
+		}
+	}
+	return count
 }
 
 func collectionIPv4(value string) (netip.Addr, error) {
@@ -318,6 +341,9 @@ func (c CollectionConfig) VictoriaMetricsScrapeConfig(publicDomain ...string) (s
 	fmt.Fprintf(&b, "global:\n  scrape_interval: %s\n  scrape_timeout: 10s\nscrape_configs:\n", ScrapeInterval)
 	for _, target := range targets {
 		fmt.Fprintf(&b, "  - job_name: %s\n    scheme: https\n    metrics_path: %s\n    basic_auth:\n      username: %s\n      password_file: %s\n    tls_config:\n      ca_file: %s\n      server_name: %s\n      insecure_skip_verify: false\n    static_configs:\n      - targets: [%s]\n        labels:\n          boetticher_host: %s\n", yamlQuote("boetticher-"+target.Name), yamlQuote("/"+target.Name+"/metrics"), yamlQuote("boetticher"), yamlQuote("/run/credentials/victoriametrics.service/node-exporter-read-token"), yamlQuote("/etc/ssl/certs/ca-certificates.crt"), yamlQuote("metrics."+publicDomain[0]), yamlQuote("metrics."+publicDomain[0]+":443"), yamlQuote(target.Name))
+	}
+	if countTargetKind(targets, TargetMedia) == 1 {
+		fmt.Fprintf(&b, "  - job_name: %s\n    metrics_path: '/metrics'\n    static_configs:\n      - targets: ['127.0.0.1:8080']\n        labels:\n          boetticher_host: 'lab-monitor-01'\n          boetticher_source: 'gatus'\n", yamlQuote("boetticher-gatus"))
 	}
 	return b.String(), nil
 }

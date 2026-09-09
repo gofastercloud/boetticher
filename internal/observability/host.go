@@ -202,8 +202,12 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 		bifrostProbeEnvironment = " BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=true"
 	}
 	providers := []string{"victorialogs", "grafana", "gatus"}
+	mediaDashboardEnvironment := " BOETTICHER_OBSERVABILITY_MEDIA_ENABLED=false"
+	if modules.Media != nil && modules.Media.Enabled {
+		mediaDashboardEnvironment = " BOETTICHER_OBSERVABILITY_MEDIA_ENABLED=true"
+	}
 	for _, provider := range providers {
-		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, pushoverEnvironment, caddyEnvironment, bifrostProbeEnvironment, shellQuoteValue(provider))
+		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, pushoverEnvironment, caddyEnvironment, bifrostProbeEnvironment, mediaDashboardEnvironment, shellQuoteValue(provider))
 		installCommand := fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(installScript))
 		if _, err := c.Transport.Run(ctx, installCommand); err != nil {
 			return fmt.Errorf("install %s provider: %w", provider, err)
@@ -229,7 +233,7 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 		if provider == "holmes" {
 			holmesEnvironment = fmt.Sprintf(" BOETTICHER_OBSERVABILITY_HOLMES_ROOT=%s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/holmes", b.VMID)))
 		}
-		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, holmesEnvironment, pushoverEnvironment, shellQuoteValue(provider))
+		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, holmesEnvironment, pushoverEnvironment, mediaDashboardEnvironment, shellQuoteValue(provider))
 		if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(installScript))); err != nil {
 			return fmt.Errorf("install %s provider: %w", provider, err)
 		}
@@ -241,7 +245,7 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 	if err != nil {
 		return fmt.Errorf("read installed Gatus configuration: %w", err)
 	}
-	if err := c.ReconcileGatus(ctx, []byte(gatusConfig), modules.Systems); err != nil {
+	if err := c.ReconcileGatus(ctx, []byte(gatusConfig), modules.Systems, modules); err != nil {
 		return fmt.Errorf("reconcile Gatus registered-system checks: %w", err)
 	}
 	state := fmt.Sprintf("install -d -o root -g root -m 0755 /var/lib/boetticher/observability; printf '%%s\\n' %s > /var/lib/boetticher/observability/boetticher-config.digest; chmod 0600 /var/lib/boetticher/observability/boetticher-config.digest", shellQuoteValue(digest))
@@ -290,6 +294,9 @@ func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadR
 		return fmt.Errorf("prepare Holmes staging: %w", err)
 	}
 	files := []string{"catalog.json", "victorialogs.service", "victoriametrics.service", "grafana.service", "grafana-datasource.yaml", "grafana-dashboard.yaml", "grafana-overview.json", "grafana-host-resources.json", "grafana-service-logs.json", "grafana-observability-health.json", "grafana-alerting.yaml", "gatus.service", "gatus.config.yaml", "bifrost.service", "caddy.service"}
+	if modules.Media != nil && modules.Media.Enabled {
+		files = append(files, "grafana-media.json")
+	}
 	for _, file := range files {
 		local := assetRoot + "/" + file
 		hostFile := hostRoot + "/" + file

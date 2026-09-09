@@ -13,11 +13,22 @@ const (
 // GuestPolicyScript installs the guest-owned Docker boundary. OpenWrt DNAT
 // keeps a public peer's source address, so the router is a layer-2 provenance
 // check, never an assumed replacement peer address.
-func GuestPolicyScript(peerPort int) (string, error) {
+func GuestPolicyScript(peerPort int, monitoring ...bool) (string, error) {
 	if peerPort < 1 || peerPort > 65535 {
 		return "", fmt.Errorf("arrstack peer port must be 1..65535")
 	}
 	port := strconv.Itoa(peerPort)
+	monitorRules := ""
+	monitorInput := ""
+	monitorIPTables := ""
+	if len(monitoring) > 0 && monitoring[0] {
+		monitorInput = `    iifname "$uplink" ether saddr "$gateway_mac" ip saddr 10.10.10.20 tcp dport 9100 accept
+`
+		monitorRules = `    iifname "$uplink" oifname "$bridge" ether saddr "$gateway_mac" ip saddr 10.10.10.20 tcp dport 9110 accept
+`
+		monitorIPTables = `iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -s 10.10.10.20 -p tcp --dport 9110 -j ACCEPT
+`
+	}
 	return fmt.Sprintf(`#!/bin/sh
 set -eu
 bridge=%s
@@ -53,8 +64,9 @@ table inet boetticher_arrstack {
     iifname "lo" accept
     ct state established,related accept
     iifname "$uplink" ether saddr "$gateway_mac" ip saddr { 10.10.30.0/24, 10.10.5.10 } tcp dport 443 accept
+%s
   }
-  chain forward {
+	  chain forward {
     type filter hook forward priority filter - 1; policy drop;
     meta nfproto ipv6 drop
     ct state established,related accept
@@ -65,6 +77,7 @@ table inet boetticher_arrstack {
     iifname "$bridge" oifname "$uplink" ip daddr $private4 drop
     iifname "$bridge" oifname "$uplink" accept
     iifname "$uplink" oifname "$bridge" ether saddr "$gateway_mac" ip saddr { 10.10.30.0/24, 10.10.5.10 } tcp dport 443 accept
+%s
     iifname "$uplink" oifname "$bridge" ether saddr "$gateway_mac" ip saddr $private4 drop
     iifname "$uplink" oifname "$bridge" ether saddr "$gateway_mac" tcp dport %s accept
     iifname "$uplink" oifname "$bridge" ether saddr "$gateway_mac" udp dport %s accept
@@ -96,6 +109,7 @@ for net in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.
 done
 iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -p tcp --dport %s -j ACCEPT
 iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -p udp --dport %s -j ACCEPT
+%s
 iptables -w -A DOCKER-USER -j DROP
-`, DockerBridge, DockerBridgeSubnet, GuestGateway, GuestAddress, GuestMAC, port, port, DockerBridgeSubnet, GuestAddress, GuestAddress, port, port), nil
+`, DockerBridge, DockerBridgeSubnet, GuestGateway, GuestAddress, GuestMAC, monitorInput, monitorRules, port, port, DockerBridgeSubnet, GuestAddress, GuestAddress, port, port, monitorIPTables), nil
 }

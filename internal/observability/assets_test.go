@@ -40,6 +40,25 @@ func TestProviderAssetsPinnedAndLoopbackOnly(t *testing.T) {
 	}
 }
 
+func TestMediaDashboardUsesPinnedNodeExporterAndGatusSeries(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("assets", "grafana-media.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"node_cpu_seconds_total", "node_memory_MemAvailable_bytes", "node_memory_MemTotal_bytes", "node_filesystem_avail_bytes", "node_filesystem_size_bytes", "node_network_receive_bytes_total", "node_network_transmit_bytes_total", "gatus_results_endpoint_success", "gatus_results_duration_seconds", "gatus_results_total", "boetticher-media", "lab-media-01"} {
+		if !strings.Contains(string(data), required) {
+			t.Errorf("media dashboard missing %q", required)
+		}
+	}
+	gatus, err := os.ReadFile(filepath.Join("assets", "gatus.config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gatus), "metrics: true") {
+		t.Fatal("Gatus metrics are not enabled")
+	}
+}
+
 func TestHolmesPayloadIsPinnedAndOnlyUsesLocalEvidenceProviders(t *testing.T) {
 	root := filepath.Join("..", "..", "controller", "observability", "holmes")
 	runner, err := os.ReadFile(filepath.Join(root, "holmes-runner.py"))

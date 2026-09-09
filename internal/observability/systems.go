@@ -21,13 +21,47 @@ const (
 	gatusSystemCheckInterval = "30s"
 )
 
+// MediaGatusEndpoints derives media health checks from typed media intent.
+// The monitor reaches the guest's dedicated internal Caddy health listener;
+// application admin ports remain loopback-only in the media VM.
+func MediaGatusEndpoints(modules clientservices.Modules) ([]map[string]interface{}, error) {
+	if modules.Media == nil || !modules.Media.Enabled {
+		return nil, nil
+	}
+	if modules.Media.ApplicationDomain == "" {
+		return nil, errors.New("enabled media monitoring requires an application domain")
+	}
+	services := []struct{ name, alias, path string }{
+		{"caddy", "caddy", ""},
+		{"qbittorrent", "qbittorrent", ""}, {"prowlarr", modules.Media.Aliases.Prowlarr, "ping"},
+		{"sonarr", modules.Media.Aliases.Sonarr, "ping"}, {"radarr", modules.Media.Aliases.Radarr, "ping"},
+		{"bazarr", modules.Media.Aliases.Bazarr, "api/system/ping"}, {"ai-subtitle-translator", "ai-subtitle-translator", "health"},
+		{"flaresolverr", "flaresolverr", "health"}, {"jellyfin", "jellyfin", "health"},
+		{"jellyseerr", "jellyseerr", "api/v1/status"}, {"trailarr", modules.Media.Aliases.Trailarr, "status"},
+	}
+	result := make([]map[string]interface{}, 0, len(services))
+	for _, service := range services {
+		if service.alias == "" {
+			return nil, fmt.Errorf("media monitoring alias for %s is empty", service.name)
+		}
+		path := "/" + strings.TrimPrefix(service.path, "/")
+		result = append(result, map[string]interface{}{
+			"name": "boetticher-media-" + service.name, "group": "boetticher-media",
+			"url": "http://10.10.20.230:9110" + path, "method": "GET",
+			"headers":  map[string]string{"Host": service.alias + "." + modules.Media.ApplicationDomain, "Cookie": "", "Authorization": ""},
+			"interval": "30s", "conditions": []string{"[STATUS] == 200"},
+		})
+	}
+	return result, nil
+}
+
 // ReconcileGatus projects registered systems into the existing, owned Gatus
 // configuration. It does not create, change, or remove operator system guests.
-func (c HostClient) ReconcileGatus(ctx context.Context, base []byte, systems []clientservices.System) error {
+func (c HostClient) ReconcileGatus(ctx context.Context, base []byte, systems []clientservices.System, mediaModules ...clientservices.Modules) error {
 	if len(base) == 0 {
 		return errors.New("Gatus configuration is required")
 	}
-	payload, err := RenderGatusConfig(base, systems)
+	payload, err := RenderGatusConfig(base, systems, mediaModules...)
 	if err != nil {
 		return err
 	}
@@ -41,7 +75,7 @@ func (c HostClient) ReconcileGatus(ctx context.Context, base []byte, systems []c
 	if observation.State != "owned" {
 		return fmt.Errorf("observability guest is %s", observation.State)
 	}
-	ready, err := c.GatusSystemsHealthy(ctx, systems)
+	ready, err := c.GatusSystemsHealthy(ctx, systems, mediaModules...)
 	if err == nil && ready {
 		return nil
 	}
@@ -58,7 +92,7 @@ func (c HostClient) ReconcileGatus(ctx context.Context, base []byte, systems []c
 	if err != nil {
 		return fmt.Errorf("read back Gatus configuration: %w", err)
 	}
-	matched, err := gatusSystemsMatch([]byte(readback), systems)
+	matched, err := gatusSystemsMatch([]byte(readback), systems, mediaModules...)
 	if err != nil {
 		return fmt.Errorf("verify Gatus system projection: %w", err)
 	}
@@ -96,12 +130,12 @@ func (c HostClient) GatusConfigStatus(ctx context.Context) (string, error) {
 
 // GatusSystemsHealthy is the read-only no-op gate for registered-system
 // projection. It requires the exact desired projection and a live Gatus unit.
-func (c HostClient) GatusSystemsHealthy(ctx context.Context, systems []clientservices.System) (bool, error) {
+func (c HostClient) GatusSystemsHealthy(ctx context.Context, systems []clientservices.System, mediaModules ...clientservices.Modules) (bool, error) {
 	config, err := c.GatusConfigStatus(ctx)
 	if err != nil {
 		return false, err
 	}
-	matched, err := gatusSystemsMatch([]byte(config), systems)
+	matched, err := gatusSystemsMatch([]byte(config), systems, mediaModules...)
 	if err != nil || !matched {
 		return false, err
 	}
@@ -118,7 +152,7 @@ func (c HostClient) GatusSystemsHealthy(ctx context.Context, systems []clientser
 // RenderGatusConfig appends exact, namespaced TCP checks for registered
 // operator systems. Only endpoints bearing both the reserved group and exact
 // generated name are owned; same-group foreign endpoints remain untouched.
-func RenderGatusConfig(base []byte, systems []clientservices.System) ([]byte, error) {
+func RenderGatusConfig(base []byte, systems []clientservices.System, mediaModules ...clientservices.Modules) ([]byte, error) {
 	var config map[string]interface{}
 	if err := yaml.Unmarshal(base, &config); err != nil {
 		return nil, fmt.Errorf("decode Gatus configuration: %w", err)
@@ -138,6 +172,16 @@ func RenderGatusConfig(base []byte, systems []clientservices.System) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	mediaDesired := make(map[string]interface{})
+	if len(mediaModules) > 0 {
+		media, err := MediaGatusEndpoints(mediaModules[0])
+		if err != nil {
+			return nil, err
+		}
+		for _, endpoint := range media {
+			mediaDesired[endpoint["name"].(string)] = endpoint
+		}
+	}
 	kept := make([]interface{}, 0, len(endpoints)+len(desired))
 	for _, raw := range endpoints {
 		endpoint, ok := raw.(map[string]interface{})
@@ -148,8 +192,17 @@ func RenderGatusConfig(base []byte, systems []clientservices.System) ([]byte, er
 		if isOwnedGatusSystemEndpoint(endpoint) {
 			continue
 		}
+		if isOwnedMediaEndpoint(endpoint) {
+			if _, exists := mediaDesired[name]; !exists {
+				return nil, fmt.Errorf("Gatus endpoint %q conflicts with the reserved media identity", name)
+			}
+			continue
+		}
 		if _, reserved := desired[name]; reserved {
 			return nil, fmt.Errorf("Gatus endpoint %q conflicts with the reserved operator-system identity", name)
+		}
+		if _, reserved := mediaDesired[name]; reserved {
+			return nil, fmt.Errorf("Gatus endpoint %q conflicts with the reserved media identity", name)
 		}
 		kept = append(kept, endpoint)
 	}
@@ -161,12 +214,26 @@ func RenderGatusConfig(base []byte, systems []clientservices.System) ([]byte, er
 	for _, name := range names {
 		kept = append(kept, desired[name])
 	}
+	mediaNames := make([]string, 0, len(mediaDesired))
+	for name := range mediaDesired {
+		mediaNames = append(mediaNames, name)
+	}
+	sort.Strings(mediaNames)
+	for _, name := range mediaNames {
+		kept = append(kept, mediaDesired[name])
+	}
 	config["endpoints"] = kept
 	out, err := yaml.Marshal(config)
 	if err != nil {
 		return nil, fmt.Errorf("encode Gatus configuration: %w", err)
 	}
 	return out, nil
+}
+
+func isOwnedMediaEndpoint(endpoint map[string]interface{}) bool {
+	name, nameOK := endpoint["name"].(string)
+	group, groupOK := endpoint["group"].(string)
+	return nameOK && groupOK && group == "boetticher-media" && strings.HasPrefix(name, "boetticher-media-")
 }
 
 func desiredGatusSystemEndpoints(systems []clientservices.System) (map[string]map[string]interface{}, error) {
@@ -193,7 +260,7 @@ func desiredGatusSystemEndpoints(systems []clientservices.System) (map[string]ma
 	return desired, nil
 }
 
-func gatusSystemsMatch(config []byte, systems []clientservices.System) (bool, error) {
+func gatusSystemsMatch(config []byte, systems []clientservices.System, mediaModules ...clientservices.Modules) (bool, error) {
 	var parsed map[string]interface{}
 	if err := yaml.Unmarshal(config, &parsed); err != nil {
 		return false, fmt.Errorf("decode Gatus configuration: %w", err)
@@ -206,17 +273,30 @@ func gatusSystemsMatch(config []byte, systems []clientservices.System) (bool, er
 	if err != nil {
 		return false, err
 	}
+	mediaDesired := map[string]map[string]interface{}{}
+	if len(mediaModules) > 0 {
+		media, err := MediaGatusEndpoints(mediaModules[0])
+		if err != nil {
+			return false, err
+		}
+		for _, endpoint := range media {
+			mediaDesired[endpoint["name"].(string)] = endpoint
+		}
+	}
 	found := make(map[string]bool, len(desired))
 	for _, raw := range rawEndpoints {
 		endpoint, ok := raw.(map[string]interface{})
 		if !ok {
 			return false, errors.New("Gatus endpoint must be a mapping")
 		}
-		if !isOwnedGatusSystemEndpoint(endpoint) {
+		if !isOwnedGatusSystemEndpoint(endpoint) && !isOwnedMediaEndpoint(endpoint) {
 			continue
 		}
 		name, _ := endpoint["name"].(string)
 		expected, exists := desired[name]
+		if !exists {
+			expected, exists = mediaDesired[name]
+		}
 		if !exists || found[name] || !sameGatusSystemEndpoint(endpoint, expected) {
 			return false, nil
 		}
@@ -244,6 +324,14 @@ func validSystemEndpointSuffix(value string) bool {
 }
 
 func sameGatusSystemEndpoint(actual, expected map[string]interface{}) bool {
+	if actual["group"] == "boetticher-media" {
+		for _, key := range []string{"name", "group", "url", "method", "interval"} {
+			if actual[key] != expected[key] {
+				return false
+			}
+		}
+		return fmt.Sprint(actual["conditions"]) == fmt.Sprint(expected["conditions"]) && fmt.Sprint(actual["headers"]) == fmt.Sprint(expected["headers"])
+	}
 	for _, key := range []string{"name", "group", "url", "interval"} {
 		if actual[key] != expected[key] {
 			return false

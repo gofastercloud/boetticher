@@ -49,6 +49,28 @@ func TestGuestPolicyRejectsInvalidPeerPort(t *testing.T) {
 	}
 }
 
+func TestGuestPolicyAddsMonitorOnlyHealthAndMetricsWhenEnabled(t *testing.T) {
+	policy, err := GuestPolicyScript(QBitTorrentPort, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"ip saddr 10.10.10.20 tcp dport 9100 accept", "ip saddr 10.10.10.20 tcp dport 9110 accept", "-s 10.10.10.20 -p tcp --dport 9110 -j ACCEPT"} {
+		if !strings.Contains(policy, required) {
+			t.Fatalf("monitor policy missing %q", required)
+		}
+	}
+	if strings.Contains(policy, "oifname \"$bridge\" ether saddr \"$gateway_mac\" ip saddr 10.10.10.20 tcp dport { 9110, 9100 }") || strings.Contains(policy, "--dports 9110,9100") {
+		t.Fatal("monitor metrics port is incorrectly exposed through Docker forwarding")
+	}
+	without, err := GuestPolicyScript(QBitTorrentPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(without, "10.10.10.20") || strings.Contains(without, "9110") || strings.Contains(without, "9100") {
+		t.Fatal("disabled monitoring opened health or metrics ports")
+	}
+}
+
 func TestGuestPolicyScriptParsesAsShell(t *testing.T) {
 	policy, err := GuestPolicyScript(QBitTorrentPort)
 	if err != nil {

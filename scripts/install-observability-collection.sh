@@ -3,7 +3,7 @@ set -eu
 
 usage() {
   cat <<'EOF'
-Usage: boetticher-install-observability-collection [--root PATH] --arch amd64|arm64 --name NAME --address IPv4 --kind controller|host|runtime --collector-url URL --read-token-hash HASH
+Usage: boetticher-install-observability-collection [--root PATH] --arch amd64|arm64 --name NAME --address IPv4 --kind controller|host|runtime|media --collector-url URL --read-token-hash HASH
 
 Installs the pinned node_exporter and the owned systemd-journal-upload
 configuration for one Boetticher Linux node. Journal upload uses the explicit
@@ -28,7 +28,7 @@ while [ "$#" -gt 0 ]; do
     --arch) [ "$#" -ge 2 ] || die '--arch requires amd64 or arm64'; arch=$2; shift 2 ;;
     --name) [ "$#" -ge 2 ] || die '--name requires a managed node name'; node_name=$2; shift 2 ;;
     --address) [ "$#" -ge 2 ] || die '--address requires an IPv4 address'; node_address=$2; shift 2 ;;
-    --kind) [ "$#" -ge 2 ] || die '--kind requires controller, host, or runtime'; node_kind=$2; shift 2 ;;
+    --kind) [ "$#" -ge 2 ] || die '--kind requires controller, host, runtime, or media'; node_kind=$2; shift 2 ;;
     --collector-url) [ "$#" -ge 2 ] || die '--collector-url requires an HTTPS URL'; collector_url=$2; shift 2 ;;
     --read-token-hash) [ "$#" -ge 2 ] || die '--read-token-hash requires a bcrypt hash'; read_token_hash=$2; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -40,6 +40,7 @@ case "$arch" in amd64|arm64) ;; *) die '--arch must be amd64 or arm64' ;; esac
 case "$node_kind" in controller) expected_name=controller; expected_arch=arm64 ;;
   host) expected_name=proxmox-host; expected_arch=amd64 ;;
   runtime) expected_name=lab-monitor-01; expected_arch=amd64 ;;
+  media) expected_name=lab-media-01; expected_arch=amd64 ;;
   *) die 'node kind is not an allowlisted Boetticher Linux target' ;;
 esac
 [ "$node_name" = "$expected_name" ] || die 'node name does not match the target kind'
@@ -50,6 +51,9 @@ if ! printf '%s\n' "$node_address" | awk -F. 'NF == 4 { for (i = 1; i <= 4; i++)
 fi
 if [ "$node_kind" = runtime ] && [ "$node_address" != 10.10.10.20 ]; then
   die 'runtime address is not the owned observability guest address'
+fi
+if [ "$node_kind" = media ] && [ "$node_address" != 10.10.20.230 ]; then
+  die 'media address is not the owned arrstack guest address'
 fi
 case "$collector_url" in https://[A-Za-z0-9.-]*:443) ;; *) die 'collector URL must be the pinned HTTPS ingest origin on port 443' ;; esac
 case "$read_token_hash" in '$2a$'*|'$2b$'*|'$2y$'*) ;; *) die 'node exporter read token hash must be bcrypt' ;; esac
