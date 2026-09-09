@@ -2,6 +2,8 @@ package arrstack
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	"os"
 	"os/exec"
@@ -252,6 +254,20 @@ func TestPolicyReceiptIsCapturedOnlyAfterTheInstallerSucceeds(t *testing.T) {
 	capture := strings.Index(text, "if err := guestExecJSON(ctx, host, policyReceiptCaptureCommand()); err != nil {")
 	if installer < 0 || capture < installer {
 		t.Fatalf("policy receipt capture must follow successful adapter installation: installer=%d capture=%d", installer, capture)
+	}
+}
+
+func TestPolicyInstallDoesNotAddAHashChangingBlankLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy")
+	policy := "#!/bin/sh\nprintf test\n"
+	command := "cat > " + shellQuote(path) + " <<'ARRSTACK_POLICY'\n" + policyHeredoc(policy) + "sha256sum " + shellQuote(path)
+	output, err := exec.Command("sh", "-c", command).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256([]byte(policy))
+	if got := strings.Fields(string(output))[0]; got != hex.EncodeToString(want[:]) {
+		t.Fatalf("rendered policy hash = %s, want %s", got, hex.EncodeToString(want[:]))
 	}
 }
 
