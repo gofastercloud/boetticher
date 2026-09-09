@@ -173,6 +173,60 @@ func TestInfrastructureDNSRejectsNameCollision(t *testing.T) {
 	}
 }
 
+func TestServiceStateRejectsUserAThatWouldCreateSecondPTR(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	enabled := true
+	state, err := InfrastructureDNSRecords(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted := make([]clientservices.DNSRecord, 0, len(state))
+	for _, record := range state {
+		persisted = append(persisted, clientservices.DNSRecord{Name: record.Name, Type: record.Type, Value: record.Address})
+	}
+	_, err = ServiceStateFromModules(site, clientservices.Modules{DNS: &clientservices.DNSConfig{
+		Enabled: &enabled, Infrastructure: persisted,
+		Records: []clientservices.DNSRecord{{Name: "same-address", Type: "A", Value: site.Components[0].Address}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "use a CNAME alias") {
+		t.Fatalf("same-address user A was not refused clearly: %v", err)
+	}
+}
+
+func TestInfrastructureAddressChangeRemovesOnlyOwnedRecord(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	want, err := bindingDNSSections(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := want[0]
+	current := map[string]openwrt.UCISection{
+		old.Name:  {Type: old.Type, Options: old.Options, Lists: old.Lists},
+		"foreign": {Type: "hostrecord", Options: map[string]string{"name": "foreign." + site.Network.Domain, "ip": old.Options["ip"]}},
+	}
+	site.Components[0].Address = "10.10.99.8"
+	updated, err := bindingDNSSections(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations, err := DiffOwned(current, updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedOld, keptForeign := false, false
+	for _, mutation := range mutations {
+		if mutation.Kind == MutationDelete && mutation.Section.Name == old.Name {
+			deletedOld = true
+		}
+		if mutation.Section.Name == "foreign" {
+			keptForeign = true
+		}
+	}
+	if !deletedOld || keptForeign {
+		t.Fatalf("address change cleanup was not exact: %#v", mutations)
+	}
+}
+
 func TestServiceStateUsesNativeGlobalSectionsAndDisablesServing(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	disabled := false

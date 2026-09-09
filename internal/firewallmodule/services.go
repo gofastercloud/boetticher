@@ -253,12 +253,16 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) ([]S
 	}
 	sections = append(sections, bindingSections...)
 	ownedNames := map[string]struct{}{}
+	ownedAddresses := map[string]string{}
 	for _, section := range bindingSections {
 		if name := section.Options["name"]; name != "" {
 			ownedNames[name] = struct{}{}
 		}
 		if name := section.Options["cname"]; name != "" {
 			ownedNames[name] = struct{}{}
+		}
+		if section.Type == "hostrecord" {
+			ownedAddresses[section.Options["ip"]] = section.Options["name"]
 		}
 	}
 	for _, record := range records {
@@ -272,6 +276,11 @@ func dnsRecordSections(site model.Site, records []clientservices.DNSRecord) ([]S
 		safe := strings.TrimPrefix(nativeRecordSectionName(name), "boetticher_record_")
 		switch record.Type {
 		case "A":
+			if canonical := net.ParseIP(record.Value); canonical != nil && canonical.To4() != nil {
+				if owner, exists := ownedAddresses[canonical.To4().String()]; exists {
+					return nil, fmt.Errorf("user DNS A record %s collides with infrastructure address %s owned by %s; use a CNAME alias", name, canonical, owner)
+				}
+			}
 			sections = append(sections, Section{Name: "boetticher_record_" + safe, Type: "hostrecord", Options: map[string]string{"name": name, "ip": record.Value}, Lists: map[string][]string{}})
 		case "CNAME":
 			target, targetErr := clientservices.CanonicalName(record.Value, site.Network.Domain)
