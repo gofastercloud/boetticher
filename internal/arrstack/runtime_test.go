@@ -2,6 +2,8 @@ package arrstack
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -136,9 +138,22 @@ func TestPolicyReapplyRestartsAlreadyActiveRemainAfterExitUnit(t *testing.T) {
 	}
 }
 
+func TestCloudflareTokenStagingUsesPrivateAtomicTemporaryFile(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{"mktemp /run/boetticher-cloudflare-token.XXXXXX", "chmod 0600", "trap 'rm -f \\\"$tmp\\\"'", "CF_API_TOKEN=\\\"$(cat \\\"$tmp\\\")\\\""} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("private token staging missing %q", want)
+		}
+	}
+}
+
 func TestMediaFormattingRequiresPendingMarkerAndBlankOwnedDisk(t *testing.T) {
 	format := mediaMountScript(true)
-	for _, want := range []string{"wipefs -n", "dd if=", "mkfs.ext4 -F"} {
+	for _, want := range []string{"wipefs -n", "cmp -n 1048576", "mkfs.ext4 -F"} {
 		if !strings.Contains(format, want) {
 			t.Fatalf("pending media preparation missing %q", want)
 		}
@@ -161,6 +176,174 @@ func TestMediaFormattingRequiresPendingMarkerAndBlankOwnedDisk(t *testing.T) {
 	}
 	if failure := strings.Index(command[guard:attach], "exit 1"); failure < 0 {
 		t.Fatal("unmarked media allocation has no failing guard branch")
+	}
+}
+
+func TestMediaBlankCheckAcceptsOnlyBoundedZeroDevice(t *testing.T) {
+	bin := t.TempDir()
+	for name, body := range map[string]string{
+		"blkid":  "#!/bin/sh\nexit 2\n",
+		"wipefs": "#!/bin/sh\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name string
+		data []byte
+		pass bool
+	}{
+		{name: "exact zero", data: make([]byte, 1<<20), pass: true},
+		{name: "nonzero", data: append([]byte{1}, make([]byte, (1<<20)-1)...), pass: false},
+		{name: "short", data: make([]byte, 1<<19), pass: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "disk")
+			if err := os.WriteFile(path, tc.data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			command := "set -eu; device=" + shellQuote(path) + "; " + mediaBlankCheckCommand("\"$device\"")
+			cmd := exec.Command("sh", "-c", command)
+			cmd.Env = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin")
+			err := cmd.Run()
+			if (err == nil) != tc.pass {
+				t.Fatalf("blank check error=%v, pass=%v", err, tc.pass)
+			}
+		})
+	}
+	badBin := t.TempDir()
+	for name, body := range map[string]string{
+		"blkid":  "#!/bin/sh\nexit 2\n",
+		"wipefs": "#!/bin/sh\nexit 7\n",
+	} {
+		if err := os.WriteFile(filepath.Join(badBin, name), []byte(body), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "disk")
+	if err := os.WriteFile(path, make([]byte, 1<<20), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", "set -eu; device="+shellQuote(path)+"; "+mediaBlankCheckCommand("\"$device\""))
+	cmd.Env = append(os.Environ(), "PATH="+badBin+":/usr/bin:/bin")
+	if cmd.Run() == nil {
+		t.Fatal("wipefs error was treated as a blank disk")
+	}
+}
+
+func TestMediaFormatDoesNotReformatExistingFilesystem(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "blkid"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	called := filepath.Join(t.TempDir(), "called")
+	if err := os.WriteFile(filepath.Join(bin, "mkfs.ext4"), []byte("#!/bin/sh\nprintf called >\"$MKFS_CALLED\"\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", "device=/dev/owned; "+mediaFormatCommand("\"$device\""))
+	cmd.Env = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin", "MKFS_CALLED="+called)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("existing filesystem formatting failed: %v", err)
+	}
+	if _, err := os.Stat(called); !os.IsNotExist(err) {
+		t.Fatalf("existing filesystem invoked mkfs: stat error=%v", err)
+	}
+}
+
+func TestMediaFormatFormatsVerifiedBlankDiskOnce(t *testing.T) {
+	bin := t.TempDir()
+	for name, body := range map[string]string{
+		"blkid":     "#!/bin/sh\nexit 2\n",
+		"wipefs":    "#!/bin/sh\nexit 0\n",
+		"mkfs.ext4": "#!/bin/sh\nprintf called >\"$MKFS_CALLED\"\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "disk")
+	if err := os.WriteFile(path, make([]byte, 1<<20), 0600); err != nil {
+		t.Fatal(err)
+	}
+	called := filepath.Join(t.TempDir(), "called")
+	cmd := exec.Command("sh", "-c", "device="+shellQuote(path)+"; "+mediaFormatCommand("\"$device\""))
+	cmd.Env = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin", "MKFS_CALLED="+called)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("verified blank formatting failed: %v", err)
+	}
+	if _, err := os.Stat(called); err != nil {
+		t.Fatalf("verified blank disk did not invoke mkfs: %v", err)
+	}
+}
+
+func TestMediaMountReadbackRequiresExactMountpointUUID(t *testing.T) {
+	bin := t.TempDir()
+	findmnt := filepath.Join(bin, "findmnt")
+	if err := os.WriteFile(findmnt, []byte("#!/bin/sh\ncase \"$*\" in *--mountpoint*/var/lib/arrstack/media*) ;; *) exit 7;; esac\nprintf '%s\\n' \"$FINDMNT_UUID\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		got  string
+		pass bool
+	}{
+		{name: "unmounted directory", got: "", pass: false},
+		{name: "correct mount", got: "uuid-good", pass: true},
+		{name: "wrong mount", got: "uuid-foreign", pass: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("sh", "-c", mediaMountUUIDCheckCommand("uuid-good"))
+			cmd.Env = append(os.Environ(), "PATH="+bin+":/usr/bin:/bin", "FINDMNT_UUID="+tc.got)
+			if (cmd.Run() == nil) != tc.pass {
+				t.Fatalf("mount UUID %q pass=%v, want %v", tc.got, tc.pass, tc.pass)
+			}
+		})
+	}
+}
+
+func TestRuntimeProbeChecksQBitTorrentListenerPreferencesAndPublishedBindings(t *testing.T) {
+	probe := runtimeProbeCommand(40000)
+	for _, want := range []string{"docker port", "40000/tcp", "40000/udp", "/proc/net/tcp", "/proc/net/udp", "set -eu; hex=", "Connection\\PortRangeMin=40000", "Connection\\PortRangeMax=40000"} {
+		if !strings.Contains(probe, want) {
+			t.Fatalf("runtime probe missing qBittorrent readiness check %q", want)
+		}
+	}
+}
+
+func TestQBitSocketReadinessFailuresPropagate(t *testing.T) {
+	tests := []struct {
+		name string
+		tcp  string
+		udp  string
+		pass bool
+	}{
+		{name: "both listeners", tcp: "  0: 00000000:9C40 00000000:0000 0A\n", udp: "  0: 00000000:9C40 00000000:0000 07\n", pass: true},
+		{name: "missing tcp", udp: "  0: 00000000:9C40 00000000:0000 07\n", pass: false},
+		{name: "missing udp", tcp: "  0: 00000000:9C40 00000000:0000 0A\n", pass: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tcpPath, udpPath := filepath.Join(t.TempDir(), "tcp"), filepath.Join(t.TempDir(), "udp")
+			if err := os.WriteFile(tcpPath, []byte(tc.tcp), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(udpPath, []byte(tc.udp), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("sh", "-c", "set -eu; "+qbitSocketReadinessCommandForPaths(40000, tcpPath, udpPath)+"; true")
+			if (cmd.Run() == nil) != tc.pass {
+				t.Fatalf("socket readiness pass=%v, want %v", tc.pass, tc.pass)
+			}
+		})
+	}
+}
+
+func TestPolicyAgreementRunsWithErrexitInsideReadinessCondition(t *testing.T) {
+	probe := runtimeProbeCommand(40000)
+	if !strings.Contains(probe, "if sh -ec ") {
+		t.Fatal("policy agreement is not isolated in an explicit errexit shell")
 	}
 }
 

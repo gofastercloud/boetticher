@@ -70,8 +70,28 @@ acceptance remain separate gates.
 
 The application lifecycle uses one fixed amd64 QEMU VM, `lab-arrstack-01`
 (VMID 290, `10.10.20.230`, SERVERS VLAN 20), with a 32 GiB root disk and a
-configurable persistent media disk on `boetticher-data`. The supported operator
-journey is:
+configurable persistent media disk on `boetticher-data` (the apply default is
+256 GiB). The typed `lab.yml` intent includes:
+
+```yaml
+modules:
+  arrstack:
+    enabled: true
+    media_gib: 256
+    application_domain: davebarton.cc
+  vpn:
+    clients: [lab-arrstack-01]
+    forwards:
+      - name: arrstack-qbittorrent
+        reservation: lab-arrstack-01
+        protocols: [tcp, udp]
+        port: 35796
+```
+
+The peer forward uses TCP and UDP port `35796` on both the external and guest
+side. Before applying, the operator must complete or confirm the matching
+AirVPN forwarded-port setup and supply the assigned port in this intent. The
+supported operator journey is:
 
 ```text
 boetticher module arrstack plan --plan
@@ -86,8 +106,10 @@ The token path must be an operator-owned private regular file. It is staged only
 through the authenticated Host and guest agent, then removed; it is not printed,
 stored in intent, or included in status. The peer port comes from the existing
 `modules.vpn.forwards` entry `arrstack-qbittorrent` and preserves its TCP/UDP
-number. Applying requires the current protected-service state and a healthy VPN
-handshake before the VM or application starts. A complete protected-guest
+number. The deployed data disk and retained legacy application data are
+preserved across reapply and teardown. Applying requires the current
+protected-service state and a healthy VPN handshake before the VM or application
+starts. A complete protected-guest
 inventory is required before provider reboot, VPN teardown, or application
 teardown can stop protection; stopped guests are explicitly ignored. These
 checks are source and local-runtime safeguards and make no deployment or
@@ -96,7 +118,12 @@ packet-acceptance claim.
 The VM firewall admits HTTPS only from TRUSTED (`10.10.30.0/24`) and Tailnet
 SNAT (`10.10.5.10`); the VPN appliance owns peer-forward provenance. Caddy
 rejects unknown service names, Docker forwarding is fail-closed, and IPv6 is
-disabled. `status` reports guest application health and VPN health separately.
+disabled. The Cloudflare token must be scoped to DNS Write plus Zone Read for
+`davebarton.cc`. Published aliases are `oscar` (Radarr), `emmy` (Sonarr),
+`tony` (Bazarr), `peabody` (Prowlarr), `clio` (Trailarr), `qbittorrent`,
+`jellyfin`, and `jellyseerr`, under one `*.davebarton.cc` wildcard certificate;
+unknown hosts return 404. `status` reports guest application health and VPN
+health separately.
 Local runtime checks are evidence for the installed guest only; remote ingress,
 peer packet journeys, physical VLAN isolation, and live public acceptance remain
 `NOT TESTED` until executed. Teardown stops the VM and removes aliases and the
