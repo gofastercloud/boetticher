@@ -431,6 +431,9 @@ https://observability.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    # ACME validates DNS independently; skip only blocked local propagation polling.
+    propagation_delay 30s
+    propagation_timeout -1
   }
   reverse_proxy 127.0.0.1:3000
 }
@@ -439,6 +442,8 @@ https://status.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    propagation_delay 30s
+    propagation_timeout -1
   }
   basic_auth {
     status {\$BOETTICHER_STATUS_PASSWORD_HASH}
@@ -450,6 +455,8 @@ https://metrics.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    propagation_delay 30s
+    propagation_timeout -1
   }
   basic_auth {
     boetticher {\$BOETTICHER_METRICS_PASSWORD_HASH}
@@ -494,6 +501,8 @@ https://ingest.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    propagation_delay 30s
+    propagation_timeout -1
   }
   @journald {
     method POST
