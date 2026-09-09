@@ -102,3 +102,12 @@ func TestRetainedVPNSelectorLegacyAndBoundRoundTrip(t *testing.T) {
 		t.Fatalf("bound selector = %q err=%v", selector, err)
 	}
 }
+
+func TestVPNReactivatesWhenNativeEndpointDriftsWithoutUCIChanges(t *testing.T) {
+	if !vpnNeedsActivation(0, false, "185.206.225.50:1637", "37.46.196.18:1637") {
+		t.Fatal("stale native endpoint was treated as a healthy no-op")
+	}
+	if vpnNeedsActivation(0, false, "37.46.196.18:1637", "37.46.196.18:1637") {
+		t.Fatal("matching native endpoint triggered unnecessary activation")
+	}
+}

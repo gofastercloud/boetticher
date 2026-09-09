@@ -504,7 +504,13 @@ func runVPNApply(ctx context.Context, serviceContext clientServiceContext, opts 
 	if err != nil {
 		return err
 	}
-	if changes == 0 && !configChanged {
+	endpoint, endpointErr := firewallmodule.VPNEndpointViaHost(ctx, serviceContext.Host)
+	if endpointErr != nil {
+		return endpointErr
+	}
+	wantEndpoint := projection.EndpointHost + ":" + strconv.Itoa(projection.EndpointPort)
+	needsActivation := endpoint != wantEndpoint
+	if changes == 0 && !configChanged && !needsActivation {
 		if _, err := verifyVPN(ctx, provider, serviceContext, modules, state, out); err != nil {
 			return err
 		}
@@ -537,6 +543,10 @@ func runVPNApply(ctx context.Context, serviceContext clientServiceContext, opts 
 	fmt.Fprintf(out, "VPN: CONNECTED\nConfiguration: saved\nConnection: connected\nEgress: unverified\nEnforcement: present\n")
 	_ = errOut
 	return nil
+}
+
+func vpnNeedsActivation(changes int, configChanged bool, activeEndpoint, desiredEndpoint string) bool {
+	return changes != 0 || configChanged || activeEndpoint != desiredEndpoint
 }
 
 func verifyVPN(ctx context.Context, provider *openwrt.Client, serviceContext clientServiceContext, modules clientservices.Modules, state firewallmodule.ServiceState, out io.Writer) (firewallmodule.VPNRuntimeStatus, error) {
