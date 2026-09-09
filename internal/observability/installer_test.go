@@ -566,3 +566,11 @@ func TestProviderInstallerTerminatesCredentialHashInput(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectionUploaderUsesSingleTrustConfiguration(t *testing.T) {
+	script := mustReadFile(t, "../../scripts/install-observability-collection.sh")
+	text := string(script)
+	if !strings.Contains(text, "TrustedCertificateFile=/etc/ssl/certs/ca-certificates.crt") || strings.Contains(text, "ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --trust=") {
+		t.Fatal("journal upload configured duplicate trust options")
+	}
+}

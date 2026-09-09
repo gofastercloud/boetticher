@@ -171,7 +171,7 @@ cat > "$work/journal-dropin" <<EOF
 # Boetticher observability collection
 [Service]
 ExecStart=
-ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --trust=/etc/ssl/certs/ca-certificates.crt --save-state=/var/lib/systemd/journal-upload/state
+ExecStart=/usr/lib/systemd/systemd-journal-upload --key=- --cert=- --save-state=/var/lib/systemd/journal-upload/state
 EOF
 install -m 0644 "$work/journal-dropin" "$journal_dropin.new"
 mv -f "$journal_dropin.new" "$journal_dropin"
