@@ -545,9 +545,9 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) (
 	if err := guestExecJSON(ctx, host, prepareTransfer); err != nil {
 		return fmt.Errorf("prepare guest adapter transfer: %w", err)
 	}
-	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancelCleanup()
 	defer func() {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancelCleanup()
 		cleanupErr := guestExecJSON(cleanupCtx, host, "if test -e "+transferDir+"; then test ! -L "+transferDir+"; test -d "+transferDir+"; rm -f "+transferPath+"; rmdir "+transferDir+"; fi")
 		if cleanupErr != nil {
 			if err == nil {
@@ -557,6 +557,10 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) (
 			}
 		}
 	}()
+	installed, err := guestExecOutput(ctx, host, "if test -f "+shellQuote(GuestAdapterPath)+" && test ! -L "+shellQuote(GuestAdapterPath)+" && test \"$(stat -c '%u %a' "+shellQuote(GuestAdapterPath)+")\" = '0 755'; then sha256sum "+shellQuote(GuestAdapterPath)+"; else printf '%s\\n' MISSING; fi")
+	if err == nil && strings.HasPrefix(installed, want+" ") {
+		return nil
+	}
 	const chunkSize = 512 << 10
 	remaining := info.Size()
 	for remaining > 0 {
