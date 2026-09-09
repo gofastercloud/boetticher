@@ -541,11 +541,14 @@ func streamAdapterToGuest(ctx context.Context, host firewallmodule.HostClient) (
 	}
 	const transferDir = "/run/boetticher/arrstack-transfer"
 	const transferPath = transferDir + "/adapter"
-	if err := guestExecJSON(ctx, host, "test -d /run/boetticher; test ! -L /run/boetticher; install -d -m 0700 "+transferDir+"; rm -f "+transferPath); err != nil {
+	prepareTransfer := "set -eu; test -d /run; test ! -L /run; if test -e /run/boetticher; then test -d /run/boetticher; test ! -L /run/boetticher; else install -d -m 0700 /run/boetticher; fi; if test -e " + transferDir + "; then test -d " + transferDir + "; test ! -L " + transferDir + "; fi; install -d -m 0700 " + transferDir + "; rm -f " + transferPath
+	if err := guestExecJSON(ctx, host, prepareTransfer); err != nil {
 		return fmt.Errorf("prepare guest adapter transfer: %w", err)
 	}
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelCleanup()
 	defer func() {
-		cleanupErr := guestExecJSON(ctx, host, "rm -f "+transferPath+"; rmdir "+transferDir)
+		cleanupErr := guestExecJSON(cleanupCtx, host, "if test -e "+transferDir+"; then test ! -L "+transferDir+"; test -d "+transferDir+"; rm -f "+transferPath+"; rmdir "+transferDir+"; fi")
 		if cleanupErr != nil {
 			if err == nil {
 				err = fmt.Errorf("cleanup guest adapter transfer: %w", cleanupErr)

@@ -203,7 +203,7 @@ func TestAdapterTransferDoesNotChangeRunPermissions(t *testing.T) {
 	if strings.Contains(text, "chmod 0700 /run") || strings.Contains(text, "install -d -m 0700 /run\"") {
 		t.Fatal("adapter transfer changes /run permissions")
 	}
-	for _, want := range []string{"/run/boetticher/arrstack-transfer", "rmdir \"+transferDir", "cleanup guest adapter transfer"} {
+	for _, want := range []string{"/run/boetticher/arrstack-transfer", "rmdir \"+transferDir", "context.WithTimeout(context.Background(), 15*time.Second)", "cleanup guest adapter transfer"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("adapter transfer missing bounded cleanup %q", want)
 		}
