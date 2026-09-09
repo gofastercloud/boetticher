@@ -124,6 +124,7 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	state.System = append(state.System, ntpSections(site, ntpUpstreams, ntpServe)...)
 	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
+	state.Firewall = append(state.Firewall, systemFirewallSections(normalized.Systems)...)
 	observabilityFirewall, err := observabilityFirewallSections(site, normalized)
 	if err != nil {
 		return ServiceState{}, err
@@ -583,6 +584,36 @@ func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled, vpnEnable
 			if vpnEnabled {
 				sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_ntp_vpn", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external NTP via VPN", "src": name, "dest": "vpn", "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
 			}
+		}
+	}
+	return sections
+}
+
+func systemFirewallSections(systems []clientservices.System) []Section {
+	sections := make([]Section, 0, len(systems)*2)
+	for _, system := range systems {
+		id := nativeIdentifier(strings.ToLower(system.Name))
+		for _, item := range []struct{ name, source, sourceIP string }{
+			{name: "trusted", source: "trusted"},
+			{name: "monitoring", source: "infra", sourceIP: "10.10.10.20"},
+		} {
+			if item.name == "monitoring" && !system.Monitoring {
+				continue
+			}
+			options := map[string]string{
+				"name":      "Boetticher system " + system.Name + " " + item.name,
+				"src":       item.source,
+				"dest":      "servers",
+				"dest_ip":   system.Address,
+				"proto":     "tcp",
+				"dest_port": strconv.Itoa(system.Port),
+				"family":    "ipv4",
+				"target":    "ACCEPT",
+			}
+			if item.sourceIP != "" {
+				options["src_ip"] = item.sourceIP
+			}
+			sections = append(sections, Section{Name: "boetticher_system_" + id + "_" + item.name, Type: "rule", Options: options, Lists: map[string][]string{}})
 		}
 	}
 	return sections

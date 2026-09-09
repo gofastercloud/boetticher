@@ -56,6 +56,37 @@ func TestRegisteredSystemFirewallRulesAreOwnedAndPruned(t *testing.T) {
 	}
 }
 
+func TestSystemFirewallProjectionRegistersAndUpdatesMonitoringRule(t *testing.T) {
+	initial := systemFirewallSections([]clientservices.System{{Name: "print-server", Address: "10.10.20.61", Port: 631, Monitoring: false}})
+	if len(initial) != 1 || initial[0].Name != "boetticher_system_print_hserver_trusted" {
+		t.Fatalf("unexpected initial system projection: %#v", initial)
+	}
+	updated := systemFirewallSections([]clientservices.System{{Name: "print-server", Address: "10.10.20.62", Port: 9100, Monitoring: true}})
+	if len(updated) != 2 {
+		t.Fatalf("monitoring system projection omitted rule: %#v", updated)
+	}
+	current := map[string]openwrt.UCISection{initial[0].Name: {Type: initial[0].Type, Options: initial[0].Options}, "user_rule": {Type: "rule", Options: map[string]string{"name": "user rule"}}}
+	changes, err := DiffFirewall(current, updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addedTrusted, addedMonitoring := false, false
+	for _, change := range changes {
+		if change.Section.Name == "user_rule" {
+			t.Fatal("unowned user firewall rule was changed")
+		}
+		if (change.Kind == MutationCreate || change.Kind == MutationUpdate) && change.Section.Name == "boetticher_system_print_hserver_trusted" {
+			addedTrusted = change.Section.Options["dest_ip"] == "10.10.20.62" && change.Section.Options["dest_port"] == "9100"
+		}
+		if change.Kind == MutationCreate && change.Section.Name == "boetticher_system_print_hserver_monitoring" {
+			addedMonitoring = change.Section.Options["src"] == "infra" && change.Section.Options["src_ip"] == "10.10.10.20"
+		}
+	}
+	if !addedTrusted || !addedMonitoring {
+		t.Fatalf("system registration update was not reconciled: %#v", changes)
+	}
+}
+
 func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	enabled := true

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -240,9 +241,20 @@ func redact(value any) any {
 			out[i] = redact(item)
 		}
 		return out
+	case string:
+		return sanitizeURL(v)
 	default:
 		return value
 	}
+}
+
+func sanitizeURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User == nil {
+		return raw
+	}
+	parsed.User = nil
+	return parsed.String()
 }
 func sensitive(key string) bool {
 	k := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
@@ -278,7 +290,7 @@ func publications(raw map[string]any) []endpoint {
 	var out []endpoint
 	add := func(name, desc, url, group, icon, source string) {
 		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
-			out = append(out, endpoint{name, desc, url, group, icon, source})
+			out = append(out, endpoint{name, desc, sanitizeURL(url), group, icon, source})
 		}
 	}
 	if pubs, ok := raw["control_surfaces"].([]any); ok {
