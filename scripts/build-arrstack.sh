@@ -31,7 +31,9 @@ cli, caddy, compose, catalog, template, manifest = map(Path, sys.argv[1:])
 root = cli.parent.parent
 caddy_template = root / "templates/Caddyfile.hbs"
 headless = Path("internal/arrstack/headless.ts").read_text()
+headless = headless.replace('import { lstatSync, readFileSync } from "node:fs";', 'import { lstatSync, mkdirSync, readFileSync } from "node:fs";')
 headless = headless.replace('"./upstream/src/', '"./')
+headless = headless.replace('  return runInstall(', '  mkdirSync(join(installDir, "config", "caddy-data"), { recursive: true });\n  return runInstall(', 1)
 (cli.parent / "headless.ts").write_text(headless)
 s = cli.read_text()
 needle = '    const installDir = opts.installDir ?? `${process.env.HOME}/arrstack`;'
