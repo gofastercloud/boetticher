@@ -30,3 +30,16 @@ test("Boetticher adapter renders the owned network and pinned public surfaces", 
   expect(caddy).not.toContain("ai-subtitle-translator.media.example.com");
   expect(caddy).not.toContain("recyclarr.media.example.com");
 });
+
+test("Boetticher adapter wires Intel VA-API into Jellyfin", () => {
+  const jellyfin = services.filter((service) => service.id === "jellyfin");
+  const compose = renderCompose(jellyfin, {
+    installDir: "/opt/arrstack", storageRoot: "/var/lib/arrstack/media", extraPaths: [],
+    puid: 1000, pgid: 1000, timezone: "UTC", apiKeys: {},
+    gpu: { vendor: "intel", render_gid: 104, video_gid: 44 },
+    vpn: { enabled: false }, remoteMode: "cloudflare",
+  });
+  expect(compose).toContain("/dev/dri/renderD128");
+  expect(compose).toContain("104");
+  expect(compose).toContain("44");
+});
