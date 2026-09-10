@@ -115,7 +115,10 @@ func ParseNative(status, prefs []byte) (Report, error) {
 		return r, nil
 	}
 	if !*s.Self.Online {
-		return NewReport(true, Failed, "Tailnet is disconnected from its coordination service"), nil
+		// Tailscale can continue forwarding an already-approved subnet route
+		// while its control-plane connection is unavailable. This is degraded
+		// control-plane health, not proof that the local router has stopped.
+		return NewReport(true, Attention, "Tailnet coordination service is disconnected; existing approved routes may continue"), nil
 	}
 	if !(s.Version == Version || strings.HasPrefix(s.Version, Version+"-")) {
 		return NewReport(true, Attention, fmt.Sprintf("Tailscale %s is required; reconcile the router version", Version)), nil

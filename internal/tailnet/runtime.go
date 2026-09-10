@@ -197,7 +197,11 @@ func RuntimeReadyState(ctx context.Context, r Runner) (bool, error) {
 	return false, fmt.Errorf("inspect Tailnet runtime: %w", err)
 }
 func ReadStatus(ctx context.Context, r Runner) (Report, error) {
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	// Status crosses the Proxmox SSH transport several times (inventory,
+	// config, native status/preferences, and the runtime proof). Allow the
+	// caller's bounded daemon budget to absorb normal LAN/coordination jitter
+	// instead of turning a slow but healthy router into a hard failure.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	g, err := InspectGuest(ctx, r)
 	if err != nil {
