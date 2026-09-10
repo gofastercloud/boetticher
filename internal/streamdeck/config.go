@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 )
 
@@ -18,12 +17,10 @@ const (
 )
 
 type Config struct {
-	PulseURL      string `json:"pulse_url"`
-	VendorID      uint16 `json:"vendor_id"`
-	ProductID     uint16 `json:"product_id"`
-	Model         string `json:"model"`
-	Serial        string `json:"serial,omitempty"`
-	CACertificate string `json:"ca_certificate"`
+	VendorID  uint16 `json:"vendor_id"`
+	ProductID uint16 `json:"product_id"`
+	Model     string `json:"model"`
+	Serial    string `json:"serial,omitempty"`
 }
 
 func LoadConfig(reader io.Reader) (Config, error) {
@@ -47,21 +44,11 @@ func LoadConfig(reader io.Reader) (Config, error) {
 }
 
 func (c Config) Validate() error {
-	if strings.TrimSpace(c.PulseURL) == "" {
-		return errors.New("StreamDeck configuration requires pulse_url")
-	}
 	if c.VendorID == 0 || c.ProductID == 0 || strings.TrimSpace(c.Model) == "" {
 		return errors.New("StreamDeck configuration requires vendor_id, product_id, and model")
 	}
 	if c.VendorID != DefaultVendorID || c.ProductID != DefaultProductID || c.Model != DefaultModel {
 		return fmt.Errorf("unsupported StreamDeck identity %04x:%04x %q", c.VendorID, c.ProductID, c.Model)
-	}
-	parsed, err := url.Parse(c.PulseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return errors.New("StreamDeck pulse_url must be an HTTPS origin without query or fragment")
-	}
-	if strings.TrimSpace(c.CACertificate) == "" {
-		return errors.New("StreamDeck configuration requires ca_certificate")
 	}
 	return nil
 }

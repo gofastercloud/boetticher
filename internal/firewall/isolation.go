@@ -122,24 +122,24 @@ func renderIsolation(b *strings.Builder, plan Plan, destinationSets []destinatio
 	// Router payload must never escape unencrypted. Its single handshake
 	// exception is resolved and rendered in the ordinary source policy.
 	if plan.AirVPN != nil {
-		writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s oifname "wan0" udp dport %d ip daddr @%s return`, model.AirVPNGuestAddress, plan.AirVPN.EndpointPort, destinationHostSetName(destinationSets, plan.AirVPN.EndpointHost)), "boetticher:return:forward-airvpn-handshake")
-		writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s oifname "wan0" drop`, model.AirVPNGuestAddress), "boetticher:drop:forward-airvpn-router-wan")
+		writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s oifname "wan0" udp dport %d ip daddr @%s return`, model.TransitGateway, plan.AirVPN.EndpointPort, destinationHostSetName(destinationSets, plan.AirVPN.EndpointHost)), "boetticher:return:forward-airvpn-handshake")
+		writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s oifname "wan0" drop`, model.TransitGateway), "boetticher:drop:forward-airvpn-provider-wan")
 		for _, r := range plan.Rules {
-			if r.SourceCIDR != model.AirVPNGuestAddress+"/32" || r.Action != "allow" || r.DestinationCIDR == "" {
+			if r.SourceCIDR != model.TransitGateway+"/32" || r.Action != "allow" || r.DestinationCIDR == "" {
 				continue
 			}
 			for _, proto := range strings.Split(r.Protocol, "/") {
 				if proto == "tcp" || proto == "udp" {
-					writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s ip daddr %s %s dport %s return`, model.AirVPNGuestAddress, r.DestinationCIDR, proto, nftPortSet(r.Ports)), "boetticher:return:forward-airvpn-router-service-"+safeRuleToken(r.Name)+"-"+proto)
+					writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s ip daddr %s %s dport %s return`, model.TransitGateway, r.DestinationCIDR, proto, nftPortSet(r.Ports)), "boetticher:return:forward-airvpn-provider-service-"+safeRuleToken(r.Name)+"-"+proto)
 				}
 			}
 		}
-		writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s ip daddr 10.10.99.5 tcp sport 22 ct direction reply return`, model.AirVPNGuestAddress), "boetticher:return:forward-airvpn-router-ssh-reply")
+		writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s ip daddr 10.10.99.5 tcp sport 22 ct direction reply return`, model.TransitGateway), "boetticher:return:forward-airvpn-provider-ssh-reply")
 		if len(plan.AirVPNSources) > 0 {
-			writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s ip daddr @airvpn_sources tcp sport 53 ct direction reply return`, model.AirVPNGuestAddress), "boetticher:return:forward-airvpn-router-dns-tcp-reply")
-			writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s ip daddr @airvpn_sources udp sport { 53, 123 } ct direction reply return`, model.AirVPNGuestAddress), "boetticher:return:forward-airvpn-router-dns-ntp-udp-reply")
+			writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s ip daddr @airvpn_sources tcp sport 53 ct direction reply return`, model.TransitGateway), "boetticher:return:forward-airvpn-provider-dns-tcp-reply")
+			writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s ip daddr @airvpn_sources udp sport { 53, 123 } ct direction reply return`, model.TransitGateway), "boetticher:return:forward-airvpn-provider-dns-ntp-udp-reply")
 		}
-		writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s drop`, model.AirVPNGuestAddress), "boetticher:drop:forward-airvpn-router-default")
+		writeIsolationRule(b, fmt.Sprintf(`iifname "transit0" ip saddr %s drop`, model.TransitGateway), "boetticher:drop:forward-airvpn-provider-default")
 	}
 	b.WriteString("  }\n")
 }

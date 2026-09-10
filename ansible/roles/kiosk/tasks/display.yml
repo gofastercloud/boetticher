@@ -48,18 +48,18 @@
 
 - name: Remove the superseded duplicate Chromium command override
   ansible.builtin.file:
-    path: /etc/systemd/system/pulse-kiosk.service.d/20-pulse-dashboard.conf
+    path: /etc/systemd/system/boetticher-kiosk.service.d/20-dashboard.conf
     state: absent
-  notify: restart pulse-kiosk
+  notify: restart boetticher-kiosk
 
 - name: Install the Cage kiosk service
   ansible.builtin.template:
-    src: pulse-kiosk.service.j2
-    dest: /etc/systemd/system/pulse-kiosk.service
+    src: boetticher-kiosk.service.j2
+    dest: /etc/systemd/system/boetticher-kiosk.service
     owner: root
     group: root
     mode: '0644'
-  notify: restart pulse-kiosk
+  notify: restart boetticher-kiosk
 
 - name: Enable seatd and the local kiosk
   ansible.builtin.systemd_service:
@@ -67,4 +67,4 @@
     enabled: true
     state: started
     daemon_reload: true
-  loop: [seatd.service, pulse-kiosk.service]
+  loop: [seatd.service, boetticher-kiosk.service]

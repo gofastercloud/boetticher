@@ -1,18 +1,15 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/gofastercloud/boetticher/internal/airvpn"
 	"golang.org/x/term"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -30,10 +27,6 @@ var platformOwnedSecretNames = map[string]struct{}{
 	"issuing_key_pem_b64":  {},
 	"issuing_cert_pem_b64": {},
 	"ddns_tsig_secret":     {},
-	"pulse_admin_password": {},
-	"pulse_proxmox_token":  {},
-	"pulse_api_token":      {},
-	"pulse_agent_token":    {},
 }
 
 func runModuleSecrets(args []string, input io.Reader, out, errOut io.Writer) error {
@@ -62,45 +55,7 @@ func runModuleSecretsForName(args []string, input io.Reader, out, errOut io.Writ
 }
 
 func runModuleSecretRotate(name string, args []string, out io.Writer) error {
-	if name != "airvpn" {
-		return fmt.Errorf("module %s has no Core-managed secret rotation", name)
-	}
-	flags, err := parseModuleSecretFlags(args, "module secrets rotate")
-	if err != nil {
-		return err
-	}
-	if !flags.confirm {
-		return errors.New("AirVPN profile rotation requires --confirm")
-	}
-	s, _, declarations, err := loadModuleSecretContract(flags, name)
-	if err != nil {
-		return err
-	}
-	declaration, ok := findSecretDeclaration(declarations, "airvpn_wireguard_config")
-	if !ok || declaration.Generation != "api-generated" {
-		return errors.New("AirVPN WireGuard profile is not a Core-managed generated secret")
-	}
-	config := s.ModuleConfig[name]
-	if strings.TrimSpace(config.Servers) == "" {
-		return errors.New("AirVPN profile rotation requires a configured server selector")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return errors.New("controller home directory is unavailable for the AirVPN API key")
-	}
-	apiKey, err := readAirVPNAPIKey(filepath.Join(home, airVPNAPIKeyRelativePath))
-	if err != nil {
-		return errors.New("controller AirVPN API key is unavailable")
-	}
-	profile, err := (airvpn.Client{}).Generate(context.Background(), strings.TrimSpace(string(apiKey)), config.Servers)
-	if err != nil {
-		return fmt.Errorf("generate AirVPN WireGuard profile: %w", err)
-	}
-	if err := site.StorePlatformSecret(flags.siteDir, s, flags.ageIdentity, "airvpn_wireguard_config", profile.Config); err != nil {
-		return fmt.Errorf("store encrypted AirVPN WireGuard profile: %w", err)
-	}
-	fmt.Fprintln(out, "airvpn_wireguard_config: rotated and retained; run boetticher plan then deploy")
-	return nil
+	return fmt.Errorf("module %s has no Core-managed secret rotation", name)
 }
 
 type moduleSecretFlags struct {

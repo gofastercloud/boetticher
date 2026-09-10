@@ -3,17 +3,17 @@ package firewall
 import "fmt"
 
 const (
-	TelemetryServiceName       = "boetticher-firewall-telemetry"
-	TelemetrySnapshotService   = "boetticher-firewall-snapshot.service"
-	TelemetrySnapshotTimer     = "boetticher-firewall-snapshot.timer"
-	TelemetryListenAddress     = "10.10.10.1"
-	TelemetryPulseSource       = "10.10.10.20/32"
-	TelemetryPort              = 9765
-	TelemetrySampleIntervalSec = 15
-	TelemetryRawRetentionDays  = 7
-	TelemetryStatePath         = "/var/lib/boetticher/firewall-telemetry"
-	TelemetryDatabasePath      = TelemetryStatePath + "/telemetry.db"
-	TelemetrySnapshotPath      = "/run/boetticher/firewall-ruleset.json"
+	TelemetryServiceName         = "boetticher-firewall-telemetry"
+	TelemetrySnapshotService     = "boetticher-firewall-snapshot.service"
+	TelemetrySnapshotTimer       = "boetticher-firewall-snapshot.timer"
+	TelemetryListenAddress       = "10.10.10.1"
+	TelemetryObservabilitySource = "10.10.10.20/32"
+	TelemetryPort                = 9765
+	TelemetrySampleIntervalSec   = 15
+	TelemetryRawRetentionDays    = 7
+	TelemetryStatePath           = "/var/lib/boetticher/firewall-telemetry"
+	TelemetryDatabasePath        = TelemetryStatePath + "/telemetry.db"
+	TelemetrySnapshotPath        = "/run/boetticher/firewall-ruleset.json"
 )
 
 // TelemetryPlan is the fixed Core firewall capability contract. It is not a
@@ -37,7 +37,7 @@ func DefaultTelemetryPlan(managed bool) TelemetryPlan {
 		Enabled:           true,
 		ListenAddress:     TelemetryListenAddress,
 		Port:              TelemetryPort,
-		AllowedSources:    []string{TelemetryPulseSource},
+		AllowedSources:    []string{TelemetryObservabilitySource},
 		SnapshotPath:      TelemetrySnapshotPath,
 		DatabasePath:      TelemetryDatabasePath,
 		SampleIntervalSec: TelemetrySampleIntervalSec,
@@ -52,8 +52,8 @@ func (p TelemetryPlan) Validate() error {
 	if p.ListenAddress != TelemetryListenAddress || p.Port != TelemetryPort || p.SnapshotPath != TelemetrySnapshotPath || p.DatabasePath != TelemetryDatabasePath || p.SampleIntervalSec != TelemetrySampleIntervalSec || p.RawRetentionDays != TelemetryRawRetentionDays {
 		return fmt.Errorf("firewall telemetry has an unexpected fixed contract")
 	}
-	if len(p.AllowedSources) != 1 || p.AllowedSources[0] != TelemetryPulseSource {
-		return fmt.Errorf("firewall telemetry must be reachable only from Pulse")
+	if len(p.AllowedSources) != 1 || p.AllowedSources[0] != TelemetryObservabilitySource {
+		return fmt.Errorf("firewall telemetry must be reachable only from observability")
 	}
 	return nil
 }

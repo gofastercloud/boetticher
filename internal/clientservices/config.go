@@ -56,7 +56,6 @@ type Modules struct {
 	DHCP          *DHCPConfig          `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
 	VPN           *VPNConfig           `yaml:"vpn,omitempty" json:"vpn,omitempty"`
 	Observability *ObservabilityConfig `yaml:"observability,omitempty" json:"observability,omitempty"`
-	AIOps         *AIOpsConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 	Media         *MediaConfig         `yaml:"media,omitempty" json:"media,omitempty"`
 	// Arrstack is source compatibility for internal tests and older callers;
 	// it is never persisted or advertised in the public configuration.
@@ -129,11 +128,8 @@ type LoggingConfig struct {
 	RetentionDays int `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
 }
 type MonitoringConfig struct {
-	RetentionDays int `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
-}
-type AIOpsConfig struct {
-	Enabled *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Holmes  *HolmesConfig `yaml:"holmes,omitempty" json:"holmes,omitempty"`
+	RetentionDays int           `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
+	Holmes        *HolmesConfig `yaml:"holmes,omitempty" json:"holmes,omitempty"`
 }
 type HolmesConfig struct {
 	Enabled    *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -399,23 +395,15 @@ func (m Modules) Clone() Modules {
 		}
 		result.Observability = &v
 	}
-	if m.AIOps != nil {
-		v := *m.AIOps
+	if m.Observability != nil && m.Observability.Monitoring.Holmes != nil {
+		v := *m.Observability.Monitoring.Holmes
 		if v.Enabled != nil {
 			b := *v.Enabled
 			v.Enabled = &b
 		}
-		if v.Holmes != nil {
-			h := *v.Holmes
-			if h.Enabled != nil {
-				b := *h.Enabled
-				h.Enabled = &b
-			}
-			h.Bifrost.Upstreams = append([]BifrostUpstream(nil), h.Bifrost.Upstreams...)
-			h.Bifrost.Models = append([]BifrostModel(nil), h.Bifrost.Models...)
-			v.Holmes = &h
-		}
-		result.AIOps = &v
+		v.Bifrost.Upstreams = append([]BifrostUpstream(nil), v.Bifrost.Upstreams...)
+		v.Bifrost.Models = append([]BifrostModel(nil), v.Bifrost.Models...)
+		result.Observability.Monitoring.Holmes = &v
 	}
 	return result
 }
@@ -577,21 +565,18 @@ func validateObservability(modules Modules) error {
 			return errors.New("modules.observability.alerts.pushover.title is invalid")
 		}
 	}
-	if modules.AIOps != nil && Enabled(modules.AIOps.Enabled) && (modules.AIOps.Holmes == nil || !Enabled(modules.AIOps.Holmes.Enabled)) {
-		return errors.New("enabled AIOps requires enabled Holmes settings")
-	}
-	if modules.AIOps != nil && modules.AIOps.Holmes != nil && Enabled(modules.AIOps.Holmes.Enabled) && !model.IsDNSLabel(modules.AIOps.Holmes.ModelAlias) {
+	if modules.Observability != nil && modules.Observability.Monitoring.Holmes != nil && Enabled(modules.Observability.Monitoring.Holmes.Enabled) && !model.IsDNSLabel(modules.Observability.Monitoring.Holmes.ModelAlias) {
 		return errors.New("modules.monitoring.holmes.model_alias must be a valid model alias when Holmes is enabled")
 	}
-	if modules.AIOps != nil && modules.AIOps.Holmes != nil && Enabled(modules.AIOps.Holmes.Enabled) {
-		h := modules.AIOps.Holmes
+	if modules.Observability != nil && modules.Observability.Monitoring.Holmes != nil && Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
+		h := modules.Observability.Monitoring.Holmes
 		if h.Bifrost.ClientCredential != "holmes-client-token" {
 			return errors.New("modules.monitoring.holmes.bifrost.client_credential must be holmes-client-token")
 		}
 		c := bifrost.Config{Listen: bifrost.DefaultListen, ClientCredential: h.Bifrost.ClientCredential}
 		for _, u := range h.Bifrost.Upstreams {
 			if !model.IsDNSLabel(u.SecretRef) {
-				return fmt.Errorf("modules.aiops.holmes.bifrost upstream %q has an invalid secret_ref", u.Name)
+				return fmt.Errorf("modules.observability.monitoring.holmes.bifrost upstream %q has an invalid secret_ref", u.Name)
 			}
 			c.Upstreams = append(c.Upstreams, bifrost.Upstream{Name: u.Name, BaseURL: u.BaseURL, Credential: u.SecretRef})
 		}

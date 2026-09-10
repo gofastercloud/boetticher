@@ -69,8 +69,8 @@ class USBExportHostTest(unittest.TestCase):
     def manifest(self):
         return {
             "vmid": 230,
-            "hostname": "lab-printer-01",
-            "ownership_tag": "module-printer",
+            "hostname": "operator-managed-usb-fixture",
+            "ownership_tag": "operator-managed-usb",
             "unprivileged": True,
             "managed_slots": ["dev0"],
             "exports": [{**self.serial_export(), "slot": "dev0"}],
@@ -154,8 +154,8 @@ class USBExportHostTest(unittest.TestCase):
             calls.append(args)
             if args[:2] == ("pct", "config"):
                 lines = [
-                    "hostname: lab-printer-01",
-                    "tags: boetticher;managed;module-printer",
+                    "hostname: operator-managed-usb-fixture",
+                    "tags: boetticher;managed;operator-managed-usb",
                     "unprivileged: 1",
                 ]
                 lines.extend(f"{slot}: {value}" for slot, value in devices.items())
@@ -188,8 +188,8 @@ class USBExportHostTest(unittest.TestCase):
             if args[:2] == ("pct", "config"):
                 return "\n".join(
                     [
-                        "hostname: lab-printer-01",
-                        "tags: boetticher;managed;module-printer",
+                        "hostname: operator-managed-usb-fixture",
+                        "tags: boetticher;managed;operator-managed-usb",
                         "unprivileged: 1",
                         f"dev0: {value}",
                     ]
@@ -225,8 +225,8 @@ class USBExportHostTest(unittest.TestCase):
             if args[:2] == ("pct", "config"):
                 return "\n".join(
                     [
-                        "hostname: lab-printer-01",
-                        "tags: boetticher;managed;module-printer",
+                        "hostname: operator-managed-usb-fixture",
+                        "tags: boetticher;managed;operator-managed-usb",
                         "unprivileged: 1",
                         f"dev0: {value}",
                     ]
@@ -255,7 +255,7 @@ class USBExportHostTest(unittest.TestCase):
         def fake_run(*args):
             calls.append(args)
             if args[:2] == ("pct", "config"):
-                return "hostname: lab-printer-01\ntags: boetticher;managed;module-printer\nunprivileged: 1\n"
+                return "hostname: operator-managed-usb-fixture\ntags: boetticher;managed;operator-managed-usb\nunprivileged: 1\n"
             if args[:2] == ("pct", "set"):
                 return ""
             self.fail(f"command must not run after failed verification: {args}")

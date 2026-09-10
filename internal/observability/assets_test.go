@@ -69,7 +69,7 @@ func TestHolmesPayloadIsPinnedAndOnlyUsesLocalEvidenceProviders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lock, err := os.ReadFile(filepath.Join("..", "..", "images", "aiops", "runtime", "requirements.lock"))
+	lock, err := os.ReadFile(filepath.Join("..", "..", "controller", "observability", "holmes", "requirements.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}

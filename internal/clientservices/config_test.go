@@ -19,7 +19,7 @@ func TestValidateObservabilityContracts(t *testing.T) {
 		t.Fatalf("expected logging retention rejection, got %v", err)
 	}
 	enabled := true
-	bad = Modules{AIOps: &AIOpsConfig{Enabled: &enabled, Holmes: &HolmesConfig{Enabled: &enabled, ModelAlias: "not a label"}}}
+	bad = Modules{Observability: &ObservabilityConfig{Enabled: &enabled, Monitoring: MonitoringConfig{Holmes: &HolmesConfig{Enabled: &enabled, ModelAlias: "not a label"}}}}
 	if err := Validate(bad, testSite()); err == nil || !strings.Contains(err.Error(), "holmes.model_alias") {
 		t.Fatalf("expected Holmes alias rejection, got %v", err)
 	}

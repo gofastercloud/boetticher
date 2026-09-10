@@ -2,7 +2,8 @@ package model
 
 import "strings"
 
-// VPNHealthCheck is one fixed first-party observation collected by Pulse.
+// VPNHealthCheck is one fixed first-party observation for the unified
+// observability/status surface.
 type VPNHealthCheck struct {
 	ID      string
 	Module  string

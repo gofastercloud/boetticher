@@ -158,7 +158,7 @@ func moduleGuestProjections(definition ModuleDefinition, site model.Site) ([]mod
 		component.Tags = append(component.Tags, model.TagBoetticher, model.TagManaged, model.TagModule, "module-"+definition.Name, model.ModuleOwnershipTag(definition.Name), model.TagBackup)
 		component.SSHUser = model.DefaultAdminSSHUser
 		component.SSHPort = 22
-		component.Logging = definition.Name != "logging"
+		component.Logging = true
 		sort.Strings(component.Tags)
 		components = append(components, component)
 	}

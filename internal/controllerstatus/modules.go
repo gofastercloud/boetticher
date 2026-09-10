@@ -102,6 +102,13 @@ func (c ModuleChecker) checkVPN(ctx context.Context) CheckResult {
 	}
 	output, err := run(ctx, path, "module", "vpn", "status")
 	text := strings.TrimSpace(string(output))
+	detail := ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Reason:") {
+			detail = strings.TrimSpace(strings.TrimPrefix(line, "Reason:"))
+		}
+	}
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		switch {
@@ -113,13 +120,25 @@ func (c ModuleChecker) checkVPN(ctx context.Context) CheckResult {
 			if line == "VPN: CHECKING" {
 				return CheckResult{Configured: true, State: Attention, Detail: "VPN configuration has a pending additive intent"}
 			}
-			return CheckResult{Configured: true, State: Failed, Detail: "VPN status is not healthy"}
+			if detail == "" {
+				detail = "VPN status is not healthy"
+			}
+			return CheckResult{Configured: true, State: Failed, Detail: detail}
 		}
 	}
 	if err != nil {
-		return CheckResult{Configured: true, State: Failed, Detail: "VPN status check failed"}
+		if detail == "" {
+			detail = strings.TrimSpace(string(output))
+		}
+		if detail == "" {
+			detail = "VPN status check failed"
+		}
+		return CheckResult{Configured: true, State: Failed, Detail: detail}
 	}
-	return CheckResult{Configured: true, State: Failed, Detail: "VPN status evidence is missing or malformed"}
+	if detail == "" {
+		detail = "VPN status evidence is missing or malformed"
+	}
+	return CheckResult{Configured: true, State: Failed, Detail: detail}
 }
 
 func (c ModuleChecker) checkTailnet(ctx context.Context) CheckResult {

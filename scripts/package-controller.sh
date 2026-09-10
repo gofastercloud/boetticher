@@ -84,7 +84,7 @@ main() {
   cp -R internal/observability/assets "$stage/controller/observability/"
   mkdir -p "$stage/controller/observability/holmes"
   cp controller/observability/holmes/holmes-runner.py controller/observability/holmes/holmes.yaml "$stage/controller/observability/holmes/"
-  cp images/aiops/runtime/requirements.lock "$stage/controller/observability/holmes/requirements.lock"
+  cp controller/observability/holmes/requirements.lock "$stage/controller/observability/holmes/requirements.lock"
   chmod 0644 "$stage/controller/observability/holmes/holmes-runner.py" "$stage/controller/observability/holmes/holmes.yaml" "$stage/controller/observability/holmes/requirements.lock"
   cp scripts/install-observability-providers.sh "$stage/controller/proxmox/libexec/boetticher-install-observability-providers"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-install-observability-providers"

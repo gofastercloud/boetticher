@@ -188,7 +188,10 @@ inter-zone, HOME, and administration journeys, then requires exact cleanup.
 The existing status monitor consumes the same native capability status facts
 for the fixed `FW`, `VPN`, and `TAILNET` slots. Unconfigured client services
 are off rather than permanent faults; configured-but-unavailable services are
-failed. VPN, physical trunking, and
+failed. `NETWORK` is the control-plane aggregate of Firewall, DNS, and DHCP/NTP
+status; it does not run the packet-acceptance suite. A red aggregate therefore
+indicates desired/provider drift or a failed local predicate, not proof of a
+network or VPN outage. VPN, physical trunking, and
 external-switch management are later phases.
 
 Proxmox owns operator workloads. Boetticher never adopts, imports, or deletes

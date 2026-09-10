@@ -20,12 +20,12 @@ import (
 
 func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) {
 	root := t.TempDir()
-	artifactPath := filepath.Join(root, "boetticher-monitoring-1.0.1-amd64.tar.zst")
-	artifactBytes := []byte("qualified monitoring artifact")
+	artifactPath := filepath.Join(root, "boetticher-base-0.1.0-amd64.tar.zst")
+	artifactBytes := []byte("qualified base artifact")
 	if err := os.WriteFile(artifactPath, artifactBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := ArtifactFor("monitoring")
+	artifact, err := ArtifactFor("base")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestReleaseBundleRejectsUntrustedKeyBeforeCreatingDestination(t *testing.T)
 	if err := os.WriteFile(artifactPath, []byte("artifact"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := ArtifactFor("monitoring")
+	artifact, err := ArtifactFor("base")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestReleaseBundleAllowsArtifactWithoutQualificationEvidence(t *testing.T) {
 	if err := os.WriteFile(artifactPath, []byte("artifact"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := ArtifactFor("monitoring")
+	artifact, err := ArtifactFor("base")
 	if err != nil {
 		t.Fatal(err)
 	}

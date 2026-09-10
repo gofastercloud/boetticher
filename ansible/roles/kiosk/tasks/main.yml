@@ -10,7 +10,6 @@
       - ansible_python.executable == '/usr/bin/python3'
       - companion_config is defined
       - companion_binary | default('') | length > 0
-      - kiosk_root_ca_pem | default('') | length > 0
     fail_msg: "Companion requires Debian 13 ARM64, systemd, and the signed status executable"
   no_log: true
 
@@ -20,21 +19,12 @@
 - name: Remove the retired standalone Blinkt service
   ansible.builtin.include_tasks: retired-blinkt.yml
 
-- name: Require the separately streamed Companion read credential
-  ansible.builtin.include_tasks: credential.yml
-  vars:
-    credential_file: companion-read
-
 - name: Configure the shared local status service
   ansible.builtin.include_tasks: status.yml
 
 - name: Configure the Cage display
   ansible.builtin.include_tasks: display.yml
   when: kiosk_display_enabled | bool
-
-- name: Configure the Pulse host agent
-  ansible.builtin.include_tasks: agent.yml
-  when: kiosk_pulse_agent_enabled | bool
 
 - name: Configure the StreamDeck
   ansible.builtin.include_tasks: streamdeck.yml
@@ -43,10 +33,7 @@
 - name: Stop only installed disabled capability services
   ansible.builtin.include_tasks: disabled.yml
   loop:
-    - {unit: pulse-kiosk-stats.timer, enabled: false}
-    - {unit: pulse-kiosk-stats.service, enabled: false}
-    - {unit: pulse-kiosk.service, enabled: "{{ kiosk_display_enabled | bool }}"}
-    - {unit: pulse-agent.service, enabled: "{{ kiosk_pulse_agent_enabled | bool }}"}
+    - {unit: boetticher-kiosk.service, enabled: "{{ kiosk_display_enabled | bool }}"}
     - {unit: boetticher-streamdeck.service, enabled: "{{ kiosk_streamdeck_enabled | bool }}"}
   loop_control:
     loop_var: capability
@@ -74,13 +61,11 @@
     state: absent
   loop:
     - /home/kiosk/.pki/nssdb
-    - /home/kiosk/pulse-refresh-extension
+    - /home/kiosk/legacy-dashboard-extension
     - /home/kiosk/visualizer
-    - /etc/systemd/system/pulse-kiosk-stats.timer
-    - /etc/systemd/system/pulse-kiosk-stats.service
-    - /usr/local/libexec/pulse-kiosk-stats
+    - /etc/systemd/system/legacy-kiosk-stats.timer
+    - /etc/systemd/system/legacy-kiosk-stats.service
+    - /usr/local/libexec/legacy-kiosk-stats
     - /etc/chromium/policies/managed/boetticher-kiosk.json
-    - /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred
-    - /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.sha256
     - /var/lib/boetticher/companion-streamdeck/client.key.pem
     - /var/lib/boetticher/companion-streamdeck/client.crt.pem

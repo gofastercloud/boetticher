@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
@@ -40,39 +39,10 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 			},
 		})
 	}
-	if modules.IsEnabled(site, "monitoring") {
-		bindings = append(bindings, deploymentCredential{
-			Guest:     "lab-monitor-01",
-			Address:   "10.10.10.20",
-			SecretKey: "pulse_admin_password",
-			Spec: secrets.CredentialSpec{
-				Name:       "pulse-admin-password",
-				Unit:       "pulse.service",
-				StorePath:  "/var/lib/boetticher/credentials/pulse-admin-password.cred",
-				RuntimeRef: "/run/credentials/pulse.service/pulse-admin-password",
-			},
-		})
-		bindings = append(bindings,
-			deploymentCredential{
-				Guest: "lab-monitor-01", Address: "10.10.10.20", SecretKey: "pulse_proxy_auth_secret",
-				Spec: secrets.CredentialSpec{Name: "pulse-proxy-auth-secret", Unit: "pulse.service", StorePath: "/var/lib/boetticher/credentials/pulse-proxy-auth-secret.cred", RuntimeRef: "/run/credentials/pulse.service/pulse-proxy-auth-secret"},
-			},
-			deploymentCredential{
-				Guest: "lab-monitor-01", Address: "10.10.10.20", SecretKey: "pulse_proxy_auth_secret",
-				Spec: secrets.CredentialSpec{Name: "pulse-proxy-auth-nginx-secret", Unit: "nginx.service", StorePath: "/var/lib/boetticher/credentials/pulse-proxy-auth-nginx-secret.cred", RuntimeRef: "/run/credentials/nginx.service/pulse-proxy-auth-nginx-secret"},
-			},
-		)
-	}
 	if modules.IsEnabled(site, "tailnet-router") {
 		bindings = append(bindings, deploymentCredential{
 			Guest: "lab-tailnet-01", Address: "10.10.5.10", SecretKey: "tailscale_auth_key",
 			Spec: secrets.CredentialSpec{Name: "tailscale-auth-key", Unit: "tailscaled.service", StorePath: "/var/lib/boetticher/credentials/tailscale-auth-key.cred", RuntimeRef: "/run/credentials/tailscaled.service/tailscale-auth-key"},
-		})
-	}
-	if modules.IsEnabled(site, "airvpn") {
-		bindings = append(bindings, deploymentCredential{
-			Guest: "lab-airvpn-01", Address: model.AirVPNGuestAddress, SecretKey: "airvpn_wireguard_config",
-			Spec: secrets.CredentialSpec{Name: "airvpn-wireguard-config", Unit: "boetticher-airvpn.service", StorePath: "/var/lib/boetticher/credentials/airvpn-wireguard-config.cred", RuntimeRef: "/run/credentials/boetticher-airvpn.service/airvpn-wireguard-config"},
 		})
 	}
 	if modules.IsEnabled(site, "bifrost") {
@@ -83,67 +53,12 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 			})
 		}
 	}
-	if modules.IsEnabled(site, "aiops") {
-		for _, binding := range []struct{ key, name string }{
-			{key: "aiops_webhook_secret", name: "webhook-secret"},
-			{key: "aiops_pulse_read_token", name: "pulse-read-token"},
-			{key: "aiops_pulse_note_token", name: "pulse-note-token"},
-		} {
-			bindings = append(bindings, deploymentCredential{Guest: "lab-aiops-01", Address: "10.10.20.90", SecretKey: binding.key, Spec: secrets.CredentialSpec{Name: binding.name, Unit: "boetticher-aiops.service", StorePath: "/var/lib/boetticher/credentials/aiops-" + binding.name + ".cred", RuntimeRef: "/run/credentials/boetticher-aiops.service/" + binding.name}})
-		}
-	}
 	items := make([]secrets.CredentialSpec, 0, len(bindings))
 	for _, binding := range bindings {
 		items = append(items, binding.Spec)
 	}
 	if err := secrets.Validate(items); err != nil {
 		return nil, fmt.Errorf("validate appliance credential declarations: %w", err)
-	}
-	return bindings, nil
-}
-
-// monitoringAgentCredentialBindings creates one systemd credential projection
-// for each model component carrying the generic monitoring-agent tag. The
-// token is created only after Pulse is configured, so these bindings are
-// deliberately installed in the post-bootstrap pass rather than mixed into
-// the initial credential load.
-func monitoringAgentCredentialBindings(site model.Site) ([]deploymentCredential, error) {
-	if !modules.IsEnabled(site, "monitoring") {
-		return nil, nil
-	}
-	components := make(map[string]model.Component)
-	for _, component := range site.PlatformComponents() {
-		components[component.Name] = component
-	}
-	bindings := make([]deploymentCredential, 0)
-	for _, target := range ansible.MonitoringAgentTargets(site) {
-		component, ok := components[target]
-		if !ok || !component.SSHManaged {
-			return nil, fmt.Errorf("monitoring-agent target %q is not a managed platform component", target)
-		}
-		address := component.Address
-		if target == model.LogicalProxmoxIdentity && site.BootstrapAddress != "" {
-			address = site.BootstrapAddress
-		}
-		if address == "" {
-			return nil, fmt.Errorf("monitoring-agent target %q has no deployment address", target)
-		}
-		bindings = append(bindings, deploymentCredential{
-			Guest: target, Address: address, SecretKey: "pulse_agent_token",
-			Spec: secrets.CredentialSpec{
-				Name:       "pulse-agent-token",
-				Unit:       "pulse-agent.service",
-				StorePath:  "/var/lib/boetticher/credentials/pulse-agent-token.cred",
-				RuntimeRef: "/run/credentials/pulse-agent.service/pulse-agent-token",
-			},
-		})
-	}
-	items := make([]secrets.CredentialSpec, 0, len(bindings))
-	for _, binding := range bindings {
-		items = append(items, binding.Spec)
-	}
-	if err := secrets.Validate(items); err != nil {
-		return nil, fmt.Errorf("validate monitoring-agent credential declarations: %w", err)
 	}
 	return bindings, nil
 }
@@ -198,29 +113,6 @@ func installCredentialsForGuest(ctx context.Context, runner proxmox.CommandRunne
 		}
 		if err := secrets.InstallCredential(ctx, stdinRunner, binding.Address, "root", binding.Spec, []byte(value)); err != nil {
 			return fmt.Errorf("install %s credential on %s: %w", binding.Spec.Name, guest, err)
-		}
-	}
-	airVPNBinding := false
-	for _, binding := range selected {
-		if binding.Spec.Unit == "boetticher-airvpn.service" {
-			airVPNBinding = true
-			break
-		}
-	}
-	if guest == "lab-airvpn-01" && airVPNBinding {
-		// The AirVPN role starts its service as part of the same Ansible pass
-		// that first reaches the guest. Install its non-secret systemd binding
-		// alongside the encrypted credential so startup cannot race role order.
-		dropIns, err := credentialDropIns(selected)
-		if err != nil {
-			return fmt.Errorf("render AirVPN credential drop-in: %w", err)
-		}
-		content := dropIns[guest]["boetticher-airvpn.service"]
-		if content == "" {
-			return fmt.Errorf("AirVPN credential drop-in is missing")
-		}
-		if _, err := stdinRunner.RunWithStdin(ctx, selected[0].Address, "root", "install -D -m 0644 /dev/stdin /etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf", strings.NewReader(content)); err != nil {
-			return fmt.Errorf("install AirVPN credential drop-in on %s: %w", guest, err)
 		}
 	}
 	if _, err := runner.Run(ctx, selected[0].Address, "root", "systemctl daemon-reload"); err != nil {

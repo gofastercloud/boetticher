@@ -34,12 +34,12 @@ func TestNavigationAndWake(t *testing.T) {
 func TestStaleDataCannotRemainHealthy(t *testing.T) {
 	s := NewState(Config{})
 	now := time.Now()
-	s.Update(Item{ID: "pulse", Status: Healthy, ObservedAt: now.Add(-2 * time.Minute)})
-	if s.Snapshot().Items[5].Status == Healthy {
+	s.Update(Item{ID: "proxmox", Status: Healthy, ObservedAt: now.Add(-2 * time.Minute)})
+	if s.Snapshot().Items[4].Status == Healthy {
 		t.Fatal("stale data reported healthy")
 	}
-	s.Update(Item{ID: "pulse", Status: Healthy, ObservedAt: now})
-	if s.Snapshot().Items[5].Status != Healthy {
+	s.Update(Item{ID: "proxmox", Status: Healthy, ObservedAt: now})
+	if s.Snapshot().Items[4].Status != Healthy {
 		t.Fatal("fresh healthy sample rejected")
 	}
 }

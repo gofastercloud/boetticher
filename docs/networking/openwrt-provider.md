@@ -136,7 +136,7 @@ generic provider framework or broad API abstraction was introduced.
 | Encrypted upstream DNS | UCI `stubby`; generated stubby configuration | Named global/resolver sections | stubby reload/restart | Resolver names and fields are addressable; no generic resolver abstraction needed |
 | NTP | UCI `system.ntp`; service state | Named server list and `enable_server` | NTP service reload | Standard UCI state; not a public Module |
 | Diagnostics | `network.interface dump`, UCI reads, service/status queries, packet capture | Native interface, route, lease, and service state | Read-only | Native provider state was sufficient for this spike |
-| WireGuard | UCI `network`/`firewall` | Not exercised | Not exercised | **NOT TESTED**; optional AirVPN path remains unqualified |
+| WireGuard | UCI `network`/`firewall` | OpenWrt interface `airvpn`; current handshake and traffic reported live | Integrated firewall/client-services path | **QUALIFIED LIVE** for the current integrated AirVPN path (user-provided state; no new tests run in this source-only cleanup) |
 
 The [OpenWrt rpcd UCI implementation](https://git.openwrt.org/project/rpcd/tree/uci.c)
 supports the tested UCI object operations. This is sufficient for the bounded
@@ -387,8 +387,11 @@ Before production implementation, the following conditions must be resolved:
 5. decide whether QEMU guest agent support is required for graceful provider
    reboot.
 
-AirVPN/WireGuard, port forwarding, and killswitch behavior were not tested and
-remain outside this decision.
+The current integrated AirVPN path is reported live and qualified inside the
+firewall VM (OpenWrt interface `airvpn`, current handshake and traffic). This
+document records that user-provided state; this source-only cleanup ran no new
+live tests. The obsolete separate AirVPN appliance/module path is not part of
+the supported architecture.
 
 ## Repository verification
 

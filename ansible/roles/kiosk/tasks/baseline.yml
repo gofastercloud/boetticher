@@ -106,12 +106,6 @@
   delay: 2
   when: companion_network_profile is changed
 
-- name: Keep the fixed Pulse endpoint resolvable during DNS outages
-  ansible.builtin.blockinfile:
-    path: /etc/hosts
-    marker: '# {mark} BOETTICHER COMPANION'
-    block: "{{ companion_config.dns_address }} {{ companion_config.dns_name }}"
-
 - name: Keep the Companion from routing between HOME and SERVERS
   ansible.builtin.copy:
     dest: /etc/sysctl.d/70-boetticher-companion.conf

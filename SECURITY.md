@@ -28,8 +28,9 @@ details are published. This is a small project without a formal supported
 release matrix, so reports against the latest release or current main branch
 are especially useful.
 
-Problems in Proxmox, Debian, nftables, Kea, Pulse, Ansible, SOPS, age,
-PowerDNS, or another upstream should also go through that project's security
+Problems in Proxmox, Debian, nftables, Kea, VictoriaMetrics, VictoriaLogs,
+Grafana, Gatus, Ansible, SOPS, age, PowerDNS, or another upstream should also
+go through that project's security
 process. Those maintainers know their software best.
 
 ## In scope

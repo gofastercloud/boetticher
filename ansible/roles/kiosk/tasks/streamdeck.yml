@@ -39,7 +39,7 @@
     owner: root
     group: streamdeck
     mode: '0640'
-    content: "{{ {'pulse_url': kiosk_pulse_url, 'vendor_id': streamdeck_vendor_id | int, 'product_id': streamdeck_product_id | int, 'model': streamdeck_model, 'serial': streamdeck_serial | default(''), 'ca_certificate': '/etc/boetticher/companion-ca.pem'} | to_nice_json }}\n"
+    content: "{{ {'vendor_id': streamdeck_vendor_id | int, 'product_id': streamdeck_product_id | int, 'model': streamdeck_model, 'serial': streamdeck_serial | default('')} | to_nice_json }}\n"
   notify: restart boetticher-streamdeck
 
 - name: Grant access to only the supported StreamDeck USB identity

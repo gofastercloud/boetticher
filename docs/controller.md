@@ -174,7 +174,7 @@ StreamDeck detail view and CLI status.
 Apply and test commands temporarily use dedicated operation modes. Apply shows
 the blue Knight Rider chase while it is running, then holds an all-green or
 all-red result briefly. Test shows one pixel per named test group: active tests
-pulse blue, passed tests are solid green, and failed tests are solid red. The
+active tests pulse blue, passed tests are solid green, and failed tests are solid red. The
 current firewall test uses five groups (gateway, Internet egress, inter-zone
 policy, HOME protection, and administration). The final result is held briefly
 before Standard status resumes. Display notifications remain best-effort and
@@ -225,9 +225,8 @@ status:
 
 The display is a lightweight operator convenience, not authoritative
 monitoring or qualification. A green LED means only that its corresponding
-simple, read-only check passed. It has no dependency on Pulse, Prometheus,
-Loki, Alertmanager, Gatus, a monitoring database, or an external monitoring
-API. The hourly speedtest uses the external speedtest.net measurement service
+simple, read-only check passed. It does not depend on the observability runtime
+or an external monitoring API. The hourly speedtest uses the external speedtest.net measurement service
 only for that explicit performance sample. The Controller daemon runs with
 root privileges in the reference image because the GPIO device is root-owned;
 its systemd unit otherwise confines network, filesystem, and device access.
@@ -240,8 +239,9 @@ When a StreamDeck is attached to the Controller, it is owned by the same
 read-only view of the enrolled Host. Its five-key rows are Proxmox health
 (`PVE`, CPU, RAM, DATA, NET), five VM/LXC guests sorted by VMID, and core
 services (`FW`, VPN, TAILNET, SCROLL, REFRESH). DATA follows fresh/stale Host
-telemetry; VPN currently renders `OFF` because the status snapshot has no VPN
-mapping, which is a display gap rather than proof that VPN is absent. SCROLL cycles
+telemetry; VPN reflects the bounded integrated firewall-provider status and its
+detail view preserves the reported reason. A red control-plane status is not
+packet-acceptance or outage proof. SCROLL cycles
 through guests five at a time. Each guest tile uses `VM<id>` or `CT<id>` on
 the first line, the hostname on the second, and its runtime status on the
 third.

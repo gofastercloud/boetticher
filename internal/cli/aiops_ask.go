@@ -17,8 +17,8 @@ import (
 
 const holmesAskTimeout = 5 * time.Minute
 
-func runAIOpsAsk(args []string, input io.Reader, out, errOut io.Writer) error {
-	fs := flag.NewFlagSet("module aiops ask", flag.ContinueOnError)
+func runMonitoringAsk(args []string, input io.Reader, out, errOut io.Writer) error {
+	fs := flag.NewFlagSet("module monitoring ask", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	yes := fs.Bool("yes", false, "approve the paid model request")
 	asJSON := fs.Bool("json", false, "emit JSON")
@@ -26,7 +26,7 @@ func runAIOpsAsk(args []string, input io.Reader, out, errOut io.Writer) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: boetticher module aiops ask QUESTION [--site DIR] [--yes] [--json]")
+		return errors.New("usage: boetticher module monitoring ask QUESTION [--site DIR] [--yes] [--json]")
 	}
 	question := strings.TrimSpace(fs.Arg(0))
 	if question == "" {
@@ -39,10 +39,10 @@ func runAIOpsAsk(args []string, input io.Reader, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if config.Modules.AIOps == nil || !enabled(config.Modules.AIOps.Enabled) || config.Modules.AIOps.Holmes == nil || !enabled(config.Modules.AIOps.Holmes.Enabled) {
-		return errors.New("aiops Holmes is disabled")
+	if config.Modules.Observability == nil || !enabled(config.Modules.Observability.Enabled) || config.Modules.Observability.Monitoring.Holmes == nil || !enabled(config.Modules.Observability.Monitoring.Holmes.Enabled) {
+		return errors.New("monitoring Holmes is disabled")
 	}
-	alias := config.Modules.AIOps.Holmes.ModelAlias
+	alias := config.Modules.Observability.Monitoring.Holmes.ModelAlias
 	if !*yes && !affirm(input, out, fmt.Sprintf("Ask Holmes using model alias %s? This may incur model charges. [y/N] ", alias)) {
 		return errors.New("Holmes ask cancelled")
 	}

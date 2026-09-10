@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestPurgeIntentRoundTripAndClear(t *testing.T) {
@@ -14,7 +12,7 @@ func TestPurgeIntentRoundTripAndClear(t *testing.T) {
 		Module:        "printer",
 		ModelRevision: "sha256:revision",
 		CreatedAt:     "2026-08-29T00:00:00Z",
-		Guests:        []PurgeGuest{{VMID: model.PrinterVMID, Name: "lab-printer-01", Kind: "lxc", Owner: "boetticher/module/printer"}},
+		Guests:        []PurgeGuest{{VMID: 230, Name: "lab-printer-01", Kind: "lxc", Owner: "boetticher/module/printer"}},
 	}
 	if err := SavePurgeIntent(dir, intent); err != nil {
 		t.Fatal(err)
@@ -39,7 +37,7 @@ func TestPurgeIntentRejectsWrongOwner(t *testing.T) {
 		Module:        "printer",
 		ModelRevision: "sha256:revision",
 		CreatedAt:     "2026-08-29T00:00:00Z",
-		Guests:        []PurgeGuest{{VMID: model.PrinterVMID, Name: "lab-printer-01", Kind: "lxc", Owner: "user"}},
+		Guests:        []PurgeGuest{{VMID: 230, Name: "lab-printer-01", Kind: "lxc", Owner: "user"}},
 	})
 	if err == nil {
 		t.Fatal("purge intent accepted an unowned guest")

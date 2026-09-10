@@ -1,45 +1,5 @@
 {
   "$defs": {
-    "AIOpsModuleConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "model_alias": {
-          "type": "string"
-        },
-        "network": {
-          "enum": [
-            "direct",
-            "airvpn"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "model_alias"
-      ],
-      "type": "object"
-    },
-    "AirVPNModuleConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "qbittorrent_port": {
-          "type": "integer"
-        },
-        "servers": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "servers"
-      ],
-      "type": "object"
-    },
     "BifrostModelConfig": {
       "additionalProperties": false,
       "properties": {
@@ -129,9 +89,6 @@
         "ethernet_mac": {
           "description": "Physical Ethernet MAC used for the fixed SERVERS reservation.",
           "type": "string"
-        },
-        "pulse_agent": {
-          "$ref": "#/$defs/CompanionCapabilityConfig"
         },
         "streamdeck": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
@@ -251,12 +208,6 @@
     "ModulesConfig": {
       "additionalProperties": false,
       "properties": {
-        "aiops": {
-          "$ref": "#/$defs/AIOpsModuleConfig"
-        },
-        "airvpn": {
-          "$ref": "#/$defs/AirVPNModuleConfig"
-        },
         "bifrost": {
           "$ref": "#/$defs/BifrostModuleConfig"
         },
@@ -264,12 +215,6 @@
           "$ref": "#/$defs/DNSModuleConfig"
         },
         "firewall": {
-          "$ref": "#/$defs/ToggleModuleConfig"
-        },
-        "gatus": {
-          "$ref": "#/$defs/NetworkToggleModuleConfig"
-        },
-        "logging": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
         "monitoring": {
@@ -298,22 +243,6 @@
         "domain",
         "zones"
       ],
-      "type": "object"
-    },
-    "NetworkToggleModuleConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "network": {
-          "enum": [
-            "direct",
-            "airvpn"
-          ],
-          "type": "string"
-        }
-      },
       "type": "object"
     },
     "OwnershipPolicy": {
@@ -464,14 +393,10 @@
       "properties": {
         "gateway": {
           "type": "string"
-        },
-        "pulse": {
-          "type": "string"
         }
       },
       "required": [
-        "gateway",
-        "pulse"
+        "gateway"
       ],
       "type": "object"
     },

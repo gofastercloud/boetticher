@@ -17,7 +17,6 @@ import (
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
-	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
@@ -85,7 +84,7 @@ func liveSmallstepHealthResults(siteDir string, s model.Site) []statusmodel.Chec
 	if !dnsOK || !monitorOK || dns.Address == "" || monitor.Address == "" {
 		return []statusmodel.CheckResult{
 			checkResult(checkSmallstepCAService, "FAIL", "the core DNS and monitoring endpoints are not declared"),
-			checkResult(checkPulseLeafCertificate, "FAIL", "the core monitoring endpoint is not declared"),
+			checkResult(checkObservabilityLeafCertificate, "FAIL", "the core observability endpoint is not declared"),
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -110,20 +109,20 @@ func liveSmallstepHealthResults(siteDir string, s model.Site) []statusmodel.Chec
 		caResult.Detail = "online CA health endpoint is active on the DNS endpoint"
 	}
 
-	leafResult := checkResult(checkPulseLeafCertificate, "", "")
+	leafResult := checkResult(checkObservabilityLeafCertificate, "", "")
 	data, err := monitorRunner.Run(ctx, monitor.Address, model.DefaultAdminSSHUser, "/usr/bin/openssl s_client -connect 10.10.10.20:443 -servername monitor."+shellQuote(s.Network.Domain)+" -CAfile /etc/ssl/certs/ca-certificates.crt -verify_return_error </dev/null 2>/dev/null | /usr/bin/openssl x509 -noout -issuer -enddate")
 	if err != nil {
 		leafResult.Status = "FAIL"
-		leafResult.Detail = fmt.Sprintf("read Pulse leaf certificate: %v", err)
+		leafResult.Detail = fmt.Sprintf("read observability leaf certificate: %v", err)
 	} else if expiry, parseErr := parseLeafExpiry(string(data)); parseErr != nil {
 		leafResult.Status = "FAIL"
 		leafResult.Detail = parseErr.Error()
 	} else if !expiry.After(time.Now().UTC()) {
 		leafResult.Status = "FAIL"
-		leafResult.Detail = fmt.Sprintf("Pulse leaf certificate expired at %s", expiry.UTC().Format(time.RFC3339))
+		leafResult.Detail = fmt.Sprintf("observability leaf certificate expired at %s", expiry.UTC().Format(time.RFC3339))
 	} else {
 		leafResult.Status = "PASS"
-		leafResult.Detail = fmt.Sprintf("Pulse leaf certificate valid until %s (%s)", expiry.UTC().Format(time.RFC3339), strings.TrimSpace(string(data)))
+		leafResult.Detail = fmt.Sprintf("observability leaf certificate valid until %s (%s)", expiry.UTC().Format(time.RFC3339), strings.TrimSpace(string(data)))
 	}
 	return []statusmodel.CheckResult{caResult, leafResult}
 }
@@ -132,14 +131,7 @@ func planFromLiveUpstream(siteDir string, s model.Site, ageIdentity string, upst
 	if ageIdentity == "" {
 		ageIdentity = model.DefaultAgeIdentity
 	}
-	profile, err := prepareAirVPNProfile(context.Background(), siteDir, s, ageIdentity, true, false)
-	if err != nil {
-		return firewall.Plan{}, err
-	}
-	if profile == nil {
-		return firewall.PlanFromSiteWithUpstream(s, upstream)
-	}
-	return firewall.PlanFromSiteWithUpstreamAndAirVPN(s, upstream, profile.Metadata)
+	return firewall.PlanFromSiteWithUpstream(s, upstream)
 }
 
 func platformComponentByName(s model.Site, name string) (model.Component, bool) {
@@ -160,11 +152,11 @@ func parseLeafExpiry(output string) (time.Time, error) {
 		value := strings.Join(strings.Fields(strings.TrimPrefix(line, "notAfter=")), " ")
 		expiry, err := time.Parse("Jan 2 15:04:05 2006 MST", value)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("parse Pulse leaf expiry %q: %w", value, err)
+			return time.Time{}, fmt.Errorf("parse observability leaf expiry %q: %w", value, err)
 		}
 		return expiry.UTC(), nil
 	}
-	return time.Time{}, errors.New("Pulse leaf certificate did not report an expiry")
+	return time.Time{}, errors.New("observability leaf certificate did not report an expiry")
 }
 
 func deploymentOperationHealthResult(siteDir string) statusmodel.CheckResult {
@@ -389,13 +381,10 @@ func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpoi
 			}
 			return nil
 		}},
-		{checkPulseMonitoringProjection, func() error {
-			plan, err := pulse.PlanFromSite(s)
-			if err != nil {
-				return err
-			}
-			if !plan.PlatformOnly || len(plan.Components) != len(s.PlatformComponents()) {
-				return errors.New("Pulse monitoring projection is not platform-only")
+		{checkObservabilityProjection, func() error {
+			monitor, ok := platformComponentByName(s, "lab-monitor-01")
+			if !ok || monitor.Role != "Unified observability" || !monitor.ProductOwned {
+				return errors.New("observability projection is not platform-owned")
 			}
 			return nil
 		}},

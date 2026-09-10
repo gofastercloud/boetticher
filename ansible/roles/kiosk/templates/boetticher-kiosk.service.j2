@@ -1,5 +1,5 @@
 [Unit]
-Description=Boetticher Pulse dashboard Chromium kiosk
+Description=Boetticher local status dashboard kiosk
 After=seatd.service boetticher-companion.service systemd-user-sessions.service dbus.socket getty@tty1.service
 Requires=seatd.service
 Wants=boetticher-companion.service dbus.socket
@@ -30,7 +30,7 @@ TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
 ExecStartPre=/usr/local/libexec/boetticher-companion ready
-ExecStart=/usr/bin/cage -- /usr/bin/chromium --kiosk --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --disable-pinch --ozone-platform=wayland --user-data-dir=/home/kiosk/.config/chromium-kiosk http://127.0.0.1:8765/
+ExecStart=/usr/bin/cage -- /usr/bin/chromium --kiosk --no-first-run --no-default-browser-check --noerrdialogs --disable-pinch --ozone-platform=wayland --user-data-dir=/home/kiosk/.config/chromium-kiosk http://127.0.0.1:8765/
 Restart=always
 RestartSec=5s
 NoNewPrivileges=yes

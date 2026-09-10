@@ -50,7 +50,7 @@ func Services() []string {
 
 func ServicesForModules(modules clientservices.Modules) []string {
 	services := []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "caddy.service"}
-	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+	if modules.Observability != nil && clientservices.Enabled(modules.Observability.Enabled) && modules.Observability.Monitoring.Holmes != nil && clientservices.Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
 		services = append(services, "bifrost.service")
 	}
 	return services
@@ -198,7 +198,7 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 	pushoverEnvironment := PushoverEnvironment(modules)
 	caddyEnvironment := CaddyEnvironment(modules, collection)
 	bifrostProbeEnvironment := " BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=false"
-	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+	if modules.Observability != nil && clientservices.Enabled(modules.Observability.Enabled) && modules.Observability.Monitoring.Holmes != nil && clientservices.Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
 		bifrostProbeEnvironment = " BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED=true"
 	}
 	providers := []string{"victorialogs", "grafana", "gatus"}
@@ -225,7 +225,7 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 		}
 	}
 	providers = []string{"victoriametrics"}
-	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+	if modules.Observability != nil && clientservices.Enabled(modules.Observability.Enabled) && modules.Observability.Monitoring.Holmes != nil && clientservices.Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
 		providers = append(providers, "bifrost", "holmes")
 	}
 	for _, provider := range providers {
@@ -342,7 +342,7 @@ func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadR
 			return fmt.Errorf("set executable mode on observability binary: %w", err)
 		}
 	}
-	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+	if modules.Observability != nil && clientservices.Enabled(modules.Observability.Enabled) && modules.Observability.Monitoring.Holmes != nil && clientservices.Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
 		config, err := BifrostConfig(modules)
 		if err != nil {
 			return err
@@ -694,7 +694,7 @@ func (c HostClient) VerifyReadinessForModules(ctx context.Context, b Binding, mo
 		}
 	}
 	check := "curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8428/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:9428/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health >/dev/null; curl --fail --silent --show-error --max-time 5 --unix-socket /run/caddy/admin.sock http://unix/config/ >/dev/null"
-	if modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
+	if modules.Observability != nil && clientservices.Enabled(modules.Observability.Enabled) && modules.Observability.Monitoring.Holmes != nil && clientservices.Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
 		check += "; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:4000/health >/dev/null"
 	}
 	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(check))); err != nil {
@@ -747,10 +747,10 @@ func serviceHealthy(value string) bool {
 }
 
 func BifrostConfig(modules clientservices.Modules) (bifrost.Config, error) {
-	if modules.AIOps == nil || modules.AIOps.Holmes == nil {
-		return bifrost.Config{}, errors.New("AIOps Holmes settings are required")
+	if modules.Observability == nil || modules.Observability.Monitoring.Holmes == nil {
+		return bifrost.Config{}, errors.New("Monitoring Holmes settings are required")
 	}
-	h := modules.AIOps.Holmes
+	h := modules.Observability.Monitoring.Holmes
 	config := bifrost.Config{Listen: bifrost.DefaultListen, ClientCredential: h.Bifrost.ClientCredential}
 	for _, upstream := range h.Bifrost.Upstreams {
 		config.Upstreams = append(config.Upstreams, bifrost.Upstream{Name: upstream.Name, BaseURL: upstream.BaseURL, Credential: upstream.SecretRef})
@@ -766,9 +766,9 @@ func BifrostConfig(modules clientservices.Modules) (bifrost.Config, error) {
 
 func RequiredSecretNames(modules clientservices.Modules) []string {
 	names := []string{"grafana-admin-password"}
-	if modules.AIOps != nil && modules.AIOps.Holmes != nil {
-		names = append(names, modules.AIOps.Holmes.Bifrost.ClientCredential)
-		for _, upstream := range modules.AIOps.Holmes.Bifrost.Upstreams {
+	if modules.Observability != nil && modules.Observability.Monitoring.Holmes != nil {
+		names = append(names, modules.Observability.Monitoring.Holmes.Bifrost.ClientCredential)
+		for _, upstream := range modules.Observability.Monitoring.Holmes.Bifrost.Upstreams {
 			names = append(names, upstream.SecretRef)
 		}
 	}

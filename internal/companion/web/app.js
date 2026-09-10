@@ -10,8 +10,8 @@ function render(snapshot){
  let items=snapshot.items;
  if(module)items=module.checks||[module];
  else if(view==='overview'&&snapshot.leds?.length===8)items=snapshot.leds;
- else if(view==='core')items=items.filter(item=>['link','gateway','dns','proxmox','pulse'].includes(item.id)).concat((snapshot.modules||[]).filter(item=>item.status!=='disabled'));
- else if(view==='pi')items=items.filter(item=>['pi','link','agent','peripherals'].includes(item.id));
+ else if(view==='core')items=items.filter(item=>['link','gateway','dns','proxmox'].includes(item.id)).concat((snapshot.modules||[]).filter(item=>item.status!=='disabled'));
+ else if(view==='pi')items=items.filter(item=>['pi','link','peripherals'].includes(item.id));
  else if(view==='resources')items=snapshot.resources.slice(snapshot.page*8,(snapshot.page+1)*8).map(resource=>({label:resource.name,status:resource.status,value:resource.type,reason:`CPU ${resource.cpu==null?'—':Math.round(resource.cpu)+'%'} · Memory ${resource.memory==null?'—':Math.round(resource.memory)+'%'}`,observed_at:resource.observed_at}));
  else if(view.startsWith('resource:')){const resource=snapshot.resources.find(item=>'resource:'+item.id===view);items=resource?[{label:resource.name,status:resource.status,value:resource.type,reason:`CPU ${resource.cpu==null?'—':Math.round(resource.cpu)+'%'} · Memory ${resource.memory==null?'—':Math.round(resource.memory)+'%'}`,observed_at:resource.observed_at}]:[];}
  else if(view!=='overview')items=items.filter(item=>item.id===view);

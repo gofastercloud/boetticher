@@ -5,7 +5,7 @@ import "testing"
 func TestCompanionCapabilitiesRemainExplicitAndCloned(t *testing.T) {
 	enabled := true
 	config := &CompanionConfig{Enabled: &enabled, EthernetMAC: "dc:a6:32:e9:dd:82"}
-	if config.Capabilities().Display || config.Capabilities().StreamDeck || config.Capabilities().PulseAgent {
+	if config.Capabilities().Display || config.Capabilities().StreamDeck {
 		t.Fatal("companion capability enabled without selection")
 	}
 	config.Display = &CompanionCapabilityConfig{Enabled: &enabled}

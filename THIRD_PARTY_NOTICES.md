@@ -33,18 +33,17 @@ The image definitions pin or fetch these components:
 | [Debian](https://www.debian.org/) | 13 / Trixie snapshot | Base and service images | Retain package licences and notices for the exact package set. |
 | [Blocky](https://github.com/0xERR0R/blocky) | 0.34.0 | Client-facing DNS | [Release source and licence](https://github.com/0xERR0R/blocky/releases/tag/v0.34.0) |
 | [PowerDNS Authoritative](https://github.com/PowerDNS/pdns) | 4.9.17 | Authoritative DNS | Review the exact package and source notices for the redistributed build. |
-| [Pulse Community](https://github.com/rcourtman/Pulse) | 6.4.1 | Monitoring image and host agent | [MIT licence](https://github.com/rcourtman/Pulse/blob/v6.4.1/LICENSE) |
 | [Gatus](https://github.com/TwiN/gatus) | 5.36.0 | Optional status page | [Release source](https://github.com/TwiN/gatus/releases/tag/v5.36.0); retain its licence and notices. |
-| [LiteLLM](https://github.com/BerriAI/litellm) | 1.89.0 | HolmesGPT dependency in the optional AIOps image | Retain the application licence and locked Python dependency notices. |
-| [HolmesGPT](https://github.com/HolmesGPT/holmesgpt) | 0.40.0 | Optional AIOps image | The image copies or extracts upstream source; retain its applicable licence and notices. |
-| [OctoPrint](https://github.com/OctoPrint/OctoPrint) | 1.11.8 | Optional printer image | Retain the application licence and locked Python dependency notices. |
+| [LiteLLM](https://github.com/BerriAI/litellm) | 1.89.0 | Nested Holmes monitoring operation | Retain the application licence and locked Python dependency notices. |
+| [HolmesGPT](https://github.com/HolmesGPT/holmesgpt) | 0.40.0 | Nested Monitoring operation in the observability runtime | Retain its applicable licence and notices. |
+| OctoPrint | operator-managed external service | Boetticher does not ship or manage an OctoPrint image; retain the service's own upstream notices. |
 | [Tailscale](https://tailscale.com/) | 1.76.6 | Optional Tailnet Router image | Retain the package licence and repository notices. |
 | [Ansible Core](https://github.com/ansible/ansible) | 2.19.1 | Controller runtime | [GPLv3 copying terms](https://github.com/ansible/ansible/blob/devel/COPYING) |
 | [matthewpi/streamdeck](https://github.com/matthewpi/streamdeck) | commit `6586ce762db315c6633567f9a10ed4ef14fcd33e` | Companion StreamDeck runtime | [MIT licence](https://github.com/matthewpi/streamdeck/blob/6586ce762db315c6633567f9a10ed4ef14fcd33e/LICENSE); retain exact Go dependency notices. |
 
 The AI Router is Boetticher's in-tree Bifrost implementation. It provides the
-OpenAI-compatible endpoint used by AIOps and does not bundle a separate router
-runtime. The optional AIOps appliance has its own locked upstream dependency
+OpenAI-compatible endpoint used by the nested Monitoring Holmes operation and
+does not bundle a separate router runtime. The observability runtime has locked
 set; retain the applicable notices when redistributing that artifact.
 
 Base images also contain Debian packages such as systemd, OpenSSL, OpenSSH,

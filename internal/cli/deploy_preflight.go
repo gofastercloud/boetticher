@@ -43,9 +43,6 @@ func staticCredentialReadiness(siteDir string, s model.Site, ageIdentity string)
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		keys = append(keys, "ddns_tsig_secret")
 	}
-	if enabled := modulesEnabled(s, "monitoring"); enabled {
-		keys = append(keys, "pulse_admin_password")
-	}
 	if modulesEnabled(s, "tailnet-router") && !hasRetainedModuleState(s.RetainedModules, "tailnet-router") {
 		keys = append(keys, "tailscale_auth_key")
 	}

@@ -16,8 +16,10 @@ supported GitHub Releases.
   deployment transaction that applies them.
 - Use endpoint-owned Smallstep certificate issuance while retaining deliberate
   mTLS identities for browser, logging, and bounded service integrations.
-- Offer bounded first-party modules for logging, Gatus, Bifrost, AIOps,
-  printing, Tailnet routing, AirVPN, and Arr without adopting user workloads.
+- Offer the unified observability runtime, nested Monitoring operations,
+  Tailnet routing, live firewall-integrated AirVPN, and media capabilities
+  without adopting user workloads. Operator-managed OctoPrint remains a
+  registered user system, not a product-owned module.
 - Add the external Companion after core setup through a MAC-bound SERVERS
   reservation and restricted Proxmox bastion route.
 
@@ -41,7 +43,8 @@ release versions.
   `lab-streamdeck-01` guest.
 - Replace the sprawling guide collection with a small GitHub Pages site, a
   short README, and a generated command menu.
-- Add the optional AirVPN transit module for explicit module egress.
+- Add the historical optional AirVPN transit path for explicit module egress
+  (the current supported path is the integrated firewall VPN capability).
 - Keep the AI-router client contract while replacing its heavy runtime with
   the in-tree Bifrost implementation for AIOps.
 - Run the companion StreamDeck capability in Go with `matthewpi/streamdeck`.
@@ -58,7 +61,9 @@ release versions.
 - Bundle the controller's SOPS and age implementations so encrypted secrets
   stay out of ordinary configuration and command output.
 - Offer monitoring, firewall, logging, DNS, Gatus, Bifrost, and AIOps,
-  and Tailnet Router as first-party capabilities with clear defaults.
+  and Tailnet Router as first-party capabilities with clear defaults. This
+  internal milestone predates the unified observability runtime and nested
+  Monitoring operation described above.
 - Improve host identity checks, appliance replacement, persistent storage, and
   the guarded physical-network workflow.
 
@@ -79,7 +84,8 @@ release versions.
   the platform-changing command.
 - Added the managed Debian gateway, VLAN-aware internal networking,
   external-firewall mode, firewall/DHCP inspection, and dedicated storage.
-- Added the generated portal, central logging, Pulse monitoring, client
+- Added the generated portal, central logging, the former Pulse monitoring
+  integration, client
   certificates, USB bindings, recovery material, and module configuration.
 - Strengthened Proxmox 9.2 image import, retry, replacement, SSH, and hosted
   builder paths.

@@ -39,7 +39,6 @@ func TestCompanionIsOptInAndDerivesOneServersReservation(t *testing.T) {
 		EthernetMAC: "dc:a6:32:e9:dd:82",
 		Display:     &CompanionCapabilityConfig{Enabled: &enabled},
 		StreamDeck:  &CompanionCapabilityConfig{Enabled: &enabled},
-		PulseAgent:  &CompanionCapabilityConfig{Enabled: &enabled},
 	}
 	config := ConfigFromSite(s)
 	resolved := config.BaseSite()
