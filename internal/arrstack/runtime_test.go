@@ -85,6 +85,19 @@ func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
 	}
 }
 
+func TestJellyseerrReapplyUsesExistingAdminSession(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{"/api/v1/auth/local", "existingSession", "NO_ADMIN_USER"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Jellyseerr reapply fix missing %q", required)
+		}
+	}
+}
+
 func TestApplyChecksAdapterBytesBeforeHealthyRuntimeNoOp(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "cli", "arrstack.go"))
 	if err != nil {

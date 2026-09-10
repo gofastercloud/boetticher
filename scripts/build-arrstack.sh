@@ -58,6 +58,32 @@ replacement = '''    "X-Emby-Authorization": `${auth.authHeader}, Token="${auth.
   };'''
 if needle not in s: raise SystemExit("Jellyfin token header anchor missing")
 jellyfin.write_text(s.replace(needle, replacement, 1))
+jellyseerr = root / "src/wiring/jellyseerr.ts"
+s = jellyseerr.read_text()
+needle = '''  // 1. Bootstrap: create the admin + store the Jellyfin connection.
+  const bootstrap = await withRetry(() =>'''
+replacement = '''  // 1. Reuse an existing admin session on reapply. The bootstrap endpoint
+  // intentionally returns HTTP 500 (NO_ADMIN_USER) once an admin exists.
+  let existingSession: Response | undefined;
+  try {
+    const local = await fetch(`${base}/api/v1/auth/local`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: jellyfinUser, password: jellyfinPass }),
+    });
+    if (local.ok) existingSession = local;
+  } catch { /* fall through to first-use bootstrap */ }
+
+  // First-use bootstrap: create the admin + store the Jellyfin connection.
+  const bootstrap = existingSession ?? await withRetry(() =>'''
+if needle not in s: raise SystemExit("Jellyseerr bootstrap anchor missing")
+s = s.replace(needle, replacement, 1)
+needle = '''  const relogin = await withRetry(() =>
+    fetch(`${base}/api/v1/auth/jellyfin`, {'''
+replacement = '''  const relogin = existingSession ?? await withRetry(() =>
+    fetch(`${base}/api/v1/auth/jellyfin`, {'''
+if needle not in s: raise SystemExit("Jellyseerr relogin anchor missing")
+jellyseerr.write_text(s.replace(needle, replacement, 1))
 storage = root / "src/storage/layout.ts"
 s = storage.read_text()
 needle = '''const PRIMARY_DIRS = [
