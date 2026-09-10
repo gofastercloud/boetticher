@@ -141,6 +141,32 @@ func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 	}
 }
 
+func TestServiceStateProjectsOperatorSystemIntoDHCPReservation(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	enabled := true
+	state, err := ServiceStateFromModules(site, clientservices.Modules{
+		DNS:  &clientservices.DNSConfig{Enabled: &enabled},
+		DHCP: &clientservices.DHCPConfig{Enabled: &enabled, Scopes: clientservices.DefaultScopes()},
+		Systems: []clientservices.System{{
+			Name: "octoprint", VMID: 501, Kind: "lxc", GuestName: "lab-octoprint-01",
+			MAC: "bc:24:11:a5:59:76", Address: "10.10.20.61", Port: 5000,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reservation *Section
+	for i := range state.DHCP {
+		if state.DHCP[i].Name == "boetticher_host_octoprint" {
+			reservation = &state.DHCP[i]
+			break
+		}
+	}
+	if reservation == nil || reservation.Options["mac"] != "bc:24:11:a5:59:76" || reservation.Options["ip"] != "10.10.20.61" {
+		t.Fatalf("operator system DHCP reservation missing or incorrect: %#v", reservation)
+	}
+}
+
 func TestObservabilityFirewallProjectionUsesPersistedRoleBindings(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	enabled := true

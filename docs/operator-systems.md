@@ -59,3 +59,39 @@ current desired provider state and reports PASS when cleanup is complete.
 
 V2 candidates include additional zones or ports, static identity, richer
 checks, and aliases. They do not change the guest ownership boundary.
+
+## Example: OctoPrint on a USB printer
+
+For an operator-managed printer, create the LXC and install OctoPrint through
+the normal Proxmox and guest administration path first. Boetticher then
+registers the completed guest; it does not create the guest or install its
+software.
+
+1. On the Proxmox host, identify the printer by its physical USB port and
+   vendor/product identity. Prefer the stable `/dev/serial/by-id` identity when
+   selecting the device, and pass only the resolved character device into the
+   LXC. Verify the guest sees the expected `/dev/ttyUSB*` or `/dev/ttyACM*` and
+   grant access only to the OctoPrint service account.
+2. Create one unprivileged LXC with one DHCP NIC on `vmbr1`, VLAN 20, and an
+   unused address outside the SERVERS pool. Install OctoPrint in a dedicated
+   virtual environment and run it as a non-root systemd service listening on
+   its chosen port.
+3. Verify the service locally in the guest and record the guest VMID, name,
+   NIC MAC, chosen address, port, and USB identity. A working HTTP page alone
+   does not prove printer serial access.
+4. From the installed Controller, review and apply the registration:
+
+   ```text
+   boetticher host register-system octoprint --vmid VMID --address SERVERS_ADDRESS --port 5000 --check --plan
+   boetticher host register-system octoprint --vmid VMID --address SERVERS_ADDRESS --port 5000 --check --yes
+   boetticher host system-status octoprint
+   ```
+
+   Registration projects the DHCP reservation and narrow monitoring/firewall
+   policy. Renew the guest's DHCP lease after a successful registration, then
+   verify that it receives the reserved address and that the monitoring check
+   passes.
+5. Complete OctoPrint's first-run configuration in its own UI, select the
+   passed-through serial device, and perform a controlled printer connection
+   test. The Boetticher `--check` result proves only the configured TCP port;
+   it does not claim OctoPrint API, serial, or print-job success.

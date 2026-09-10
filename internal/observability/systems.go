@@ -83,8 +83,8 @@ func (c HostClient) ReconcileGatus(ctx context.Context, base []byte, systems []c
 	if !ok {
 		return errors.New("observability transport does not support bounded stdin")
 	}
-	result, err := runner.RunWithStdin(ctx, gatusReplaceCommand(), bytes.NewReader(payload))
-	if err != nil || len(result.Stderr) != 0 {
+	_, err = runner.RunWithStdin(ctx, gatusReplaceCommand(), bytes.NewReader(payload))
+	if err != nil {
 		// Do not reflect provider stderr: it can include configuration diagnostics.
 		return errors.New("Gatus configuration replacement or health verification failed")
 	}
@@ -356,5 +356,5 @@ func gatusReplaceCommand() string {
 	// The directory is root-owned 0750 and the service is gatus, so all path
 	// components and the installed file are checked before the same-directory
 	// atomic rename. The previous bytes are restored if reload or health fails.
-	return "set -eu; dir=/etc/boetticher/gatus; target=/etc/boetticher/gatus/config.yaml; for path in /etc /etc/boetticher \"$dir\" \"$target\"; do test ! -L \"$path\"; done; test -d \"$dir\"; test -f \"$target\"; tmp=$(mktemp \"$dir/.config.yaml.new.XXXXXX\"); old=$(mktemp \"$dir/.config.yaml.old.XXXXXX\"); cleanup(){ rm -f \"$tmp\" \"$old\"; }; trap cleanup EXIT HUP INT TERM; cat > \"$tmp\"; test \"$(wc -c < \"$tmp\")\" -le 524288; chown root:gatus \"$tmp\"; chmod 0640 \"$tmp\"; if cmp -s \"$tmp\" \"$target\"; then systemctl is-active --quiet gatus.service; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health >/dev/null; exit 0; fi; cp -p \"$target\" \"$old\"; mv -f \"$tmp\" \"$target\"; if ! systemctl reload-or-restart gatus.service || ! systemctl is-active --quiet gatus.service || ! curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health >/dev/null; then mv -f \"$old\" \"$target\"; systemctl reload-or-restart gatus.service || true; exit 1; fi; rm -f \"$old\""
+	return "set -eu; dir=/etc/boetticher/gatus; target=/etc/boetticher/gatus/config.yaml; for path in /etc /etc/boetticher \"$dir\" \"$target\"; do test ! -L \"$path\"; done; test -d \"$dir\"; test -f \"$target\"; tmp=$(mktemp \"$dir/.config.yaml.new.XXXXXX\"); old=$(mktemp \"$dir/.config.yaml.old.XXXXXX\"); cleanup(){ rm -f \"$tmp\" \"$old\"; }; wait_health(){ for attempt in 1 2 3 4 5 6 7 8 9 10; do if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health >/dev/null; then return 0; fi; sleep 1; done; return 1; }; trap cleanup EXIT HUP INT TERM; cat > \"$tmp\"; test \"$(wc -c < \"$tmp\")\" -le 524288; chown root:gatus \"$tmp\"; chmod 0640 \"$tmp\"; if cmp -s \"$tmp\" \"$target\"; then systemctl is-active --quiet gatus.service; wait_health; exit 0; fi; cp -p \"$target\" \"$old\"; mv -f \"$tmp\" \"$target\"; if ! systemctl reload-or-restart gatus.service || ! systemctl is-active --quiet gatus.service || ! wait_health; then mv -f \"$old\" \"$target\"; systemctl reload-or-restart gatus.service || true; wait_health || true; exit 1; fi; rm -f \"$old\""
 }
