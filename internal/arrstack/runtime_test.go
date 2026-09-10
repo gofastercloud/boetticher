@@ -248,6 +248,31 @@ func TestRuntimeProbeUsesConfiguredPeerPortAndExpectedServices(t *testing.T) {
 	}
 }
 
+func TestRuntimeProbeUsesMonitoringPolicyIntent(t *testing.T) {
+	config := clientservices.MediaConfig{ApplicationDomain: "media.example.net", Aliases: clientservices.MediaAliases{Radarr: "movies"}}
+	disabled := runtimeProbeCommandWithConfigAndMonitoring(35796, config, false)
+	enabled := runtimeProbeCommandWithConfigAndMonitoring(35796, config, true)
+	if disabled == enabled || !strings.Contains(enabled, shellQuote(mustPolicyHash(35796, true))) {
+		t.Fatal("monitoring runtime probe did not bind its policy intent")
+	}
+	if strings.Contains(disabled, shellQuote(mustPolicyHash(35796, true))) {
+		t.Fatal("non-monitoring runtime probe unexpectedly includes monitoring policy")
+	}
+}
+
+func mustPolicy(peerPort int, monitoring bool) string {
+	policy, err := GuestPolicyScript(peerPort, monitoring)
+	if err != nil {
+		panic(err)
+	}
+	return policy
+}
+
+func mustPolicyHash(peerPort int, monitoring bool) string {
+	digest := sha256.Sum256([]byte(mustPolicy(peerPort, monitoring)))
+	return hex.EncodeToString(digest[:])
+}
+
 func TestPolicyReceiptCaptureAndProbeBindTheInstalledScriptAndRules(t *testing.T) {
 	capture := policyReceiptCaptureCommand()
 	for _, want := range []string{GuestPolicyPath, GuestPolicyReceipt, "nft --stateless list table inet boetticher_arrstack", "iptables -S DOCKER-USER", "iptables -S FORWARD", "grep -Fx -- '-A FORWARD -j DOCKER-USER'", "mv -f"} {

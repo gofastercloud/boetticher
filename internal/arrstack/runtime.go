@@ -601,7 +601,11 @@ func policyReceiptCaptureCommand() string {
 }
 
 func policyAgreementCommand(peerPort int) string {
-	policy, err := GuestPolicyScript(peerPort)
+	return policyAgreementCommandWithMonitoring(peerPort, false)
+}
+
+func policyAgreementCommandWithMonitoring(peerPort int, monitoring bool) string {
+	policy, err := GuestPolicyScript(peerPort, monitoring)
 	if err != nil {
 		panic(err)
 	}
@@ -745,11 +749,15 @@ func ReadStatus(ctx context.Context, host firewallmodule.HostClient, mediaSizes 
 // peer port. A different applied firewall port is drift, even when containers
 // happen to be running.
 func ReadStatusWithPeerPort(ctx context.Context, host firewallmodule.HostClient, peerPort int, mediaSizes ...int) (RuntimeStatus, error) {
-	return readStatusWithConfig(ctx, host, peerPort, clientservices.MediaConfig{ApplicationDomain: "media.example.com", Aliases: clientservices.MediaAliases{Radarr: "radarr"}}, mediaSizes...)
+	return readStatusWithConfig(ctx, host, peerPort, clientservices.MediaConfig{ApplicationDomain: "media.example.com", Aliases: clientservices.MediaAliases{Radarr: "radarr"}}, false, mediaSizes...)
 }
 
 func ReadStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, mediaSizes ...int) (RuntimeStatus, error) {
-	return readStatusWithConfig(ctx, host, peerPort, config, mediaSizes...)
+	return ReadStatusWithConfigAndMonitoring(ctx, host, peerPort, config, false, mediaSizes...)
+}
+
+func ReadStatusWithConfigAndMonitoring(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, monitoring bool, mediaSizes ...int) (RuntimeStatus, error) {
+	return readStatusWithConfig(ctx, host, peerPort, config, monitoring, mediaSizes...)
 }
 
 // AdapterBytesAgree checks the installed adapter only at apply time.  Status
@@ -776,7 +784,7 @@ func AdapterBytesAgree(ctx context.Context, host firewallmodule.HostClient) (boo
 	return strings.HasPrefix(installed, want+" "), nil
 }
 
-func readStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, mediaSizes ...int) (RuntimeStatus, error) {
+func readStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, monitoring bool, mediaSizes ...int) (RuntimeStatus, error) {
 	if peerPort < 1 || peerPort > 65535 {
 		return RuntimeStatus{}, errors.New("arrstack peer port must be 1..65535")
 	}
@@ -793,7 +801,7 @@ func readStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, p
 		status.Detail = "guest is stopped"
 		return status, nil
 	}
-	result, err := host.Run(ctx, guestExec(runtimeProbeCommandWithConfig(peerPort, config)))
+	result, err := host.Run(ctx, guestExec(runtimeProbeCommandWithConfigAndMonitoring(peerPort, config, monitoring)))
 	if err != nil {
 		status.Detail = "guest runtime is not ready"
 		return status, nil
@@ -830,6 +838,10 @@ func runtimeProbeCommand(peerPort int) string {
 }
 
 func runtimeProbeCommandWithConfig(peerPort int, config clientservices.MediaConfig) string {
+	return runtimeProbeCommandWithConfigAndMonitoring(peerPort, config, false)
+}
+
+func runtimeProbeCommandWithConfigAndMonitoring(peerPort int, config clientservices.MediaConfig, monitoring bool) string {
 	serviceImages := make([]string, 0, len(expectedServices))
 	for _, service := range expectedServices {
 		serviceImages = append(serviceImages, service+"="+expectedServiceImages[service])
@@ -838,7 +850,7 @@ func runtimeProbeCommandWithConfig(peerPort int, config clientservices.MediaConf
 	compose := shellQuote(GuestComposePath)
 	qbit := qbitReadinessCommand(peerPort, compose)
 	probeHost := config.Aliases.Radarr + "." + config.ApplicationDomain
-	return "systemctl is-active --quiet qemu-guest-agent; systemctl is-active --quiet docker && printf '%s\\n' DOCKER_READY || true; test -x " + shellQuote(GuestAdapterPath) + " && test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + " && printf '%s\\n' APP_STATE_READY || true; if sh -ec " + shellQuote(policyAgreementCommand(peerPort)) + "; then printf '%s\\n' POLICY_READY; fi; if test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + "; then for expectation in " + services + "; do service=${expectation%%=*}; expected=${expectation#*=}; cid=$(docker compose -f " + compose + " ps -q \"$service\"); test -n \"$cid\"; state=$(docker inspect -f '{{.State.Status}}' \"$cid\"); test \"$state\" = running || test \"$service\" = recyclarr; health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \"$cid\"); test \"$health\" = healthy || test \"$health\" = none || test \"$service\" = recyclarr; image=$(docker inspect -f '{{.Config.Image}}' \"$cid\"); test \"$image\" = \"$expected\"; done; " + qbit + "; printf '%s\\n' APP_READY; fi; if ss -lnt | grep -F -- '10.10.20.230:443' >/dev/null && docker compose -f " + compose + " exec -T caddy caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 && curl --fail --silent --show-error --connect-timeout 3 --resolve " + shellQuote(probeHost) + ":443:10.10.20.230 https://" + shellQuote(probeHost) + "/ -o /dev/null; then printf '%s\\n' CADDY_TLS_READY; fi"
+	return "systemctl is-active --quiet qemu-guest-agent; systemctl is-active --quiet docker && printf '%s\\n' DOCKER_READY || true; test -x " + shellQuote(GuestAdapterPath) + " && test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + " && printf '%s\\n' APP_STATE_READY || true; if sh -ec " + shellQuote(policyAgreementCommandWithMonitoring(peerPort, monitoring)) + "; then printf '%s\\n' POLICY_READY; fi; if test -s " + shellQuote(GuestInstallDir+"/state.json") + " && test -s " + compose + "; then for expectation in " + services + "; do service=${expectation%%=*}; expected=${expectation#*=}; cid=$(docker compose -f " + compose + " ps -q \"$service\"); test -n \"$cid\"; state=$(docker inspect -f '{{.State.Status}}' \"$cid\"); test \"$state\" = running || test \"$service\" = recyclarr; health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \"$cid\"); test \"$health\" = healthy || test \"$health\" = none || test \"$service\" = recyclarr; image=$(docker inspect -f '{{.Config.Image}}' \"$cid\"); test \"$image\" = \"$expected\"; done; " + qbit + "; printf '%s\\n' APP_READY; fi; if ss -lnt | grep -F -- '10.10.20.230:443' >/dev/null && docker compose -f " + compose + " exec -T caddy caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 && curl --fail --silent --show-error --connect-timeout 3 --resolve " + shellQuote(probeHost) + ":443:10.10.20.230 https://" + shellQuote(probeHost) + "/ -o /dev/null; then printf '%s\\n' CADDY_TLS_READY; fi"
 }
 
 func qbitReadinessCommand(peerPort int, compose string) string {

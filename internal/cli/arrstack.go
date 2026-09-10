@@ -71,7 +71,7 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		defer cancel()
 		mediaGiB := sc.Config.Modules.Normalize().Media.MediaGiB
 		port := arrstackPeerPort(c.Modules)
-		runtime, err := arrstack.ReadStatusWithConfig(ctx, sc.Host, port, *c.Modules.Media, mediaGiB)
+		runtime, err := arrstack.ReadStatusWithConfigAndMonitoring(ctx, sc.Host, port, *c.Modules.Media, observability.Enabled(c.Modules), mediaGiB)
 		if err != nil {
 			return err
 		}
@@ -107,7 +107,7 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		mediaGiB := sc.Config.Modules.Normalize().Media.MediaGiB
-		runtime, err := arrstack.ReadStatusWithConfig(ctx, sc.Host, arrstackPeerPort(c.Modules), *c.Modules.Media, mediaGiB)
+		runtime, err := arrstack.ReadStatusWithConfigAndMonitoring(ctx, sc.Host, arrstackPeerPort(c.Modules), *c.Modules.Media, observability.Enabled(c.Modules), mediaGiB)
 		if err != nil {
 			return err
 		}
@@ -170,7 +170,7 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if err != nil {
 		return err
 	}
-	runtime, runtimeErr := arrstack.ReadStatusWithConfig(ctx, sc.Host, port, *proposed.Media, mediaGiB)
+	runtime, runtimeErr := arrstack.ReadStatusWithConfigAndMonitoring(ctx, sc.Host, port, *proposed.Media, observability.Enabled(proposed), mediaGiB)
 	if runtimeErr != nil && !changed && verifyErr == nil {
 		return runtimeErr
 	}
@@ -242,7 +242,7 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if err := arrstack.InstallRuntimeWithConfigAndMonitoring(ctx, sc.Host, port, cloudflareToken, *proposed.Media, monitoring, mediaGiB); err != nil {
 		return err
 	}
-	runtime, err = arrstack.ReadStatusWithConfig(ctx, sc.Host, port, *proposed.Media, mediaGiB)
+	runtime, err = arrstack.ReadStatusWithConfigAndMonitoring(ctx, sc.Host, port, *proposed.Media, observability.Enabled(proposed), mediaGiB)
 	if err != nil {
 		return err
 	}
