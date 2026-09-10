@@ -59,6 +59,48 @@ replacement = '''    "X-Emby-Authorization": `${auth.authHeader}, Token="${auth.
   };'''
 if needle not in s: raise SystemExit("Jellyfin token header anchor missing")
 jellyfin.write_text(s.replace(needle, replacement, 1))
+jellyseerr = root / "src/wiring/jellyseerr.ts"
+s = jellyseerr.read_text()
+needle = '''  // 1. Bootstrap: create the admin + store the Jellyfin connection.
+  const bootstrap = await withRetry(() =>'''
+replacement = '''  // 1. Reuse an existing Jellyfin admin session on reapply. The
+  // bootstrap endpoint returns HTTP 500 (NO_ADMIN_USER) once an admin exists.
+  let existingSession: Response | undefined;
+  try {
+    const relogin = await fetch(`${base}/api/v1/auth/jellyfin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: jellyfinUser, password: jellyfinPass, email: jellyfinUser, serverType: 2 }),
+    });
+    if (relogin.ok) existingSession = relogin;
+  } catch { /* fall through to first-use bootstrap */ }
+
+  // First-use bootstrap is permitted only when public settings explicitly
+  // report initialized=false; other failures remain errors.
+  let bootstrap = existingSession;
+  if (!bootstrap) {
+    const publicSettings = await fetch(`${base}/api/v1/settings/public`);
+    if (!publicSettings.ok) {
+      throw new Error(`Jellyseerr public settings probe failed: HTTP ${publicSettings.status}`);
+    }
+    let publicState: { initialized?: boolean };
+    try { publicState = await publicSettings.json() as { initialized?: boolean }; } catch {
+      throw new Error("Jellyseerr public settings were not valid JSON");
+    }
+    if (publicState.initialized !== false) {
+      throw new Error("Jellyseerr existing-admin authentication failed");
+    }
+    bootstrap = await withRetry(() =>'''
+if needle not in s: raise SystemExit("Jellyseerr bootstrap anchor missing")
+s = s.replace(needle, replacement, 1)
+if "  if (!bootstrap.ok)" not in s: raise SystemExit("Jellyseerr bootstrap result anchor missing")
+s = s.replace("  );\n  if (!bootstrap.ok)", "  );\n  }\n  if (!bootstrap.ok)", 1)
+needle = '''  const relogin = await withRetry(() =>
+    fetch(`${base}/api/v1/auth/jellyfin`, {'''
+replacement = '''  const relogin = existingSession ?? await withRetry(() =>
+    fetch(`${base}/api/v1/auth/jellyfin`, {'''
+if needle not in s: raise SystemExit("Jellyseerr relogin anchor missing")
+jellyseerr.write_text(s.replace(needle, replacement, 1))
 storage = root / "src/storage/layout.ts"
 s = storage.read_text()
 needle = '''const PRIMARY_DIRS = [

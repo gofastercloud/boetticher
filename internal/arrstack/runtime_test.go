@@ -86,6 +86,19 @@ func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
 	}
 }
 
+func TestJellyseerrReapplyUsesExistingJellyfinSession(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{"/api/v1/auth/jellyfin", "existingSession", "initialized !== false", "publicSettings.json"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Jellyseerr reapply contract missing %q", required)
+		}
+	}
+}
+
 func TestMediaDockerDependsOnFailClosedFirewallPolicy(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {
