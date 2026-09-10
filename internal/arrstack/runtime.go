@@ -26,26 +26,27 @@ import (
 )
 
 const (
-	BuilderPath          = "/opt/boetticher/current/controller/proxmox/libexec/boetticher-build-arrstack-vm"
-	AdapterPath          = "/opt/boetticher/current/bin/arrstack"
-	GuestAdapterPath     = "/usr/local/libexec/boetticher-arrstack"
-	GuestPolicyPath      = "/usr/local/sbin/boetticher-arrstack-firewall"
-	GuestPolicyReceipt   = "/var/lib/boetticher/arrstack/policy-receipt"
-	ImagePath            = "/var/lib/boetticher/arrstack-image/debian-13-arrstack-amd64.qcow2"
-	GuestInstallDir      = "/opt/arrstack"
-	GuestComposePath     = GuestInstallDir + "/docker-compose.yml"
-	GuestMediaRoot       = "/var/lib/arrstack/media"
-	GuestOwnerTag        = "boetticher-module-media"
-	GuestMediaPendingTag = "boetticher-arrstack-media-pending"
-	GuestVLAN            = 20
-	GuestGateway         = "10.10.20.1"
-	GuestPrefix          = 24
-	GuestRootDisk        = "scsi0"
-	GuestMediaDisk       = "scsi1"
-	GuestCPU             = "x86-64-v3"
-	GuestAgentTimeout    = 90 * time.Second
-	GuestExecTimeout     = 30
-	GuestInstallTimeout  = 20 * 60
+	BuilderPath               = "/opt/boetticher/current/controller/proxmox/libexec/boetticher-build-arrstack-vm"
+	AdapterPath               = "/opt/boetticher/current/bin/arrstack"
+	GuestAdapterPath          = "/usr/local/libexec/boetticher-arrstack"
+	GuestPolicyPath           = "/usr/local/sbin/boetticher-arrstack-firewall"
+	GuestPolicyReceipt        = "/var/lib/boetticher/arrstack/policy-receipt"
+	ImagePath                 = "/var/lib/boetticher/arrstack-image/debian-13-arrstack-amd64.qcow2"
+	GuestInstallDir           = "/opt/arrstack"
+	GuestComposePath          = GuestInstallDir + "/docker-compose.yml"
+	GuestMediaRoot            = "/var/lib/arrstack/media"
+	GuestOwnerTag             = "boetticher-module-media"
+	GuestMediaPendingTag      = "boetticher-arrstack-media-pending"
+	GuestVLAN                 = 20
+	GuestGateway              = "10.10.20.1"
+	GuestPrefix               = 24
+	GuestRootDisk             = "scsi0"
+	GuestMediaDisk            = "scsi1"
+	GuestCPU                  = "x86-64-v3"
+	GuestAgentTimeout         = 90 * time.Second
+	GuestExecTimeout          = 30
+	GuestPolicyInstallTimeout = 120
+	GuestInstallTimeout       = 20 * 60
 )
 
 type GuestFacts struct {
@@ -568,7 +569,7 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	policyInstall := "command -v docker >/dev/null; docker compose version >/dev/null; install -d -m 0755 /usr/local/sbin /etc/systemd/system; cat > " + GuestPolicyPath + " <<'ARRSTACK_POLICY'\n" + policyHeredoc(policy) + "cat > /etc/systemd/system/boetticher-arrstack-firewall.service <<'ARRSTACK_UNIT'\n" + policyUnit + "ARRSTACK_UNIT\nchmod 0755 " + GuestPolicyPath + "; systemctl daemon-reload; systemctl enable boetticher-arrstack-firewall.service; systemctl restart boetticher-arrstack-firewall.service; systemctl start docker; systemctl is-active --quiet docker; install -d -m 0755 " + shellQuote(GuestInstallDir) + " " + shellQuote(GuestMediaRoot)
 	dockerDropinInstall := "install -d -m 0755 /etc/systemd/system/docker.service.d; cat > /etc/systemd/system/docker.service.d/boetticher-arrstack-firewall.conf <<'DOCKER_DROPIN'\n[Unit]\nRequires=boetticher-arrstack-firewall.service\nAfter=boetticher-arrstack-firewall.service\nDOCKER_DROPIN\n"
 	policyInstall = dockerDropinInstall + strings.Replace(policyInstall, "systemctl start docker;", "systemctl enable docker.service; systemctl start docker;", 1)
-	if err := guestExecJSON(ctx, host, policyInstall); err != nil {
+	if err := guestExecLongJSON(ctx, host, policyInstall, GuestPolicyInstallTimeout); err != nil {
 		return fmt.Errorf("arrstack guest prerequisites are not ready: %w", err)
 	}
 	if err := streamAdapterToGuest(ctx, host); err != nil {

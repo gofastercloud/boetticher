@@ -223,6 +223,17 @@ func TestGuestExecCommandsHaveBoundedNativeTimeouts(t *testing.T) {
 	}
 }
 
+func TestPolicyInstallUsesExtendedBoundedGuestTimeout(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "guestExecLongJSON(ctx, host, policyInstall, GuestPolicyInstallTimeout)") || !strings.Contains(text, "GuestPolicyInstallTimeout = 120") {
+		t.Fatal("policy installation does not allow bounded Docker activation time")
+	}
+}
+
 func TestInstallerGuardRefusesOverlapAndBoundsChildTermination(t *testing.T) {
 	command := installerGuardCommand("sleep 120", GuestInstallTimeout)
 	for _, want := range []string{"flock -n /run/boetticher/arrstack-install.lock", "timeout --signal TERM --kill-after 30s 1200s", "sh -c"} {
