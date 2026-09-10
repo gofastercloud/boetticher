@@ -109,11 +109,10 @@ IPv6 forwarding and security policy are reserved for explicit future
 firewall/network Module work rather than inferred from the internal vmbr1
 regression.
 
-The accepted reference physical clients are the Controller Pi
-`dc:a6:32:e9:dd:82` with the permanent SERVERS reservation
-`10.10.20.10` (`lab-companion.lab.home.arpa`) and the observed SANDBOX MacBook
-lease `10.10.40.181`. These are evidence of the current installation binding,
-not reusable fixture identities.
+The reference topology includes a Controller on SERVERS and a client on
+SANDBOX. Addresses, hostnames, MACs, and leases belong in private acceptance
+records; public documentation deliberately leaves those site-specific values
+out.
 
 For the read-only `host status` health check, `vmbr1` is healthy when the link is
 up, VLAN-aware, correctly configured, and has no Host L3 address or gateway.

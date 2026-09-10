@@ -1,5 +1,7 @@
 title: Boetticher
 description: An automated homelab builder for people who would rather run the lab than endlessly rebuild its plumbing.
+url: https://lab.davebarton.cc
+baseurl: ""
 markdown: kramdown
 kramdown:
   input: GFM

@@ -6,23 +6,24 @@
     <meta name="description" content="{{ page.description | default: site.description | escape }}">
     <meta name="theme-color" content="#12382a">
     <title>{{ page.title | escape }} · {{ site.title }}</title>
-    <link rel="stylesheet" href="assets/site.css">
+    <link rel="canonical" href="{{ page.url | replace: 'index.html', '' | absolute_url }}">
+    <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to the good stuff</a>
     <header class="site-header">
       <div class="shell header-inner">
-        <a class="brand" href="index.html" aria-label="Boetticher home">
+        <a class="brand" href="{{ '/' | relative_url }}" aria-label="Boetticher home">
           <span class="brand-mark" aria-hidden="true">Bh</span>
           <span>Boetticher</span>
         </a>
         <nav class="site-nav" aria-label="Main navigation">
-          <a href="index.html"{% if page.section == "home" %} aria-current="page"{% endif %}>Home</a>
-          <a href="start.html"{% if page.section == "start" %} aria-current="page"{% endif %}>Start here</a>
-          <a href="lab.html"{% if page.section == "lab" %} aria-current="page"{% endif %}>The lab</a>
-          <a href="modules.html"{% if page.section == "modules" %} aria-current="page"{% endif %}>Modules</a>
-          <a href="controller.html"{% if page.section == "controller" %} aria-current="page"{% endif %}>Controller</a>
-          <a href="commands.html"{% if page.section == "commands" %} aria-current="page"{% endif %}>Commands</a>
+          <a href="{{ '/index.html' | relative_url }}"{% if page.section == "home" %} aria-current="page"{% endif %}>Home</a>
+          <a href="{{ '/start.html' | relative_url }}"{% if page.section == "start" %} aria-current="page"{% endif %}>Start here</a>
+          <a href="{{ '/lab.html' | relative_url }}"{% if page.section == "lab" %} aria-current="page"{% endif %}>The lab</a>
+          <a href="{{ '/modules.html' | relative_url }}"{% if page.section == "modules" %} aria-current="page"{% endif %}>Modules</a>
+          <a href="{{ '/controller.html' | relative_url }}"{% if page.section == "controller" %} aria-current="page"{% endif %}>Controller</a>
+          <a href="{{ '/commands.html' | relative_url }}"{% if page.section == "commands" %} aria-current="page"{% endif %}>Commands</a>
           <a class="github-link" href="https://github.com/gofastercloud/boetticher">GitHub ↗</a>
         </nav>
       </div>
