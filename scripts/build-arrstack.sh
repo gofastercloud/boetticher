@@ -326,8 +326,8 @@ health_listener = '''
 '''
 caddy_template = root / "templates/Caddyfile.hbs"
 caddy_text = caddy_template.read_text()
-caddy_text = caddy_text.replace('dns cloudflare {env.CF_API_TOKEN}', 'dns cloudflare {env.CF_API_TOKEN}\\n\\t\\tpropagation_delay 30s\\n\\t\\tpropagation_timeout -1')
-caddy_text = caddy_text.replace('dns duckdns {env.DUCKDNS_TOKEN}', 'dns duckdns {env.DUCKDNS_TOKEN}\\n\\t\\tpropagation_delay 30s\\n\\t\\tpropagation_timeout -1')
+propagation = chr(10) + chr(9) + chr(9) + 'propagation_delay 30s' + chr(10) + chr(9) + chr(9) + 'propagation_timeout -1'
+caddy_text = caddy_text.replace('dns cloudflare {env.CF_API_TOKEN}', 'dns cloudflare {env.CF_API_TOKEN}' + propagation)
 if ':9110 {' not in caddy_text:
     caddy_template.write_text(caddy_text + health_listener)
 s = catalog.read_text()
