@@ -9,7 +9,7 @@ import (
 )
 
 func TestExampleSiteIsValid(t *testing.T) {
-	data, err := os.ReadFile("../../site.example.yml")
+	data, err := os.ReadFile("../../lab.example.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,21 +207,6 @@ modules:
 	}
 	if config.Modules.Bifrost == nil || config.Modules.Bifrost.Network != ModuleNetworkAirVPN {
 		t.Fatalf("unexpected typed client network mode: %#v", config.Modules.Bifrost)
-	}
-}
-
-func TestParseSiteConfigAllowsArrAirVPNEgress(t *testing.T) {
-	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
-modules:
-  arr:
-    enabled: true
-    network: airvpn
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.Modules.Arr == nil || config.Modules.Arr.Enabled == nil || !*config.Modules.Arr.Enabled || config.Modules.Arr.Network != ModuleNetworkAirVPN {
-		t.Fatalf("unexpected ARR configuration: %#v", config.Modules.Arr)
 	}
 }
 

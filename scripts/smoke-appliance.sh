@@ -193,31 +193,6 @@ case "$name" in
       exit 1
     fi
     ;;
-  boetticher-printer)
-    test -x "$rootfs/usr/sbin/nginx"
-    test -x "$rootfs/opt/octoprint/bin/python"
-    test -x "$rootfs/opt/octoprint/bin/octoprint"
-    chroot "$rootfs" getent passwd octoprint | grep -Fq ':2200:2200:'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' python3 | grep -Fxq '3.13.5-1'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
-    test -f "$rootfs/etc/systemd/system/octoprint.service"
-    grep -Fxq 'User=octoprint' "$rootfs/etc/systemd/system/octoprint.service"
-    grep -Fxq 'Group=octoprint' "$rootfs/etc/systemd/system/octoprint.service"
-    grep -Fxq 'ExecStart=/opt/octoprint/bin/octoprint serve --host=127.0.0.1 --port=5000 --basedir=/var/lib/octoprint' "$rootfs/etc/systemd/system/octoprint.service"
-    grep -Fq -- '--host=127.0.0.1' "$rootfs/etc/systemd/system/octoprint.service"
-    grep -Fq 'DevicePolicy=closed' "$rootfs/etc/systemd/system/octoprint.service"
-    grep -Fq 'DeviceAllow=char-ttyUSB rw' "$rootfs/etc/systemd/system/octoprint.service"
-    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/octoprint.service"
-    grep -Fq 'MemoryDenyWriteExecute=yes' "$rootfs/etc/systemd/system/octoprint.service"
-    chroot "$rootfs" runuser -u octoprint -- test -x /opt/octoprint/bin/octoprint
-    chroot "$rootfs" runuser -u octoprint -- test -d /var/lib/octoprint
-    test ! -e "$rootfs/var/lib/octoprint/config.yaml"
-    test ! -e "$rootfs/etc/nginx/sites-enabled/default"
-    if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
-      echo "printer artifact contains generated TLS material" >&2
-      exit 1
-    fi
-    ;;
   boetticher-arr)
     test -x "$rootfs/usr/sbin/nginx"
     for app in sonarr radarr lidarr prowlarr; do

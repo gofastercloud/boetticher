@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,39 @@ import (
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
+
+func TestCollectionConfigAddsMediaOnlyWhenMediaAndObservabilityEnabled(t *testing.T) {
+	on := true
+	base := controllerhost.LabConfig{Proxmox: controllerhost.ProxmoxConfig{Address: "192.0.2.10"}, Modules: clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &on}}}
+	config, err := CollectionConfigForLab(base, "192.0.2.20")
+	if err != nil || len(config.Targets) != 3 {
+		t.Fatalf("observability-only target set = %#v, %v", config.Targets, err)
+	}
+	base.Modules.Media = &clientservices.MediaConfig{Enabled: true}
+	config, err = CollectionConfigForLab(base, "192.0.2.20")
+	if err != nil || len(config.Targets) != 4 {
+		t.Fatalf("media target set = %#v, %v", config.Targets, err)
+	}
+	media := config.Targets[3]
+	if media.Kind != TargetMedia || media.VMID != 290 || media.Address != "10.10.20.230" || media.Port != NodeExporterPort {
+		t.Fatalf("unexpected media target: %#v", media)
+	}
+}
+
+func TestParseQEMUCollectionResultRequiresSuccessfulJSONExitCode(t *testing.T) {
+	good, _ := json.Marshal(map[string]any{"exitcode": 0, "out-data": "ok\n"})
+	result, err := parseQEMUCollectionResult(controllerhost.Result{Stdout: good})
+	if err != nil || string(result.Stdout) != "ok\n" {
+		t.Fatalf("successful QGA result = %#v, %v", result, err)
+	}
+	bad, _ := json.Marshal(map[string]any{"exitcode": 7, "err-data": "denied"})
+	if _, err := parseQEMUCollectionResult(controllerhost.Result{Stdout: bad}); err == nil {
+		t.Fatal("failed QGA command accepted")
+	}
+	if _, err := parseQEMUCollectionResult(controllerhost.Result{Stdout: []byte("{}")}); err == nil {
+		t.Fatal("missing QGA exitcode accepted")
+	}
+}
 
 func TestDefaultControllerIdentityUsesObservabilityRoute(t *testing.T) {
 	bin := t.TempDir()
@@ -92,11 +126,11 @@ func TestCollectionConfigUsesOwnedSiteTargetsAndPinnedRetention(t *testing.T) {
 	if len(config.Targets) != 3 || config.MetricsRetentionDays != 30 || config.LogsRetentionDays != 7 {
 		t.Fatalf("unexpected collection defaults: %#v", config)
 	}
-	scrape, err := config.VictoriaMetricsScrapeConfig("davebarton.cc")
+	scrape, err := config.VictoriaMetricsScrapeConfig("example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"scrape_interval: 30s", "scheme: https", "insecure_skip_verify: false", "ca_file: '/etc/ssl/certs/ca-certificates.crt'", "basic_auth:", "password_file: '/run/credentials/victoriametrics.service/node-exporter-read-token'", "server_name: 'metrics.davebarton.cc'", "metrics.davebarton.cc:443", "metrics_path: '/lab-monitor-01/metrics'", "boetticher_host: 'lab-monitor-01'"} {
+	for _, required := range []string{"scrape_interval: 30s", "scheme: https", "insecure_skip_verify: false", "ca_file: '/etc/ssl/certs/ca-certificates.crt'", "basic_auth:", "password_file: '/run/credentials/victoriametrics.service/node-exporter-read-token'", "server_name: 'metrics.example.com'", "metrics.example.com:443", "metrics_path: '/lab-monitor-01/metrics'", "boetticher_host: 'lab-monitor-01'"} {
 		if !strings.Contains(scrape, required) {
 			t.Errorf("scrape config missing %q: %s", required, scrape)
 		}

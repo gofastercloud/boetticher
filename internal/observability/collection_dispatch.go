@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,8 +16,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/arrstack"
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -113,6 +116,16 @@ func (b *boundedCollectionBuffer) Bytes() []byte { return bytes.Clone(b.data) }
 // dispatches the same verified collection installer to the three owned Linux
 // targets. Providers and their HTTPS frontend must already be ready when this
 // method is called by ReconcileGuestWithTLS.
+// ReconcileMediaCollection is the lifecycle hook for a media-enabled apply.
+// It deliberately delegates to the same idempotent collection reconciler so
+// receiver credentials and the three existing targets retain one owner.
+func (c HostClient) ReconcileMediaCollection(ctx context.Context, b Binding, payloadRoot, publicDomain string, config CollectionConfig) error {
+	if countTargetKind(config.Targets, TargetMedia) != 1 {
+		return errors.New("media collection requires exactly one owned media target")
+	}
+	return c.ReconcileCollection(ctx, b, payloadRoot, publicDomain, config)
+}
+
 func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadRoot, publicDomain string, config CollectionConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("collection configuration: %w", err)
@@ -144,7 +157,14 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 	if _, err := c.GuestConfig(ctx, b); err != nil {
 		return fmt.Errorf("verify owned collection runtime before staging: %w", err)
 	}
-	readToken, readHash, err := collectionReadCredential()
+	for _, target := range config.Targets {
+		if target.Kind == TargetMedia {
+			if err := inspectOwnedMediaGuest(ctx, c.Transport); err != nil {
+				return err
+			}
+		}
+	}
+	readToken, readHash, err := c.collectionReadCredential(ctx, b, config)
 	if err != nil {
 		return err
 	}
@@ -187,7 +207,12 @@ func (c HostClient) runTarget(ctx context.Context, b Binding, target Target, pub
 	case TargetRuntime:
 		runner = host
 		prefix = fmt.Sprintf("pct exec %d -- sh -c ", b.VMID)
-		installScript = prefix + shellQuoteValue(installScript)
+	case TargetMedia:
+		qga, ok := host.(StdinRunner)
+		if !ok {
+			return errors.New("collection transport cannot stream QEMU guest-agent input")
+		}
+		runner = qemuCollectionRunner{runner: qga, vmid: target.VMID}
 	default:
 		return fmt.Errorf("collection target %s has unknown dispatch kind", target.Name)
 	}
@@ -201,6 +226,91 @@ func (c HostClient) runTarget(ctx context.Context, b Binding, target Target, pub
 		return fmt.Errorf("install collection on %s: %w", target.Name, err)
 	}
 	return nil
+}
+
+type qemuCollectionRunner struct {
+	runner StdinRunner
+	vmid   int
+}
+
+func (r qemuCollectionRunner) Run(ctx context.Context, command string) (controllerhost.Result, error) {
+	result, err := r.runner.Run(ctx, qemuCollectionCommand(r.vmid, command))
+	if err != nil {
+		return result, err
+	}
+	return parseQEMUCollectionResult(result)
+}
+func (r qemuCollectionRunner) RunWithStdin(ctx context.Context, command string, input io.Reader) (controllerhost.Result, error) {
+	result, err := r.runner.RunWithStdin(ctx, qemuCollectionCommand(r.vmid, command), input)
+	if err != nil {
+		return result, err
+	}
+	return parseQEMUCollectionResult(result)
+}
+func qemuCollectionCommand(vmid int, command string) string {
+	return fmt.Sprintf("qm guest exec %d --synchronous 1 -- /bin/sh -c %s", vmid, shellQuoteValue(command))
+}
+func parseQEMUCollectionResult(result controllerhost.Result) (controllerhost.Result, error) {
+	var response struct {
+		ExitCode *int   `json:"exitcode"`
+		OutData  string `json:"out-data"`
+		ErrData  string `json:"err-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &response); err != nil || response.ExitCode == nil {
+		return result, errors.New("media QEMU guest-agent returned malformed execution result")
+	}
+	if *response.ExitCode != 0 {
+		return result, fmt.Errorf("media QEMU guest-agent command failed (%d): %s", *response.ExitCode, strings.TrimSpace(response.ErrData))
+	}
+	result.Stdout = []byte(response.OutData)
+	return result, nil
+}
+
+var inspectMediaGuest = func(ctx context.Context, transport controllerhost.Transport) (arrstack.GuestFacts, error) {
+	guest, err := arrstack.InspectGuest(ctx, firewallmodule.HostClient{Transport: transport})
+	if err != nil {
+		return arrstack.GuestFacts{}, fmt.Errorf("verify exact owned media guest before collection staging: %w", err)
+	}
+	return guest, nil
+}
+
+func inspectMediaGuestFacts(ctx context.Context, runner Runner) (arrstack.GuestFacts, error) {
+	var transport controllerhost.Transport
+	switch value := runner.(type) {
+	case controllerhost.Transport:
+		transport = value
+	case *controllerhost.Transport:
+		if value == nil {
+			return arrstack.GuestFacts{}, errors.New("media collection transport is nil")
+		}
+		transport = *value
+	default:
+		return arrstack.GuestFacts{}, errors.New("media collection requires the enrolled Host transport for exact QEMU identity inspection")
+	}
+	return inspectMediaGuest(ctx, transport)
+}
+
+func inspectOwnedMediaGuest(ctx context.Context, runner Runner) error {
+	_, err := inspectMediaGuestFacts(ctx, runner)
+	return err
+}
+
+func (c HostClient) collectionReadCredential(ctx context.Context, b Binding, config CollectionConfig) ([]byte, string, error) {
+	if len(config.Targets) == 0 {
+		return collectionReadCredential()
+	}
+	// Preserve the receiver credential across reapply. A missing or empty
+	// credential is the only condition that permits first-use generation.
+	r, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- cat /var/lib/boetticher/credentials/node-exporter-read-token.cred", b.VMID))
+	if err == nil && len(bytes.TrimSpace(r.Stdout)) > 0 {
+		token := append(bytes.TrimSpace(r.Stdout), '\n')
+		hash, hashErr := bcrypt.GenerateFromPassword(bytes.TrimSpace(token), bcrypt.DefaultCost)
+		if hashErr != nil {
+			return nil, "", fmt.Errorf("hash existing node exporter read credential: %w", hashErr)
+		}
+		return token, string(hash), nil
+	}
+	return collectionReadCredential()
 }
 
 func collectionReadCredential() ([]byte, string, error) {
@@ -241,7 +351,7 @@ func validateTargetForBinding(target Target, b Binding) error {
 }
 
 func targetTLSDir(target Target) string {
-	if target.Kind == TargetRuntime {
+	if target.Kind == TargetRuntime || target.Kind == TargetMedia {
 		return "/var/lib/boetticher/tls"
 	}
 	return "/var/lib/boetticher/identity/logging"

@@ -27,7 +27,7 @@ func TestValidateObservabilityContracts(t *testing.T) {
 	if err := Validate(good, testSite()); err != nil {
 		t.Fatalf("valid observability intent rejected: %v", err)
 	}
-	good.Observability.PublicDomain = "davebarton.cc"
+	good.Observability.PublicDomain = "example.com"
 	if err := Validate(good, testSite()); err != nil {
 		t.Fatalf("valid public observability domain rejected: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestValidateObservabilityContracts(t *testing.T) {
 	if err := Validate(good, testSite()); err == nil || !strings.Contains(err.Error(), "public_domain") {
 		t.Fatalf("invalid public observability domain accepted: %v", err)
 	}
-	good.Observability.PublicDomain = "davebarton.cc"
+	good.Observability.PublicDomain = "example.com"
 	good.Observability.Alerts.Pushover = &PushoverConfig{Enabled: &enabled, Title: "Boetticher alerts", Priority: 0}
 	if err := Validate(good, testSite()); err != nil {
 		t.Fatalf("valid Pushover intent rejected: %v", err)
@@ -150,6 +150,53 @@ func TestNormalizeMaterializesReferenceDefaultsOnlyInMemory(t *testing.T) {
 	}
 	if err := Validate(normalized, testSite()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestArrstackRequiresProtectedIntentAndAllowsConfiguredPeerPort(t *testing.T) {
+	enabled := true
+	modules := Modules{
+		Media: &MediaConfig{Enabled: true, ApplicationDomain: "media.example.net", Aliases: MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"}},
+		DNS:   &DNSConfig{Enabled: &enabled},
+		DHCP:  &DHCPConfig{Enabled: &enabled, Reservations: []Reservation{{Name: "lab-media-01", Zone: "SERVERS", MAC: "02:00:00:00:20:e6", Address: "10.10.20.230"}}},
+		VPN:   &VPNConfig{Enabled: &enabled, Location: "europe", Clients: []string{"lab-media-01"}, Forwards: []VPNForward{{Name: "media-qbittorrent", Reservation: "lab-media-01", Protocols: []string{"tcp", "udp"}, Port: 40000}}},
+	}
+	if err := Validate(modules, testSite()); err != nil {
+		t.Fatalf("valid arrstack intent rejected: %v", err)
+	}
+	stopped := false
+	modules.VPN.Enabled = &stopped
+	if err := Validate(modules, testSite()); err != nil {
+		t.Fatalf("arrstack intent with a retained stopped VPN was rejected: %v", err)
+	}
+	modules.VPN.Enabled = &enabled
+	modules.VPN.Clients = nil
+	if err := Validate(modules, testSite()); err == nil {
+		t.Fatal("arrstack without VPN client intent accepted")
+	}
+}
+
+func TestMediaAcceptsGenericDomainAndNamedAliases(t *testing.T) {
+	enabled := true
+	m := Modules{Media: &MediaConfig{Enabled: true, ApplicationDomain: "media.example.net", Aliases: MediaAliases{Radarr: "movies", Sonarr: "shows", Bazarr: "subs", Prowlarr: "index", Trailarr: "trails"}}, DNS: &DNSConfig{Enabled: &enabled}, DHCP: &DHCPConfig{Enabled: &enabled}, VPN: &VPNConfig{Enabled: &enabled, Location: "europe", Clients: []string{"lab-media-01"}, Forwards: []VPNForward{{Name: "media-qbittorrent", Reservation: "lab-media-01", Protocols: []string{"tcp", "udp"}, Port: 35796}}}}
+	m.DHCP.Reservations = []Reservation{{Name: "lab-media-01", Zone: "SERVERS", MAC: "02:00:00:00:20:e6", Address: "10.10.20.230"}}
+	if err := Validate(m, testSite()); err != nil {
+		t.Fatalf("generic media reference rejected: %v", err)
+	}
+	m.Media.Aliases.Sonarr = m.Media.Aliases.Radarr
+	if err := Validate(m, testSite()); err == nil {
+		t.Fatal("duplicate media aliases accepted")
+	}
+	m.Media.Aliases.Sonarr = "bad alias"
+	if err := Validate(m, testSite()); err == nil {
+		t.Fatal("malformed media alias accepted")
+	}
+}
+
+func TestLegacyMediaNormalizeDoesNotInventProductionDomainOrAliases(t *testing.T) {
+	normalized := (Modules{Arrstack: &ArrstackConfig{Enabled: true}}).Normalize()
+	if normalized.Media == nil || normalized.Media.ApplicationDomain != "" || normalized.Media.Aliases != (MediaAliases{}) {
+		t.Fatalf("legacy media normalization invented production values: %#v", normalized.Media)
 	}
 }
 

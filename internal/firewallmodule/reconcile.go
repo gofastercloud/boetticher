@@ -73,6 +73,17 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 }
 
 func managedStaleSection(name string, section openwrt.UCISection) bool {
+	if section.Type == "route" && strings.HasPrefix(name, "boetticher_vpn_client_mtu_") {
+		address := section.Options["target"]
+		return address != "" && strings.HasPrefix(section.Options["interface"], "boetticher_iface_") && section.Options["netmask"] == "255.255.255.255" && name == nativeVPNClientMTUSectionName(address) && section.Options["mtu"] != ""
+	}
+	if section.Type == "redirect" && strings.HasPrefix(name, "boetticher_vpn_forward_") {
+		label := strings.TrimPrefix(section.Options["name"], "Boetticher VPN ")
+		if label == "" || label == section.Options["name"] {
+			return false
+		}
+		return name == nativeVPNForwardSectionName(label) || name == "boetticher_vpn_forward_"+label
+	}
 	if managedVPNFirewallSection(name, section) {
 		return true
 	}
@@ -81,7 +92,7 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 	}
 	if strings.HasPrefix(name, "boetticher_vpn_") {
 		switch section.Type {
-		case "interface", "wireguard_airvpn", "route", "rule", "zone", "forwarding", "redirect":
+		case "interface", "wireguard_airvpn", "rule", "zone", "forwarding":
 			return true
 		}
 	}
@@ -129,6 +140,23 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 }
 
 func managedRuleIdentity(name string, options map[string]string) bool {
+	if strings.HasPrefix(name, "boetticher_system_") {
+		parts := strings.Split(name, "_")
+		if len(parts) < 4 || (parts[len(parts)-1] != "trusted" && parts[len(parts)-1] != "monitoring") {
+			return false
+		}
+		suffix := parts[len(parts)-1]
+		systemName := strings.TrimPrefix(options["name"], "Boetticher system ")
+		systemName = strings.TrimSuffix(systemName, " "+suffix)
+		encoded := strings.TrimPrefix(strings.TrimSuffix(name, "_"+suffix), "boetticher_system_")
+		if options["name"] == "" || !strings.HasPrefix(options["name"], "Boetticher system ") || nativeIdentifier(strings.ToLower(systemName)) != encoded || options["dest"] != "servers" || options["proto"] != "tcp" || options["family"] != "ipv4" || options["target"] != "ACCEPT" || options["dest_ip"] == "" || options["dest_port"] == "" {
+			return false
+		}
+		if parts[len(parts)-1] == "trusted" {
+			return options["src"] == "trusted" && options["src_ip"] == ""
+		}
+		return options["src"] == "infra" && options["src_ip"] == "10.10.10.20"
+	}
 	if strings.HasPrefix(name, "boetticher_tailnet_") {
 		id := strings.TrimPrefix(name, "boetticher_tailnet_")
 		expectedName, ok := map[string]string{

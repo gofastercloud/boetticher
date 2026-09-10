@@ -208,9 +208,6 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if err != nil {
 		return err
 	}
-	if _, err := prepareProtectedRanges(ctx, hostConfig, host, providerStatus, options.yes, true, input, out); err != nil {
-		return err
-	}
 	bootstrapNeeded := !providerStatus.Exists || !strings.Contains(providerStatus.Config, "scsi0:")
 	replaceProvider := false
 	if providerStatus.Exists && strings.Contains(providerStatus.Config, "scsi0:") {
@@ -223,6 +220,14 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 			bootstrapNeeded = true
 			fmt.Fprintln(out, "Provider image: replacing the owned VM 280 image to establish the current client-services contract")
 		}
+	}
+	if replaceProvider {
+		if err := refuseVPNStopWithLiveProtectedGuests(ctx, host, hostConfig.Proxmox.Node, hostConfig.Modules); err != nil {
+			return err
+		}
+	}
+	if _, err := prepareProtectedRanges(ctx, hostConfig, host, providerStatus, options.yes, true, input, out); err != nil {
+		return err
 	}
 	if !providerStatus.Exists && !options.yes {
 		if input == nil {
@@ -266,6 +271,9 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 		}
 	}
 	if replaceProvider {
+		if err := refuseVPNStopWithLiveProtectedGuests(ctx, host, hostConfig.Proxmox.Node, hostConfig.Modules); err != nil {
+			return err
+		}
 		if err := firewallmodule.DestroyHostProvider(ctx, host, "boetticher-data"); err != nil {
 			return err
 		}
@@ -456,6 +464,9 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
+	if err := refuseVPNStopWithLiveProtectedGuests(ctx, host, hostConfig.Proxmox.Node, hostConfig.Modules); err != nil {
+		return err
+	}
 	status, err := firewallmodule.InspectHostProvider(ctx, host)
 	if err != nil {
 		return err
@@ -483,6 +494,9 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 		}
 	}
 	if status.Exists {
+		if err := refuseVPNStopWithLiveProtectedGuests(ctx, host, hostConfig.Proxmox.Node, hostConfig.Modules); err != nil {
+			return err
+		}
 		if err := firewallmodule.DestroyHostProvider(ctx, host, "boetticher-data"); err != nil {
 			return err
 		}
@@ -548,9 +562,16 @@ func runFirewallReboot(args []string, input io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	hostConfig, err := controllerhost.LoadConfig()
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	if err := firewallmodule.ValidateHostSubstrateViaSSH(ctx, host); err != nil {
+		return err
+	}
+	if err := refuseVPNStopWithLiveProtectedGuests(ctx, host, hostConfig.Proxmox.Node, hostConfig.Modules); err != nil {
 		return err
 	}
 	if !options.yes {
@@ -564,6 +585,9 @@ func runFirewallReboot(args []string, input io.Reader, out io.Writer) error {
 		if !answer {
 			return errors.New("firewall reboot cancelled")
 		}
+	}
+	if err := refuseVPNStopWithLiveProtectedGuests(ctx, host, hostConfig.Proxmox.Node, hostConfig.Modules); err != nil {
+		return err
 	}
 	if err := firewallmodule.RebootHostProvider(ctx, host, "boetticher-data"); err != nil {
 		return err

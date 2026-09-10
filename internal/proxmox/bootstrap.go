@@ -959,7 +959,6 @@ var retainedModuleServices = map[string][]string{
 	"airvpn":         {"boetticher-airvpn.service"},
 	"bifrost":        {"bifrost", "nginx"},
 	"printer":        {"octoprint", "nginx"},
-	"arr":            {"sonarr", "radarr", "lidarr", "readarr", "prowlarr", "qbittorrent", "boetticher-arr-peer-firewall", "nginx"},
 	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
 	"gatus":          {"gatus", "nginx"},
 }
@@ -990,11 +989,6 @@ func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address
 	serviceCommands := make([]string, 0, len(services))
 	for _, service := range services {
 		command := "systemctl disable --now " + shellQuote(service) + "; if systemctl is-active --quiet " + shellQuote(service) + "; then echo retained service remains active: " + shellQuote(service) + " >&2; exit 1; fi; if systemctl is-enabled --quiet " + shellQuote(service) + "; then echo retained service remains enabled: " + shellQuote(service) + " >&2; exit 1; fi"
-		if module == "arr" {
-			// ARR 1.0.0 and 1.0.1 have different bounded service sets. Stop
-			// every known installed service, including retired Readarr.
-			command = "if [ \"$(systemctl show --property=LoadState --value " + shellQuote(service) + ")\" != not-found ]; then " + command + "; fi"
-		}
 		serviceCommands = append(serviceCommands, command)
 	}
 	guestCommand := "set -eu; systemctl daemon-reload; " + strings.Join(serviceCommands, "; ")
@@ -1994,7 +1988,7 @@ func scopedProvisionerACLPaths(node string) []string {
 	// updating a storage definition, so the collection path must be granted in
 	// addition to the bounded content paths used for artifact operations.
 	paths := []string{"/nodes/" + node, "/sdn", "/storage", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
-	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, model.ArrVMID, 200, 210, 240, 250} {
+	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, 200, 210, 240, 250} {
 		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
 	}
 	for vmid := 910; vmid <= 919; vmid++ {

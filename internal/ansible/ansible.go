@@ -217,7 +217,7 @@ func Inventory(s model.Site) (string, error) {
 	b.WriteString(revision + "\n\n")
 	groups := map[string][]model.Component{
 		"dns": {}, "monitor": {}, "logging": {},
-		"tailnet-router": {}, "airvpn": {}, "bifrost": {}, "printer": {}, "arr": {}, "aiops": {}, "gatus": {},
+		"tailnet-router": {}, "airvpn": {}, "bifrost": {}, "printer": {}, "aiops": {}, "gatus": {},
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		groups["firewall"] = nil
@@ -238,7 +238,7 @@ func Inventory(s model.Site) (string, error) {
 			groups["logging"] = append(groups["logging"], component)
 		}
 		switch component.Module {
-		case "tailnet-router", "airvpn", "bifrost", "printer", "arr", "aiops", "gatus":
+		case "tailnet-router", "airvpn", "bifrost", "printer", "aiops", "gatus":
 			groups[component.Module] = append(groups[component.Module], component)
 		}
 	}
@@ -259,7 +259,7 @@ func Inventory(s model.Site) (string, error) {
 		address = s.BootstrapAddress
 	}
 	writeHostAt(&b, *proxmoxComponent, address)
-	for _, group := range []string{"dns", "monitor", "logging", "tailnet-router", "airvpn", "bifrost", "printer", "arr", "aiops"} {
+	for _, group := range []string{"dns", "monitor", "logging", "tailnet-router", "airvpn", "bifrost", "printer", "aiops"} {
 		writeInventoryGroup(&b, group, groups[group])
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {

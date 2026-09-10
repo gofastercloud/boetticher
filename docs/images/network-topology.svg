@@ -14,11 +14,11 @@
 
   <!-- HOME -->
   <rect x="55" y="110" width="1490" height="170" class="zone" fill="#eff6ff" stroke="#60a5fa"/>
-  <text x="80" y="142" class="l" fill="#1d4ed8">HOME · 192.168.4.0/22</text><text x="80" y="163" class="tiny">Management / upstream network. Gateway 192.168.4.1.</text>
-  <rect x="90" y="185" width="205" height="66" class="card" fill="#fff"/><text x="110" y="211" class="l">Eero gateway</text><text x="110" y="233" class="b">192.168.4.1 · WAN / Internet</text>
-  <rect x="390" y="185" width="225" height="66" class="card" fill="#fff"/><text x="410" y="211" class="l">Operator Mac</text><text x="410" y="233" class="b">192.168.4.20 current</text>
-  <rect x="710" y="185" width="260" height="66" class="card" fill="#fff"/><text x="730" y="211" class="l">Companion Pi · eth0</text><text x="730" y="233" class="b">192.168.4.6 current · default route</text>
-  <rect x="1065" y="185" width="260" height="66" class="card" fill="#fff"/><text x="1085" y="211" class="l">Proxmox · vmbr0 / nic0</text><text x="1085" y="233" class="b">192.168.4.5 current · default route</text>
+  <text x="80" y="142" class="l" fill="#1d4ed8">HOME · 192.0.2.0/24</text><text x="80" y="163" class="tiny">Documentation management network. Gateway 192.0.2.1.</text>
+  <rect x="90" y="185" width="205" height="66" class="card" fill="#fff"/><text x="110" y="211" class="l">Home gateway</text><text x="110" y="233" class="b">192.0.2.1 · WAN / Internet</text>
+  <rect x="390" y="185" width="225" height="66" class="card" fill="#fff"/><text x="410" y="211" class="l">Operator workstation</text><text x="410" y="233" class="b">documentation address</text>
+  <rect x="710" y="185" width="260" height="66" class="card" fill="#fff"/><text x="730" y="211" class="l">Companion device · eth0</text><text x="730" y="233" class="b">management address · default route</text>
+  <rect x="1065" y="185" width="260" height="66" class="card" fill="#fff"/><text x="1085" y="211" class="l">Proxmox host · vmbr0 / nic0</text><text x="1085" y="233" class="b">management address · default route</text>
   <path d="M192 265H1195M192 251V265M502 251V265M840 251V265M1195 251V265" class="soft"/>
 
   <!-- physical hardware -->
@@ -29,7 +29,7 @@
   <rect x="90" y="580" width="350" height="126" class="card" fill="#fff7ed"/>
   <text x="112" y="610" class="l">lab-proxmox-01</text><text x="112" y="633" class="b">nic1 a0:ce:c8:a2:b2:10 → vmbr1</text><text x="112" y="654" class="b">VLAN-aware; host has no vmbr1 L3/default route</text><text x="112" y="677" class="b">USB Timetec MS21 ≈954 GiB: boetticher-data</text>
   <rect x="90" y="757" width="350" height="135" class="card" fill="#fefce8"/>
-  <text x="112" y="787" class="l">lab-companion</text><text x="112" y="810" class="b">USB eth1 a 6c:1f:f7:d2:5d:97 → SERVERS</text><text x="112" y="831" class="b">10.10.20.10 · route 10.10.0.0/16 via 10.10.20.1</text><text x="112" y="852" class="b">Blinkt (8 LEDs) + USB StreamDeck: recovered</text><text x="112" y="873" class="tiny">Wi-Fi 192.168.4.7 reserved; radio off / break-glass</text>
+  <text x="112" y="787" class="l">Companion device</text><text x="112" y="810" class="b">USB Ethernet → SERVERS</text><text x="112" y="831" class="b">SERVERS address · routed lab networks</text><text x="112" y="852" class="b">Status lights + USB control surface</text><text x="112" y="873" class="tiny">Management Wi-Fi is reserved for break-glass only</text>
   <path d="M265 530V580" class="line"/><text x="281" y="560" class="tiny">tagged trunk (port 5)</text>
   <path d="M90 470H70V824H90" class="line"/><text x="80" y="735" class="tiny">port 6 · SERVERS</text>
 
@@ -37,7 +37,7 @@
   <rect x="515" y="320" width="1030" height="620" class="zone" fill="#f8fafc" stroke="#94a3b8"/>
   <text x="540" y="355" class="l">Logical LAB fabric · IPv4 view</text><text x="540" y="376" class="tiny">All six VLANs use the shared OpenWrt gateway. This diagram does not prove IPv6 isolation.</text>
   <rect x="550" y="405" width="225" height="125" class="card" fill="#e0f2fe"/>
-  <text x="570" y="434" class="l">OpenWrt firewall</text><text x="570" y="456" class="b">lab-firewall-01 · VM 280</text><text x="570" y="478" class="b">FW / DNS / DHCP + supporting NTP</text><text x="570" y="501" class="b">WAN eth0: 192.168.4.28 current</text>
+  <text x="570" y="434" class="l">OpenWrt firewall</text><text x="570" y="456" class="b">gateway guest · reference VM</text><text x="570" y="478" class="b">FW / DNS / DHCP + supporting NTP</text><text x="570" y="501" class="b">WAN eth0: documentation address</text>
   <rect x="840" y="405" width="230" height="125" class="card" fill="#ede9fe"/>
   <text x="860" y="434" class="l">AirVPN WireGuard</text><text x="860" y="456" class="b">airvpn 10.132.148.135 current</text><text x="860" y="478" class="b">Europe provider endpoint</text><text x="860" y="501" class="b">Protected clients: VPN only; no WAN fallback</text>
   <rect x="1135" y="405" width="350" height="125" class="card" fill="#ecfeff"/>

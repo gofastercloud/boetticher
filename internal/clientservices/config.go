@@ -16,28 +16,87 @@ import (
 )
 
 const (
-	LeaseDuration12Hours             = "12h"
-	ScopeReservationsOnly            = "reservations-only"
-	ScopePool                        = "pool"
-	DNSResolverPort                  = 853
-	StubbyListenAddress              = "127.0.0.1#5453"
-	LeaseFilePath                    = "/etc/boetticher/dhcp.leases"
-	ProbeAddressStart                = 250
-	ProbeAddressEnd                  = 254
-	DefaultObservabilityPublicDomain = "davebarton.cc"
+	LeaseDuration12Hours  = "12h"
+	ScopeReservationsOnly = "reservations-only"
+	ScopePool             = "pool"
+	DNSResolverPort       = 853
+	StubbyListenAddress   = "127.0.0.1#5453"
+	LeaseFilePath         = "/etc/boetticher/dhcp.leases"
+	ProbeAddressStart     = 250
+	ProbeAddressEnd       = 254
 )
+
+// MediaReferenceConfig contains the installation's reference values. These
+// values seed omitted operator fields; validation accepts any safe equivalent.
+type MediaReferenceConfig struct {
+	ApplicationDomain string
+	Aliases           MediaAliases
+}
+
+type MediaAliases struct {
+	Radarr   string `yaml:"radarr,omitempty" json:"radarr,omitempty"`
+	Sonarr   string `yaml:"sonarr,omitempty" json:"sonarr,omitempty"`
+	Bazarr   string `yaml:"bazarr,omitempty" json:"bazarr,omitempty"`
+	Prowlarr string `yaml:"prowlarr,omitempty" json:"prowlarr,omitempty"`
+	Trailarr string `yaml:"trailarr,omitempty" json:"trailarr,omitempty"`
+}
+
+var DefaultMediaReference = MediaReferenceConfig{
+	// Site-specific values are supplied by the operator/reference example;
+	// validation must never require a personal domain or aliases.
+}
 
 // Modules is the installed lab.yml service intent. A nil capability block is
 // deliberately different from a disabled block: read-only commands report
 // nil as not configured and approved apply operations may materialise defaults.
 type Modules struct {
+	Systems       []System             `yaml:"systems,omitempty" json:"systems,omitempty"`
 	Tailnet       *TailnetConfig       `yaml:"tailnet,omitempty" json:"tailnet,omitempty"`
 	DNS           *DNSConfig           `yaml:"dns,omitempty" json:"dns,omitempty"`
 	DHCP          *DHCPConfig          `yaml:"dhcp,omitempty" json:"dhcp,omitempty"`
 	VPN           *VPNConfig           `yaml:"vpn,omitempty" json:"vpn,omitempty"`
 	Observability *ObservabilityConfig `yaml:"observability,omitempty" json:"observability,omitempty"`
 	AIOps         *AIOpsConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
+	Media         *MediaConfig         `yaml:"media,omitempty" json:"media,omitempty"`
+	// Arrstack is source compatibility for internal tests and older callers;
+	// it is never persisted or advertised in the public configuration.
+	Arrstack *ArrstackConfig `yaml:"-" json:"-"`
 }
+
+// System registers an existing user-owned Proxmox guest. Boetticher projects
+// only its narrow network policy; the guest lifecycle stays with Proxmox.
+type System struct {
+	Name       string `yaml:"name" json:"name"`
+	VMID       int    `yaml:"vmid" json:"vmid"`
+	Kind       string `yaml:"kind" json:"kind"`
+	GuestName  string `yaml:"guest_name" json:"guest_name"`
+	MAC        string `yaml:"mac" json:"mac"`
+	Address    string `yaml:"address" json:"address"`
+	Port       int    `yaml:"port" json:"port"`
+	Monitoring bool   `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+}
+
+// SystemsExpanded derives DHCP reservations from canonical system intent.
+func SystemsExpanded(modules Modules) Modules {
+	result := modules.Clone()
+	if result.DHCP == nil {
+		return result
+	}
+	for _, system := range result.Systems {
+		result.DHCP.Reservations = append(result.DHCP.Reservations, Reservation{Name: strings.ToLower(system.Name), Zone: "SERVERS", MAC: system.MAC, Address: system.Address})
+	}
+	return result
+}
+
+type MediaConfig struct {
+	Enabled           bool         `yaml:"enabled" json:"enabled"`
+	MediaGiB          int          `yaml:"media_gib,omitempty" json:"media_gib,omitempty"`
+	ApplicationDomain string       `yaml:"application_domain,omitempty" json:"application_domain,omitempty"`
+	Aliases           MediaAliases `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+}
+
+// ArrstackConfig is retained as an internal source compatibility alias.
+type ArrstackConfig = MediaConfig
 
 type ObservabilityConfig struct {
 	Enabled      *bool                           `yaml:"enabled,omitempty" json:"enabled,omitempty"`
@@ -212,6 +271,17 @@ func ResolveReservation(modules Modules, name string) (Reservation, bool) {
 
 func (m Modules) Normalize() Modules {
 	result := m
+	if result.Media == nil && result.Arrstack != nil {
+		result.Media = result.Arrstack
+	}
+	if result.Media != nil {
+		copyArr := *result.Media
+		if copyArr.MediaGiB == 0 {
+			copyArr.MediaGiB = 256
+		}
+		result.Media = &copyArr
+		result.Arrstack = result.Media
+	}
 	if result.DNS != nil {
 		copyDNS := *result.DNS
 		if result.DNS.Enabled != nil {
@@ -269,6 +339,11 @@ func (m Modules) Normalize() Modules {
 
 func (m Modules) Clone() Modules {
 	result := Modules{}
+	result.Systems = append([]System(nil), m.Systems...)
+	if m.Media != nil {
+		copyMedia := *m.Media
+		result.Media = &copyMedia
+	}
 	if m.Tailnet != nil {
 		copyTailnet := *m.Tailnet
 		result.Tailnet = &copyTailnet
@@ -347,8 +422,62 @@ func (m Modules) Clone() Modules {
 
 func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
+	if err := validateSystems(normalized.Systems, site); err != nil {
+		return err
+	}
+	normalized = SystemsExpanded(normalized)
+	if len(normalized.Systems) > 0 && (normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
+		return errors.New("registered systems require enabled DHCP")
+	}
+	for _, system := range normalized.Systems {
+		if system.Monitoring && (normalized.Observability == nil || !Enabled(normalized.Observability.Enabled)) {
+			return errors.New("monitored systems require enabled observability")
+		}
+	}
 	if err := validateObservability(normalized); err != nil {
 		return err
+	}
+	if normalized.Media != nil && normalized.Media.Enabled {
+		if normalized.DNS == nil || !Enabled(normalized.DNS.Enabled) || normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled) || normalized.VPN == nil {
+			return errors.New("enabled arrstack requires enabled DNS, DHCP, and configured VPN client intent")
+		}
+		if normalized.Media.MediaGiB < 1 {
+			return errors.New("modules.media.media_gib must be positive")
+		}
+		if !ValidPublicDomain(normalized.Media.ApplicationDomain) {
+			return errors.New("modules.media.application_domain must be a valid DNS domain")
+		}
+		aliases := []string{normalized.Media.Aliases.Radarr, normalized.Media.Aliases.Sonarr, normalized.Media.Aliases.Bazarr, normalized.Media.Aliases.Prowlarr, normalized.Media.Aliases.Trailarr}
+		seenAliases := map[string]bool{}
+		for _, alias := range aliases {
+			if !validLabel(alias) || seenAliases[alias] {
+				return errors.New("modules.media.aliases must be unique valid labels")
+			}
+			seenAliases[alias] = true
+		}
+		reservationFound, vpnClient := false, false
+		for _, r := range normalized.DHCP.Reservations {
+			if r.Name == "lab-media-01" && r.Zone == "SERVERS" && r.Address == "10.10.20.230" && r.MAC == "02:00:00:00:20:e6" {
+				reservationFound = true
+			}
+		}
+		for _, c := range normalized.VPN.Clients {
+			if c == "lab-media-01" {
+				vpnClient = true
+			}
+		}
+		if !reservationFound || !vpnClient {
+			return errors.New("enabled arrstack requires its fixed DHCP reservation and VPN client intent")
+		}
+		foundForward := false
+		for _, f := range normalized.VPN.Forwards {
+			if f.Name == "media-qbittorrent" && f.Reservation == "lab-media-01" && f.Port >= 1 && len(f.Protocols) == 2 && f.Protocols[0] == "tcp" && f.Protocols[1] == "udp" {
+				foundForward = true
+			}
+		}
+		if !foundForward {
+			return errors.New("enabled arrstack requires the media-qbittorrent TCP/UDP forward")
+		}
 	}
 	if normalized.Tailnet != nil && normalized.Tailnet.Enabled && (normalized.DNS == nil || !Enabled(normalized.DNS.Enabled) || normalized.DHCP == nil || !Enabled(normalized.DHCP.Enabled)) {
 		return errors.New("enabled Tailnet requires enabled DNS and DHCP; teardown Tailnet first")
@@ -379,6 +508,34 @@ func Validate(modules Modules, site model.Site) error {
 	if normalized.DNS != nil && normalized.DHCP != nil && Enabled(normalized.DNS.Enabled) && Enabled(normalized.DHCP.Enabled) {
 		if err := validateSharedNames(normalized.DNS, normalized.DHCP, site); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validateSystems(systems []System, site model.Site) error {
+	platformNames := make(map[string]struct{})
+	for _, component := range site.PlatformComponents() {
+		if name, err := canonicalName(component.Hostname, site.Network.Domain); err == nil {
+			platformNames[name] = struct{}{}
+		}
+		for _, alias := range component.DNSAliases {
+			if name, err := canonicalName(alias, site.Network.Domain); err == nil {
+				platformNames[name] = struct{}{}
+			}
+		}
+	}
+	for _, system := range systems {
+		name := strings.TrimSpace(system.Name)
+		if !model.IsDNSLabel(name) || name != strings.ToLower(name) {
+			return fmt.Errorf("system name %q is invalid or non-canonical", system.Name)
+		}
+		canonical, err := canonicalName(name, site.Network.Domain)
+		if err != nil {
+			return fmt.Errorf("system name %q is invalid: %w", system.Name, err)
+		}
+		if _, exists := platformNames[canonical]; exists {
+			return fmt.Errorf("system name %q conflicts with a platform name", system.Name)
 		}
 	}
 	return nil
@@ -464,6 +621,18 @@ func ValidPublicDomain(value string) bool {
 			if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func validLabel(value string) bool {
+	if value == "" || len(value) > 63 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, char := range strings.ToLower(value) {
+		if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+			return false
 		}
 	}
 	return true

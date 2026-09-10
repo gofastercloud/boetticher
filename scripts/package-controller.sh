@@ -23,7 +23,7 @@ main() {
   go_bin=${BOETTICHER_GO_BIN:-$(command -v go || true)}
   [ -n "$go_bin" ] && [ -x "$go_bin" ] || { echo 'Go toolchain is unavailable; set BOETTICHER_GO_BIN to Go 1.26.6' >&2; exit 1; }
   "$go_bin" version | grep -Eq 'go1\.26\.6([[:space:]]|$)' || { echo 'Controller packaging requires Go 1.26.6; set BOETTICHER_GO_BIN' >&2; exit 1; }
-  export GOCACHE="${GOCACHE:-/Users/dave/Library/Caches/go-build}" GOMODCACHE="${GOMODCACHE:-/Users/dave/go/pkg/mod}"
+  export GOCACHE="${GOCACHE:-$($go_bin env GOCACHE)}" GOMODCACHE="${GOMODCACHE:-$($go_bin env GOMODCACHE)}"
 
   stage="$BOETTICHER_BUILD_TEMP_DIR/controller-package"
   mkdir -m 0700 "$stage"
@@ -34,13 +34,19 @@ main() {
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
     go build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
   chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status"
+  ARRSTACK_SOURCE_ARCHIVE=${ARRSTACK_SOURCE_ARCHIVE:?ARRSTACK_SOURCE_ARCHIVE must point to the reviewed upstream tarball} \
+    sh scripts/build-arrstack.sh "$stage/bin/arrstack"
+  chmod 0755 "$stage/bin/arrstack"
   cp -R controller "$stage/controller"
   mkdir -p "$stage/controller/proxmox/libexec"
   cp scripts/build-openwrt-firewall.sh "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
   cp scripts/build-tailnet.sh "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
+  cp scripts/build-arrstack-vm.sh "$stage/controller/proxmox/libexec/boetticher-build-arrstack-vm"
   cp scripts/build-temp.py "$stage/controller/proxmox/libexec/build-temp.py"
-  chmod 0755 "$stage/controller/proxmox/libexec/build-temp.py"
+  cp scripts/cleanup-controller-storage.sh "$stage/controller/proxmox/libexec/cleanup-controller-storage.sh"
+  chmod 0755 "$stage/controller/proxmox/libexec/build-temp.py" "$stage/controller/proxmox/libexec/cleanup-controller-storage.sh"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
+  chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-arrstack-vm"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
 
   mkdir -p "$stage/controller/observability/bin"

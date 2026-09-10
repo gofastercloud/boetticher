@@ -11,11 +11,11 @@ import (
 )
 
 func TestObservabilityDNSSectionsUseOwnedPublicNamesAndMonitorAddress(t *testing.T) {
-	sections := observabilityDNSSections("davebarton.cc")
+	sections := observabilityDNSSections("example.com")
 	if len(sections) != 4 {
 		t.Fatalf("observability DNS section count = %d", len(sections))
 	}
-	for _, name := range []string{"observability.davebarton.cc", "status.davebarton.cc", "ingest.davebarton.cc", "metrics.davebarton.cc"} {
+	for _, name := range []string{"observability.example.com", "status.example.com", "ingest.example.com", "metrics.example.com"} {
 		found := false
 		for _, section := range sections {
 			if section.Options["name"] == name && section.Options["ip"] == "10.10.10.20" && strings.HasPrefix(section.Name, "boetticher_observability_record_") {
@@ -30,6 +30,60 @@ func TestObservabilityDNSSectionsUseOwnedPublicNamesAndMonitorAddress(t *testing
 	foreign.Options = map[string]string{"name": foreign.Options["name"], "ip": "10.10.10.99"}
 	if _, err := DiffOwned(map[string]openwrt.UCISection{foreign.Name: {Type: foreign.Type, Options: foreign.Options}}, sections); err == nil {
 		t.Fatal("conflicting observability DNS record was accepted")
+	}
+}
+
+func TestRegisteredSystemFirewallRulesAreOwnedAndPruned(t *testing.T) {
+	current := map[string]openwrt.UCISection{
+		"boetticher_system_print_hserver_trusted": {Type: "rule", Options: map[string]string{"name": "Boetticher system print-server trusted", "src": "trusted", "dest": "servers", "dest_ip": "10.10.20.61", "proto": "tcp", "dest_port": "631", "family": "ipv4", "target": "ACCEPT"}},
+		"user_rule": {Type: "rule", Options: map[string]string{"name": "user rule", "src": "trusted", "dest": "servers", "dest_ip": "10.10.20.62", "proto": "tcp", "dest_port": "8080", "family": "ipv4", "target": "ACCEPT"}},
+	}
+	changes, err := DiffFirewall(current, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDelete := false
+	for _, change := range changes {
+		if change.Kind == MutationDelete && change.Section.Name == "boetticher_system_print_hserver_trusted" {
+			foundDelete = true
+		}
+		if change.Section.Name == "user_rule" {
+			t.Fatal("unowned user firewall rule was selected")
+		}
+	}
+	if !foundDelete {
+		t.Fatal("owned registered-system rule was not pruned")
+	}
+}
+
+func TestSystemFirewallProjectionRegistersAndUpdatesMonitoringRule(t *testing.T) {
+	initial := systemFirewallSections([]clientservices.System{{Name: "print-server", Address: "10.10.20.61", Port: 631, Monitoring: false}})
+	if len(initial) != 1 || initial[0].Name != "boetticher_system_print_hserver_trusted" {
+		t.Fatalf("unexpected initial system projection: %#v", initial)
+	}
+	updated := systemFirewallSections([]clientservices.System{{Name: "print-server", Address: "10.10.20.62", Port: 9100, Monitoring: true}})
+	if len(updated) != 2 {
+		t.Fatalf("monitoring system projection omitted rule: %#v", updated)
+	}
+	current := map[string]openwrt.UCISection{initial[0].Name: {Type: initial[0].Type, Options: initial[0].Options}, "user_rule": {Type: "rule", Options: map[string]string{"name": "user rule"}}}
+	changes, err := DiffFirewall(current, updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addedTrusted, addedMonitoring := false, false
+	for _, change := range changes {
+		if change.Section.Name == "user_rule" {
+			t.Fatal("unowned user firewall rule was changed")
+		}
+		if (change.Kind == MutationCreate || change.Kind == MutationUpdate) && change.Section.Name == "boetticher_system_print_hserver_trusted" {
+			addedTrusted = change.Section.Options["dest_ip"] == "10.10.20.62" && change.Section.Options["dest_port"] == "9100"
+		}
+		if change.Kind == MutationCreate && change.Section.Name == "boetticher_system_print_hserver_monitoring" {
+			addedMonitoring = change.Section.Options["src"] == "infra" && change.Section.Options["src_ip"] == "10.10.10.20"
+		}
+	}
+	if !addedTrusted || !addedMonitoring {
+		t.Fatalf("system registration update was not reconciled: %#v", changes)
 	}
 }
 

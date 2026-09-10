@@ -113,26 +113,6 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		}
 		declaration.ReturnRouting = []string{"AirVPN-selected module traffic uses the TRANSIT gateway 10.10.5.1 and returns only through the AirVPN tunnel"}
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "boetticher-airvpn", Kind: "service", Target: "lab-airvpn-01", Checks: []string{"wireguard", "forwarding", "kill-switch"}, Description: "AirVPN WireGuard transit and fail-closed forwarding health"})
-	case "arr":
-		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
-		declaration.DNSRecords = []model.DNSRecord{{Name: "sonarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "radarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "lidarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "prowlarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "qbittorrent." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}}
-		declaration.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, VMID: model.ArrVMID}}
-		declaration.NetworkIntents = []model.NetworkIntent{
-			{Source: "lab-arr-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "arr DNS resolution"},
-			{Source: "lab-arr-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "arr time synchronisation"},
-		}
-		if IsEnabled(site, "logging") {
-			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-arr-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
-		}
-		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "sonarr." + site.Network.Domain, SANs: []string{"sonarr." + site.Network.Domain, "radarr." + site.Network.Domain, "lidarr." + site.Network.Domain, "prowlarr." + site.Network.Domain, "qbittorrent." + site.Network.Domain, "lab-arr-01." + site.Network.Domain}, Consumer: "nginx"})
-		declaration.Monitoring = append(declaration.Monitoring,
-			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-arr-01", Checks: []string{"nginx", "https", "mtls"}, Description: "*arr mTLS frontend health"},
-			model.MonitoringDeclaration{Name: "sonarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"sonarr", "loopback"}, Description: "Sonarr loopback backend health"},
-			model.MonitoringDeclaration{Name: "radarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"radarr", "loopback"}, Description: "Radarr loopback backend health"},
-			model.MonitoringDeclaration{Name: "lidarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"lidarr", "loopback"}, Description: "Lidarr loopback backend health"},
-			model.MonitoringDeclaration{Name: "prowlarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"prowlarr", "loopback"}, Description: "Prowlarr loopback backend health"},
-			model.MonitoringDeclaration{Name: "qbittorrent", Kind: "service", Target: "lab-arr-01", Checks: []string{"qbittorrent", "loopback"}, Description: "qBittorrent loopback WebUI health"},
-		)
 	case "bifrost":
 		config := site.ModuleConfig[name]
 		for _, upstream := range config.Upstreams {
@@ -150,21 +130,6 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.Monitoring = append(declaration.Monitoring,
 			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-bifrost-01", Checks: []string{"nginx", "https", "mtls"}, Description: "Bifrost mTLS frontend health"},
 			model.MonitoringDeclaration{Name: "bifrost", Kind: "service", Target: "lab-bifrost-01", Checks: []string{"bifrost", "loopback"}, Description: "Bifrost loopback backend health"},
-		)
-	case "printer":
-		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
-		declaration.DNSRecords = []model.DNSRecord{{Name: "octoprint." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}, {Name: "printer." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}}
-		declaration.NetworkIntents = []model.NetworkIntent{
-			{Source: "lab-printer-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "OctoPrint DNS resolution"},
-			{Source: "lab-printer-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "OctoPrint time synchronisation"},
-		}
-		if IsEnabled(site, "logging") {
-			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-printer-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
-		}
-		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "octoprint." + site.Network.Domain, SANs: []string{"octoprint." + site.Network.Domain, "printer." + site.Network.Domain}, Consumer: "nginx"})
-		declaration.Monitoring = append(declaration.Monitoring,
-			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-printer-01", Checks: []string{"nginx", "https", "mtls"}, Description: "OctoPrint mTLS frontend health"},
-			model.MonitoringDeclaration{Name: "octoprint", Kind: "service", Target: "lab-printer-01", Checks: []string{"octoprint", "loopback", "serial"}, Description: "OctoPrint backend and printer serial availability"},
 		)
 	case "aiops":
 		config := site.ModuleConfig[name]
@@ -245,20 +210,8 @@ func persistentFor(module, guest string) []model.PersistentState {
 		return []model.PersistentState{identity, {Name: "tailscale-state", Guest: guest, Path: "/var/lib/tailscale", Kind: "node-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "airvpn":
 		return []model.PersistentState{identity}
-	case "arr":
-		return []model.PersistentState{
-			identity,
-			{Name: "arr-state", Guest: guest, Path: "/var/lib/arr", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
-			{Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
-			{Name: "downloads", Guest: guest, Path: model.ArrDownloadsMountPath, Kind: "media-downloads", Backup: false, Sensitive: false, Replacement: "retain-across-rootfs-replacement"},
-		}
 	case "bifrost":
 		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
-	case "printer":
-		return []model.PersistentState{identity,
-			{Name: "octoprint-state", Guest: guest, Path: "/var/lib/octoprint", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
-			{Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
-		}
 	case "aiops":
 		return []model.PersistentState{identity, {Name: "aiops-state", Guest: guest, Path: "/var/lib/boetticher/aiops", Kind: "incident-state-and-endpoint-identities", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	default:
@@ -282,17 +235,8 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("tailscale-state", "/var/lib/tailscale", 4, true)}
 	case "airvpn":
 		return []model.PersistentVolumeDeclaration{identity}
-	case "arr":
-		downloads := volume("downloads", model.ArrDownloadsMountPath, model.ArrDownloadsVolumeGiB, false)
-		downloads.Placement = model.StorageRequireDataDisk
-		// Keep existing mount-point ordering stable for upgrades. The large
-		// download volume is appended so it cannot be mistaken for a legacy
-		// TLS identity mount during a rootfs replacement.
-		return []model.PersistentVolumeDeclaration{identity, volume("arr-state", "/var/lib/arr", 16, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true), downloads}
 	case "bifrost":
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
-	case "printer":
-		return []model.PersistentVolumeDeclaration{identity, volume("octoprint-state", "/var/lib/octoprint", 8, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "aiops":
 		return []model.PersistentVolumeDeclaration{identity, volume("aiops-state", "/var/lib/boetticher/aiops", 1, true)}
 	case "logging":

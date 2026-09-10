@@ -168,7 +168,7 @@ They are separate concepts:
 
 | Concept | Example |
 | --- | --- |
-| Capability | `firewall`, `dhcp`, `dns`, `vpn`, `monitoring`, `statuspage`, `printer` |
+| Capability | `firewall`, `dhcp`, `dns`, `vpn`, `monitoring`, `statuspage` |
 | Provider | gateway appliance, DNS resolver, monitoring service, status-page server |
 | Runtime | gateway VM, monitoring VM/LXC, or the Controller |
 

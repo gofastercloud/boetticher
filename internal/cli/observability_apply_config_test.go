@@ -13,11 +13,11 @@ func TestPrepareObservabilityApplyRequiresExplicitDomainAndLeavesHolmesOff(t *te
 	if _, err := prepareObservabilityApplyConfig(config, "", ""); err == nil || !strings.Contains(err.Error(), "--public-domain") {
 		t.Fatalf("missing public domain was not rejected: %v", err)
 	}
-	prepared, err := prepareObservabilityApplyConfig(config, "davebarton.cc", "")
+	prepared, err := prepareObservabilityApplyConfig(config, "example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Modules.Observability == nil || prepared.Modules.Observability.PublicDomain != "davebarton.cc" || prepared.Modules.AIOps != nil {
+	if prepared.Modules.Observability == nil || prepared.Modules.Observability.PublicDomain != "example.com" || prepared.Modules.AIOps != nil {
 		t.Fatalf("fresh apply implicitly changed Holmes/AIOps: %#v", prepared.Modules)
 	}
 	if config.Modules.Observability != nil || config.Modules.AIOps != nil {
@@ -27,7 +27,7 @@ func TestPrepareObservabilityApplyRequiresExplicitDomainAndLeavesHolmesOff(t *te
 
 func TestPrepareObservabilityApplyExplicitHolmesModelPreservesExistingSettings(t *testing.T) {
 	enabled := true
-	config := controllerhost.LabConfig{Name: "lab", Proxmox: controllerhost.ProxmoxConfig{Address: "192.0.2.10", User: "root", Repository: "no-subscription"}, Modules: clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, PublicDomain: "davebarton.cc"}}}
+	config := controllerhost.LabConfig{Name: "lab", Proxmox: controllerhost.ProxmoxConfig{Address: "192.0.2.10", User: "root", Repository: "no-subscription"}, Modules: clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, PublicDomain: "example.com"}}}
 	prepared, err := prepareObservabilityApplyConfig(config, "", "openai/gpt-4.1-mini")
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestPrepareObservabilityApplyExplicitHolmesModelPreservesExistingSettings(t
 
 func TestMissingObservabilitySecretsListsRequiredNamesWithoutValues(t *testing.T) {
 	enabled := true
-	modules := clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, PublicDomain: "davebarton.cc"}}
+	modules := clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, PublicDomain: "example.com"}}
 	missing := missingObservabilitySecrets(modules, map[string][]byte{})
 	if strings.Join(missing, ",") != "cloudflare-dns-token,grafana-admin-password" {
 		t.Fatalf("missing secret set = %#v", missing)

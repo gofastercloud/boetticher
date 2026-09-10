@@ -275,6 +275,9 @@ validate_local_assets() {
       [ -f "$asset_root/grafana-host-resources.json" ] || die 'Grafana host resources dashboard asset is missing'
       [ -f "$asset_root/grafana-service-logs.json" ] || die 'Grafana service logs dashboard asset is missing'
       [ -f "$asset_root/grafana-observability-health.json" ] || die 'Grafana observability health dashboard asset is missing'
+	  if [ "${BOETTICHER_OBSERVABILITY_MEDIA_ENABLED:-false}" = true ]; then
+	    [ -f "$asset_root/grafana-media.json" ] || die 'Grafana media dashboard asset is missing'
+	  fi
       [ -f "$asset_root/grafana-alerting.yaml" ] || die 'Grafana alerting provisioning asset is missing'
       ;;
     gatus)
@@ -334,6 +337,12 @@ install_grafana_files() {
 	install_atomic 0644 "$asset_root/grafana-host-resources.json" "$(root_path /etc/grafana/dashboards/boetticher-host-resources.json)"
 	install_atomic 0644 "$asset_root/grafana-service-logs.json" "$(root_path /etc/grafana/dashboards/boetticher-service-logs.json)"
 	install_atomic 0644 "$asset_root/grafana-observability-health.json" "$(root_path /etc/grafana/dashboards/boetticher-observability-health.json)"
+	media_dashboard=$(root_path /etc/grafana/dashboards/boetticher-media.json)
+	if [ "${BOETTICHER_OBSERVABILITY_MEDIA_ENABLED:-false}" = true ]; then
+	  install_atomic 0644 "$asset_root/grafana-media.json" "$media_dashboard"
+	else
+	  if [ -f "$media_dashboard" ] && grep -Fq 'boetticher-media-runtime' "$media_dashboard"; then rm -f -- "$media_dashboard"; fi
+	fi
 	if [ "$pushover_enabled" = true ]; then
 	  [ -s "$(root_path /var/lib/boetticher/credentials/pushover-credentials.cred)" ] || die 'Pushover credentials are missing before Grafana activation'
 	  awk '

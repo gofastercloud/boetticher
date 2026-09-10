@@ -53,9 +53,6 @@ const (
 	PrinterVMID                 = 230
 	LegacyStreamDeckVMID        = 220
 	AirVPNGuestVMID             = 260
-	ArrVMID                     = 270
-	ArrDownloadsVolumeGiB       = 500
-	ArrDownloadsMountPath       = "/var/lib/arr/downloads"
 	DefaultGatewayUpstreamMAC   = "02:00:00:00:01:01"
 	GatewayManagementAddress    = "192.168.4.28"
 	GatewayManagementNetwork    = "192.168.4.0/22"
@@ -65,8 +62,6 @@ const (
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
 	AirVPNGuestAddress          = "10.10.5.20"
-	ArrGuestAddress             = "10.10.20.110"
-	ArrGuestMAC                 = "02:00:00:00:02:10"
 	CompanionZone               = "SERVERS"
 	CompanionHostname           = "lab-display-01"
 	CompanionAddress            = "10.10.20.50"

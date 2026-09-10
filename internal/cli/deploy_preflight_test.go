@@ -99,10 +99,10 @@ func TestStaticCredentialReadinessAcceptsRetainedTailnetStateWithoutBootstrapKey
 
 func TestValidateLiveUSBBindingsRequiresConfiguredIdentityAtConfiguredPort(t *testing.T) {
 	manifests := []usbexport.GuestManifest{{Exports: []usbexport.Export{{
-		Module: "printer", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523", Serial: "printer-01",
+		Module: "custom", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523", Serial: "device-01",
 	}}}}
 
-	if err := validateLiveUSBBindings(manifests, []configureUSBDevice{{Port: "1-2.4", VendorID: "1a86", ProductID: "7523", Serial: "printer-01"}}); err != nil {
+	if err := validateLiveUSBBindings(manifests, []configureUSBDevice{{Port: "1-2.4", VendorID: "1a86", ProductID: "7523", Serial: "device-01"}}); err != nil {
 		t.Fatalf("matching live USB identity failed: %v", err)
 	}
 	for _, test := range []struct {
@@ -111,7 +111,7 @@ func TestValidateLiveUSBBindingsRequiresConfiguredIdentityAtConfiguredPort(t *te
 		want     string
 	}{
 		{name: "missing", want: "unavailable"},
-		{name: "wrong identity", observed: []configureUSBDevice{{Port: "1-2.4", VendorID: "2341", ProductID: "0043", Serial: "printer-01"}}, want: "expected 1a86:7523"},
+		{name: "wrong identity", observed: []configureUSBDevice{{Port: "1-2.4", VendorID: "2341", ProductID: "0043", Serial: "device-01"}}, want: "expected 1a86:7523"},
 		{name: "wrong serial", observed: []configureUSBDevice{{Port: "1-2.4", VendorID: "1a86", ProductID: "7523", Serial: "other"}}, want: "different serial"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

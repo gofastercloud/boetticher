@@ -332,6 +332,12 @@ func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, ser
 	return changes + len(itemChanges), nil
 }
 
+type clientServicesDriftError struct{ packageName string }
+
+func (e *clientServicesDriftError) Error() string {
+	return fmt.Sprintf("provider %s configuration is not at the desired state", e.packageName)
+}
+
 func verifyClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState, capability string, ignoredDHCPSections ...map[string]struct{}) error {
 	ignored := map[string]struct{}{}
 	if len(ignoredDHCPSections) > 0 {
@@ -379,7 +385,7 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 				remaining = append(remaining, change)
 			}
 			if len(remaining) > 0 {
-				return fmt.Errorf("provider %s configuration is not at the desired state", item.packageName)
+				return &clientServicesDriftError{packageName: item.packageName}
 			}
 		}
 	}
@@ -1412,6 +1418,11 @@ func runDHCPAddReservation(args []string, input io.Reader, out io.Writer) error 
 		return errors.New("reservation address must be a canonical IPv4 address")
 	}
 	reservation := clientservices.Reservation{Name: strings.ToLower(strings.TrimSpace(name)), Zone: strings.ToUpper(strings.TrimSpace(*zone)), MAC: canonicalMAC, Address: parsedAddress.To4().String()}
+	for _, system := range serviceContext.Config.Modules.Systems {
+		if strings.EqualFold(system.Name, reservation.Name) || strings.EqualFold(system.MAC, reservation.MAC) || system.Address == reservation.Address {
+			return fmt.Errorf("reservation conflicts with registered system %s", system.Name)
+		}
+	}
 	identical := false
 	for _, existing := range serviceContext.Config.Modules.DHCP.Reservations {
 		if strings.EqualFold(existing.Name, reservation.Name) {
@@ -1463,6 +1474,11 @@ func runDHCPRemoveReservation(args []string, input io.Reader, out io.Writer) err
 	}
 	if index < 0 {
 		return fmt.Errorf("no DHCP reservation named %s", name)
+	}
+	for _, system := range serviceContext.Config.Modules.Systems {
+		if strings.EqualFold(system.Name, name) {
+			return fmt.Errorf("DHCP reservation %s is owned by registered system; unregister the system first", name)
+		}
 	}
 	if serviceContext.Config.Modules.Tailnet != nil && serviceContext.Config.Modules.Tailnet.Enabled {
 		for _, reservation := range serviceContext.Config.Modules.DHCP.Reservations {

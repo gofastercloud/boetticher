@@ -57,7 +57,7 @@ release versions.
 - Add atomic `update` and a friendly `status` view.
 - Bundle the controller's SOPS and age implementations so encrypted secrets
   stay out of ordinary configuration and command output.
-- Offer monitoring, firewall, logging, DNS, Gatus, Bifrost, AIOps, printer,
+- Offer monitoring, firewall, logging, DNS, Gatus, Bifrost, and AIOps,
   and Tailnet Router as first-party capabilities with clear defaults.
 - Improve host identity checks, appliance replacement, persistent storage, and
   the guarded physical-network workflow.

@@ -28,6 +28,7 @@
       - iputils-arping
       - isc-dhcp-client
       - dnsutils
+      - guestfs-tools
       - wget
       - which
       - xz-utils

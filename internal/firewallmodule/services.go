@@ -16,9 +16,16 @@ import (
 )
 
 const (
-	serviceDNSMasqSection = "boetticher_dnsmasq"
-	serviceStubbyGlobal   = "global"
-	serviceNTPSection     = "ntp"
+	serviceDNSMasqSection               = "boetticher_dnsmasq"
+	serviceStubbyGlobal                 = "global"
+	serviceNTPSection                   = "ntp"
+	observabilityControllerExporterRule = "boetticher_observability_controller_exporter"
+	observabilityHostExporterRule       = "boetticher_observability_host_exporter"
+	observabilityControllerIngressRule  = "boetticher_observability_controller_ingress"
+	observabilityHostIngressRule        = "boetticher_observability_host_ingress"
+	observabilityRuntimeIngressRule     = "boetticher_observability_runtime_ingress"
+	observabilityTrustedIngressRule     = "boetticher_observability_trusted_ingress"
+	observabilityTailnetIngressRule     = "boetticher_observability_tailnet_ingress"
 )
 
 // ServiceState is the composed native configuration owned by the DHCP/DNS
@@ -94,6 +101,9 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 			return ServiceState{}, err
 		}
 		state.DHCP = append(state.DHCP, generated...)
+		if normalized.Media != nil && normalized.Media.Enabled {
+			state.DHCP = append(state.DHCP, mediaDNSSections(site, normalized.Media)...)
+		}
 		state.Stubby = stubbySections(upstreams)
 	}
 	if normalized.Observability != nil && clientservices.ValidPublicDomain(normalized.Observability.PublicDomain) {
@@ -114,6 +124,7 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	state.System = append(state.System, ntpSections(site, ntpUpstreams, ntpServe)...)
 	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
+	state.Firewall = append(state.Firewall, systemFirewallSections(normalized.Systems)...)
 	observabilityFirewall, err := observabilityFirewallSections(site, normalized)
 	if err != nil {
 		return ServiceState{}, err
@@ -122,15 +133,17 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	return state, nil
 }
 
-const (
-	observabilityControllerExporterRule = "boetticher_observability_controller_exporter"
-	observabilityHostExporterRule       = "boetticher_observability_host_exporter"
-	observabilityControllerIngressRule  = "boetticher_observability_controller_ingress"
-	observabilityHostIngressRule        = "boetticher_observability_host_ingress"
-	observabilityRuntimeIngressRule     = "boetticher_observability_runtime_ingress"
-	observabilityTrustedIngressRule     = "boetticher_observability_trusted_ingress"
-	observabilityTailnetIngressRule     = "boetticher_observability_tailnet_ingress"
-)
+func mediaDNSSections(site model.Site, config *clientservices.MediaConfig) []Section {
+	if config == nil || !config.Enabled {
+		return nil
+	}
+	aliases := []string{config.Aliases.Radarr, config.Aliases.Sonarr, config.Aliases.Bazarr, config.Aliases.Prowlarr, config.Aliases.Trailarr, "qbittorrent", "jellyfin", "jellyseerr"}
+	result := make([]Section, 0, len(aliases))
+	for _, alias := range aliases {
+		result = append(result, Section{Name: "boetticher_media_cname_" + alias, Type: "cname", Options: map[string]string{"cname": alias + "." + config.ApplicationDomain, "target": "lab-media-01." + site.Network.Domain}, Lists: map[string][]string{}})
+	}
+	return result
+}
 
 func observabilityFirewallSections(site model.Site, modules clientservices.Modules) ([]Section, error) {
 	if modules.Observability == nil || !clientservices.Enabled(modules.Observability.Enabled) {
@@ -571,6 +584,36 @@ func serviceFirewallSections(site model.Site, dnsEnabled, dhcpEnabled, vpnEnable
 			if vpnEnabled {
 				sections = append(sections, Section{Name: "boetticher_deny_" + name + "_external_ntp_vpn", Type: "rule", Options: map[string]string{"name": "Boetticher " + zone.Name + " deny external NTP via VPN", "src": name, "dest": "vpn", "proto": "udp", "dest_port": "123", "family": "ipv4", "target": "DROP"}, Lists: map[string][]string{}})
 			}
+		}
+	}
+	return sections
+}
+
+func systemFirewallSections(systems []clientservices.System) []Section {
+	sections := make([]Section, 0, len(systems)*2)
+	for _, system := range systems {
+		id := nativeIdentifier(strings.ToLower(system.Name))
+		for _, item := range []struct{ name, source, sourceIP string }{
+			{name: "trusted", source: "trusted"},
+			{name: "monitoring", source: "infra", sourceIP: "10.10.10.20"},
+		} {
+			if item.name == "monitoring" && !system.Monitoring {
+				continue
+			}
+			options := map[string]string{
+				"name":      "Boetticher system " + system.Name + " " + item.name,
+				"src":       item.source,
+				"dest":      "servers",
+				"dest_ip":   system.Address,
+				"proto":     "tcp",
+				"dest_port": strconv.Itoa(system.Port),
+				"family":    "ipv4",
+				"target":    "ACCEPT",
+			}
+			if item.sourceIP != "" {
+				options["src_ip"] = item.sourceIP
+			}
+			sections = append(sections, Section{Name: "boetticher_system_" + id + "_" + item.name, Type: "rule", Options: options, Lists: map[string][]string{}})
 		}
 	}
 	return sections

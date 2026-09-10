@@ -108,7 +108,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	paths := []string{
 		"firewall diff", "module dhcp list-leases",
-		"module firewall status", "module printer status",
+		"module firewall status",
 		"config schema",
 	}
 	for _, path := range paths {

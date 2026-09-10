@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "logging", "printer", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "monitoring", "aiops", "airvpn", "bifrost", "gatus", "logging", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -93,79 +93,6 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	}
 }
 
-func TestArrRequiresAirVPNAndComposesOwnedDHCPReservation(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	airvpnEnabled := true
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
-	site, _, err := Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	declaration, ok := findDeclaration(site, "arr")
-	if !ok || len(declaration.DHCPReservations) != 1 {
-		t.Fatalf("arr declaration reservation missing: %#v", declaration)
-	}
-	reservation := declaration.DHCPReservations[0]
-	if reservation.Hostname != "lab-arr-01" || reservation.Address != model.ArrGuestAddress || reservation.MAC != model.ArrGuestMAC || reservation.VMID != model.ArrVMID {
-		t.Fatalf("unexpected arr DHCP reservation: %#v", reservation)
-	}
-	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0] != reservation {
-		t.Fatalf("module reservation was not projected into canonical DHCP state: %#v", site.DHCPReservations)
-	}
-	var downloadsVolume model.PersistentVolumeDeclaration
-	for _, volume := range declaration.Volumes {
-		if volume.Name == "downloads" {
-			downloadsVolume = volume
-			break
-		}
-	}
-	if downloadsVolume.Guest != "lab-arr-01" || downloadsVolume.MountPath != "/var/lib/arr/downloads" || downloadsVolume.SizeGiB != 500 || downloadsVolume.Backup || downloadsVolume.Placement != model.StorageRequireDataDisk {
-		t.Fatalf("ARR downloads volume contract is incomplete: %#v", downloadsVolume)
-	}
-	var downloadsState model.PersistentState
-	for _, state := range declaration.Persistent {
-		if state.Name == "downloads" {
-			downloadsState = state
-			break
-		}
-	}
-	if downloadsState.Path != "/var/lib/arr/downloads" || downloadsState.Kind != "media-downloads" || downloadsState.Backup || downloadsState.Sensitive || downloadsState.Replacement != "retain-across-rootfs-replacement" {
-		t.Fatalf("ARR downloads persistent-state contract is incomplete: %#v", downloadsState)
-	}
-}
-
-func TestArrReservationRemainsUniqueWithOtherOptionalModules(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &enabled}
-	config.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	config.Modules.Bifrost = &model.BifrostModuleConfig{
-		Enabled: &enabled, Network: model.ModuleNetworkDirect,
-		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.BifrostModelConfig{{Alias: "operations-investigator", Upstream: "openrouter", Model: "openai/gpt-5-mini"}},
-	}
-	site, _, err := Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0].Address != model.ArrGuestAddress {
-		t.Fatalf("ARR reservation was duplicated or missing: %#v", site.DHCPReservations)
-	}
-}
-
-func TestArrRejectsNonAirVPNNetwork(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
-	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.arr.network") {
-		t.Fatalf("arr direct network mode was accepted: %v", err)
-	}
-}
-
 func TestGatusCrossZoneHTTPSIntentsFollowManagedServiceMetadata(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
@@ -218,7 +145,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "airvpn", "bifrost", "printer", "aiops", "gatus"} {
+	for _, name := range []string{"tailnet-router", "airvpn", "bifrost", "aiops", "gatus"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -231,10 +158,6 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	bifrost, _ := registry.Definition("bifrost")
 	if bifrost.ReservedVMIDStart != 210 || bifrost.ReservedVMIDEnd != 219 || bifrost.Guests[0].VMID != 210 || bifrost.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("bifrost identity contract is incomplete: %#v", bifrost)
-	}
-	printer, _ := registry.Definition("printer")
-	if printer.ReservedVMIDStart != 230 || printer.ReservedVMIDEnd != 239 || printer.Guests[0].VMID != model.PrinterVMID || printer.Placement.ZoneType != model.ZoneTypeServers {
-		t.Fatalf("printer identity contract is incomplete: %#v", printer)
 	}
 	aiops, _ := registry.Definition("aiops")
 	if aiops.ReservedVMIDStart != 240 || aiops.ReservedVMIDEnd != 249 || aiops.Guests[0].VMID != 240 || aiops.Guests[0].Address != "10.10.20.90" || aiops.Placement.ZoneType != model.ZoneTypeServers {
@@ -305,13 +228,6 @@ func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *tes
 	if !secretField.Sensitive {
 		t.Fatalf("Bifrost secret reference is not structurally classified: %#v", bifrost[1])
 	}
-	arr, err := registry.ConfigurationFields("arr", config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(arr) != 1 || arr[0].Key != "network" || arr[0].Default != string(model.ModuleNetworkAirVPN) || len(arr[0].AllowedValues) != 1 || arr[0].AllowedValues[0] != string(model.ModuleNetworkAirVPN) {
-		t.Fatalf("unexpected ARR configuration schema: %#v", arr)
-	}
 }
 
 func TestRegistryRejectsMalformedConfigurationField(t *testing.T) {
@@ -378,38 +294,6 @@ func TestAIOpsRejectsUndeclaredAliasAndExplicitlyDisabledDependency(t *testing.T
 	config.Modules.AIOps.ModelAlias = "other"
 	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "explicitly disabled") {
 		t.Fatalf("disabled dependency was accepted: %v", err)
-	}
-}
-
-func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &enabled}
-	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523"}}
-	site, _, err := Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	printer, ok := findDeclaration(site, "printer")
-	if !ok {
-		t.Fatal("printer declaration is missing")
-	}
-	if len(printer.Guests) != 1 || printer.Guests[0].Address != "10.10.20.80" || printer.Guests[0].URL != "https://octoprint."+site.Network.Domain || !printer.Guests[0].MTLS {
-		t.Fatalf("printer guest contract is incomplete: %#v", printer.Guests)
-	}
-	if !printer.Security.Unprivileged || len(printer.USBRequirements) != 1 || printer.USBRequirements[0].DeviceType != "serial" {
-		t.Fatalf("printer USB security contract is incomplete: %#v", printer)
-	}
-	foundState, foundTLS := false, false
-	for _, state := range printer.Persistent {
-		foundState = foundState || state.Path == "/var/lib/octoprint" && state.Sensitive && state.Backup
-		foundTLS = foundTLS || state.Path == "/var/lib/boetticher/identity/tls" && state.Sensitive && state.Backup
-	}
-	if !foundState || !foundTLS {
-		t.Fatalf("printer persistent state contract is incomplete: %#v", printer.Persistent)
-	}
-	if len(printer.Secrets) != 0 {
-		t.Fatalf("printer declaration invented controller-owned secrets: %#v", printer.Secrets)
 	}
 }
 

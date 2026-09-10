@@ -1,5 +1,0 @@
----
-- name: reload printer nginx
-  ansible.builtin.service:
-    name: nginx
-    state: reloaded

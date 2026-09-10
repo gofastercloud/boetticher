@@ -22,11 +22,24 @@ type lifecycleRunner struct {
 
 func (r *lifecycleRunner) Run(_ context.Context, command string) (controllerhost.Result, error) {
 	r.calls = append(r.calls, command)
+	if strings.Contains(command, "pct create 120") {
+		r.configErr = nil
+		r.config = ownedGuestOutput(binding, "boetticher;managed;module-observability;boetticher-module-observability", "name=eth0,bridge=vmbr1,tag=10,ip=10.10.10.20/24")
+	}
 	if strings.HasPrefix(command, "pct config ") {
 		if r.configErr != nil {
 			return controllerhost.Result{ExitCode: 1, Stderr: []byte(r.configErr.Error())}, r.configErr
 		}
 		return controllerhost.Result{Stdout: []byte(r.config)}, nil
+	}
+	if strings.Contains(command, "cat /etc/boetticher/observability/collection.yml") {
+		return controllerhost.Result{Stdout: []byte("scrape_configs: []\n")}, nil
+	}
+	if strings.Contains(command, "cat '/etc/boetticher/gatus/config.yaml'") {
+		return controllerhost.Result{Stdout: []byte("endpoints: []\n")}, nil
+	}
+	if strings.Contains(command, "systemctl is-active 'gatus.service'") {
+		return controllerhost.Result{Stdout: []byte("active\n")}, nil
 	}
 	if strings.Contains(command, "install-observability-providers") && r.installErr != nil {
 		err := r.installErr

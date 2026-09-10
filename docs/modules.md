@@ -33,13 +33,17 @@ boetticher module tailnet apply --auth-key-file /secure/path/key --yes
 boetticher module vpn status
 boetticher module monitoring status
 boetticher module statuspage status
-boetticher module printer status
 ```
 
 DHCP-derived DNS and client-facing NTP are supporting behaviour of the peer
 `dhcp` and `dns` capabilities, not standalone capabilities. VPN dispatch,
 provider reconciliation, fail-closed policy, and Controller-daemon observation
-are implemented; remote and physical acceptance remain separate gates.
+are implemented; remote and physical acceptance remain separate gates. VPN
+provider reboot and teardown inspect the enrolled Host's complete VM inventory
+and each running guest NIC before stopping protection; malformed or unavailable
+inventory refuses the mutation, while stopped guests do not block it. This is
+source and local-runtime behavior; it does not claim deployment or packet
+acceptance.
 
 ## Phase 4D Tailnet capability
 
@@ -61,6 +65,75 @@ machine approval attention is recoverable by rerunning apply with a current
 operator-approved key. Phase 4D local runtime is qualified; remote and physical
 acceptance remain separate gates.
 
+## Media application capability
+
+The media application lifecycle uses one fixed amd64 QEMU VM, `lab-media-01`
+(VMID 290, `10.10.20.230`, SERVERS VLAN 20), with a 32 GiB root disk and a
+configurable persistent media disk on `boetticher-data` (the apply default is
+256 GiB). The typed `lab.yml` intent includes:
+
+```yaml
+modules:
+  media:
+    enabled: true
+    media_gib: 500 # reference installation override; choose explicitly for other sites
+    application_domain: media.example.com
+    aliases:
+      radarr: radarr
+      sonarr: sonarr
+      bazarr: bazarr
+      prowlarr: prowlarr
+      trailarr: trailarr
+  vpn:
+    clients: [lab-media-01]
+    forwards:
+      - name: media-qbittorrent
+        reservation: lab-media-01
+        protocols: [tcp, udp]
+        port: 35796
+```
+
+The peer forward uses TCP and UDP port `35796` on both the external and guest
+side. Before applying, the operator must complete or confirm the matching
+AirVPN forwarded-port setup and supply the assigned port in this intent. The
+supported operator journey is:
+
+```text
+boetticher module media plan
+boetticher module media apply --cloudflare-token-file /secure/path/token --yes
+boetticher module media status
+boetticher module media test --yes
+boetticher module media teardown --plan
+boetticher module media teardown --yes
+```
+
+The token path must be an operator-owned private regular file. It is staged only
+through the authenticated Host and guest agent, then removed; it is not printed,
+stored in intent, or included in status. The peer port comes from the existing
+`modules.vpn.forwards` entry `media-qbittorrent` and preserves its TCP/UDP
+number. The deployed data disk and retained legacy application data are
+preserved across reapply and teardown. Applying requires the current
+protected-service state and a healthy VPN handshake before the VM or application
+starts. A complete protected-guest
+inventory is required before provider reboot, VPN teardown, or application
+teardown can stop protection; stopped guests are explicitly ignored. These
+checks are source and local-runtime safeguards and make no deployment or
+packet-acceptance claim.
+
+The VM firewall admits HTTPS only from TRUSTED (`10.10.30.0/24`) and Tailnet
+SNAT (`10.10.5.10`); the VPN appliance owns peer-forward provenance. Caddy
+rejects unknown service names, Docker forwarding is fail-closed, and IPv6 is
+disabled. The Cloudflare token must be scoped to DNS Write plus Zone Read for
+the configured application domain. The five configured service aliases plus
+`qbittorrent`, `jellyfin`, and `jellyseerr` are published under one wildcard
+certificate for that domain;
+unknown hosts return 404. `status` reports guest application health and VPN
+health separately.
+Local runtime checks are evidence for the installed guest only; remote ingress,
+peer packet journeys, physical VLAN isolation, and live public acceptance remain
+`NOT TESTED` until executed. Teardown stops the VM and removes aliases and the
+peer forward while retaining media, its reservation, and VPN client protection.
+
 ## 4E network closeout state
 
 The fixed Firewall, DHCP/DNS, VPN, and Tailnet capability boundary now feeds
@@ -72,11 +145,10 @@ unconfigured VPN.
 
 Native observations and regressions are bounded: VPN failure is not `OFF`, and
 healthy DHCP plus failed DNS is not `healthy`. Keep the Blinkt mapping fixed at
-eight pixels: `CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES`.
-DHCP/NTP detail remains in StreamDeck host detail and CLI status. Keep the
-existing StreamDeck home `FW`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH` area;
-use its existing detail navigation for DHCP/NTP and DNS. Add no display stack,
-hardware, or framework.
+eight pixels: `CTL HOST NETWORK VPN TAILNET SPEEDTEST CTRL-UPDATES HOST-UPDATES`.
+The StreamDeck home shows the Host summary, speedtest `NET`, guest pages,
+`NETWORK`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH`; its detail views expose
+Firewall, DNS, and DHCP/NTP state. Add no display stack, hardware, or framework.
 
 Keep cleanup narrow: delete only proven obsolete reachable network callers and
 docs, preserve security tests, and add regressions for changed behaviour. NET
@@ -226,7 +298,7 @@ the command reports every missing name without starting a partial runtime:
 ```text
 boetticher module observability secrets set grafana-admin-password
 boetticher module observability secrets set cloudflare-dns-token
-boetticher module observability apply --public-domain davebarton.cc --yes
+boetticher module observability apply --public-domain example.com --yes
 ```
 
 The Gatus status page uses HTTPS without a password prompt inside the existing
@@ -239,7 +311,7 @@ To opt into Holmes/Bifrost, also set `holmes-client-token` and
 ```text
 boetticher module observability secrets set holmes-client-token
 boetticher module observability secrets set openrouter-api-key
-boetticher module observability apply --public-domain davebarton.cc --holmes-model openai/gpt-4.1-mini --yes
+boetticher module observability apply --public-domain example.com --holmes-model openai/gpt-4.1-mini --yes
 ```
 
 Apply creates only an absent exact guest, refuses foreign or mismatched
@@ -257,7 +329,7 @@ Keep these concepts separate:
 
 | Concept | Meaning | Examples |
 | --- | --- | --- |
-| Capability | What the operator manages | firewall, DHCP, DNS, VPN, monitoring, status page, printer |
+| Capability | What the operator manages | firewall, DHCP, DNS, VPN, monitoring, status page |
 | Provider | Software or appliance implementing a capability | gateway appliance, DNS resolver, monitoring service, status-page server |
 | Runtime | Where the provider executes | a gateway VM, a monitoring VM/LXC, or the Controller |
 
