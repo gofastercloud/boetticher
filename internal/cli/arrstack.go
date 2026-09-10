@@ -18,6 +18,7 @@ import (
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/observability"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
@@ -183,6 +184,9 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 			if _, err := verifyVPN(ctx, provider, sc, proposed, state, out); err != nil {
 				return fmt.Errorf("VPN must be healthy before arrstack apply: %w", err)
 			}
+			if err := reconcileMediaMonitoring(ctx, sc, proposed, out); err != nil {
+				return err
+			}
 			fmt.Fprintln(out, "MEDIA: already applied and verified")
 			return nil
 		}
@@ -245,7 +249,49 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if !runtime.AppReady {
 		return fmt.Errorf("arrstack apply verification failed: %s", runtime.Detail)
 	}
+	if err := reconcileMediaMonitoring(ctx, sc, proposed, out); err != nil {
+		return err
+	}
 	fmt.Fprintln(out, "MEDIA: applied and verified (guest, Docker and headless application)")
+	return nil
+}
+
+func reconcileMediaMonitoring(ctx context.Context, sc clientServiceContext, modules clientservices.Modules, out io.Writer) error {
+	if !observability.Enabled(modules) {
+		return nil
+	}
+	store := observability.SecretStore{}
+	secrets, err := store.Load()
+	if err != nil {
+		return fmt.Errorf("load observability secrets for media monitoring: %w", err)
+	}
+	payloadRoot, err := observabilityPayloadRoot()
+	if err != nil {
+		return fmt.Errorf("resolve observability payload for media monitoring: %w", err)
+	}
+	payloadDigest, err := observability.PayloadDigest(payloadRoot)
+	if err != nil {
+		return fmt.Errorf("digest observability payload for media monitoring: %w", err)
+	}
+	controllerAddress, err := observability.ControllerCollectionAddress(sc.Config)
+	if err != nil {
+		return err
+	}
+	collection, err := observability.CollectionConfigForLab(sc.Config, controllerAddress)
+	if err != nil {
+		return err
+	}
+	digest, err := observabilityDigest(modules, secrets, payloadDigest, collection)
+	if err != nil {
+		return fmt.Errorf("derive observability configuration digest for media monitoring: %w", err)
+	}
+	binding, _ := observability.BindingFor("observability")
+	domain := modules.Observability.PublicDomain
+	client := observability.HostClient{Transport: sc.Host.Transport, LocalRunner: observabilityLocalRunner()}
+	if err := client.ReconcileGuestWithTLS(ctx, binding, payloadRoot, modules, secrets, domain, digest, collection); err != nil {
+		return fmt.Errorf("reconcile observability for media monitoring: %w", err)
+	}
+	fmt.Fprintln(out, "MEDIA monitoring: reconciled (collection, Gatus and Grafana)")
 	return nil
 }
 

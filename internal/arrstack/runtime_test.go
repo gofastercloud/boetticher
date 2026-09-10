@@ -99,6 +99,22 @@ func TestApplyChecksAdapterBytesBeforeHealthyRuntimeNoOp(t *testing.T) {
 	}
 }
 
+func TestMediaApplyOwnsAutomaticObservabilityReconciliation(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "cli", "arrstack.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Count(text, "reconcileMediaMonitoring(ctx, sc, proposed, out)") != 2 {
+		t.Fatal("media apply does not reconcile monitoring on both normal and healthy no-op paths")
+	}
+	for _, required := range []string{"ReconcileGuestWithTLS", "MEDIA monitoring: reconciled"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("automatic media monitoring reconciliation missing %q", required)
+		}
+	}
+}
+
 func TestMediaDockerDependsOnFailClosedFirewallPolicy(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {
