@@ -157,6 +157,7 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 	if _, err := c.GuestConfig(ctx, b); err != nil {
 		return fmt.Errorf("verify owned collection runtime before staging: %w", err)
 	}
+	mediaRunning := true
 	for _, target := range config.Targets {
 		if target.Kind == TargetMedia {
 			guest, err := inspectMediaGuestFacts(ctx, c.Transport, config.MediaDiskGiB)
@@ -167,7 +168,7 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 				// Preserve an operator-stopped media guest. Its Gatus outcome
 				// remains observable, but collection must not start it merely to
 				// install an agent.
-				continue
+				mediaRunning = false
 			}
 		}
 	}
@@ -188,6 +189,9 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 		return fmt.Errorf("install collection scrape configuration: %w", err)
 	}
 	for _, target := range config.Targets {
+		if target.Kind == TargetMedia && !mediaRunning {
+			continue
+		}
 		if err := c.runTarget(ctx, b, target, publicDomain, readHash, helper, catalog, local, host); err != nil {
 			return err
 		}
