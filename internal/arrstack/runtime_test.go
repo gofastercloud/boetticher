@@ -25,6 +25,14 @@ func TestValidateGuestConfigRequiresExactOwnedQEMUShape(t *testing.T) {
 	if err := ValidateGuestConfig(config); err != nil {
 		t.Fatalf("valid arrstack VM rejected: %v", err)
 	}
+	config["hostpci0"] = "0000:00:02.0,pcie=1"
+	if err := ValidateGuestConfig(config); err != nil {
+		t.Fatalf("owned Intel GPU passthrough was rejected: %v", err)
+	}
+	config["hostpci0"] = "0000:00:03.0,pcie=1"
+	if err := ValidateGuestConfig(config); err == nil {
+		t.Fatal("foreign PCI device was accepted as the media GPU")
+	}
 	for name, value := range map[string]string{
 		"wrong CPU":    "kvm64",
 		"foreign disk": "other-storage:vm-290-disk-0,ssd=1,size=32G",
