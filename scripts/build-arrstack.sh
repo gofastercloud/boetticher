@@ -64,33 +64,19 @@ jellyseerr = root / "src/wiring/jellyseerr.ts"
 s = jellyseerr.read_text()
 needle = '''  // 1. Bootstrap: create the admin + store the Jellyfin connection.
   const bootstrap = await withRetry(() =>'''
-replacement = '''  // 1. Reuse an existing Jellyfin admin session on reapply. The
-  // bootstrap endpoint returns HTTP 500 (NO_ADMIN_USER) once an admin exists.
+replacement = '''  // 1. Reuse an existing Jellyfin admin session on reapply.
   let existingSession: Response | undefined;
   try {
-    const relogin = await fetch(`${base}/api/v1/auth/jellyfin`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: jellyfinUser, password: jellyfinPass, email: jellyfinUser, serverType: 2 }),
-    });
+    const relogin = await fetch(`${base}/api/v1/auth/jellyfin`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: jellyfinUser, password: jellyfinPass, email: jellyfinUser, serverType: 2 }) });
     if (relogin.ok) existingSession = relogin;
-  } catch { /* fall through to first-use bootstrap */ }
-
-  // First-use bootstrap is permitted only when public settings explicitly
-  // report initialized=false; other failures remain errors.
+  } catch { /* first-use probe follows */ }
   let bootstrap = existingSession;
   if (!bootstrap) {
     const publicSettings = await fetch(`${base}/api/v1/settings/public`);
-    if (!publicSettings.ok) {
-      throw new Error(`Jellyseerr public settings probe failed: HTTP ${publicSettings.status}`);
-    }
+    if (!publicSettings.ok) throw new Error(`Jellyseerr public settings probe failed: HTTP ${publicSettings.status}`);
     let publicState: { initialized?: boolean };
-    try { publicState = await publicSettings.json() as { initialized?: boolean }; } catch {
-      throw new Error("Jellyseerr public settings were not valid JSON");
-    }
-    if (publicState.initialized !== false) {
-      throw new Error(`Jellyseerr existing-admin authentication failed: HTTP ${publicSettings.status}`);
-    }
+    try { publicState = await publicSettings.json() as { initialized?: boolean }; } catch { throw new Error("Jellyseerr public settings were not valid JSON"); }
+    if (publicState.initialized !== false) throw new Error("Jellyseerr existing-admin authentication failed");
     bootstrap = await withRetry(() =>'''
 if needle not in s: raise SystemExit("Jellyseerr bootstrap anchor missing")
 s = s.replace(needle, replacement, 1)
@@ -101,7 +87,14 @@ needle = '''  const relogin = await withRetry(() =>
 replacement = '''  const relogin = existingSession ?? await withRetry(() =>
     fetch(`${base}/api/v1/auth/jellyfin`, {'''
 if needle not in s: raise SystemExit("Jellyseerr relogin anchor missing")
-jellyseerr.write_text(s.replace(needle, replacement, 1))
+s = s.replace(needle, replacement, 1)
+needle = '''  const authedHeaders = { "Content-Type": "application/json", Cookie: cookie };'''
+replacement = needle + '''
+  const networkRes = await withRetry(() => fetch(`${base}/api/v1/settings/network`, { method: "POST", headers: authedHeaders, body: JSON.stringify({ forceIpv4First: true }) }));
+  if (!networkRes.ok) throw new Error(`Jellyseerr network settings failed: HTTP ${networkRes.status}`);'''
+if needle not in s: raise SystemExit("Jellyseerr authenticated headers anchor missing")
+s = s.replace(needle, replacement, 1)
+jellyseerr.write_text(s)
 storage = root / "src/storage/layout.ts"
 s = storage.read_text()
 needle = '''const PRIMARY_DIRS = [
@@ -152,6 +145,22 @@ if needle not in s: raise SystemExit("qBittorrent config anchor missing")
 # listener through its supported preferences API as part of normal wiring too.
 qbit = root / "src/wiring/qbittorrent.ts"
 s = qbit.read_text()
+needle = '  // 3. Create categories\n  for (const cat of CATEGORIES) {'
+replacement = '''  // 3. Create or reconcile categories. Existing categories are updated
+  // in place so reapply cannot retain an old flat download path.
+  const categoriesRes = await fetch(`${base}/api/v2/torrents/categories`, { headers: { Cookie: cookieHeader } });
+  if (!categoriesRes.ok) throw new Error(`qBittorrent categories lookup failed: ${categoriesRes.status}`);
+  const existingCategories = (await categoriesRes.json()) as Record<string, { savePath?: string }>;
+  for (const cat of CATEGORIES) {
+    if (existingCategories[cat.name]?.savePath !== cat.savePath) {
+      const editRes = await fetch(`${base}/api/v2/torrents/editCategory`, {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookieHeader },
+        body: new URLSearchParams({ category: cat.name, savePath: cat.savePath }).toString(),
+      });
+      if (!editRes.ok && editRes.status !== 404) throw new Error(`qBittorrent editCategory "${cat.name}" failed: ${editRes.status}`);
+    }'''
+if needle not in s: raise SystemExit("qBittorrent category anchor missing")
+s = s.replace(needle, replacement, 1)
 needle = '  // 4. Apply TRaSH-recommended preferences\n  const prefs = {'
 replacement = '''  // 4. Apply TRaSH-recommended preferences and keep the listener equal to
   // the firewall-published VPN-forwarded port. UPnP and random selection must
