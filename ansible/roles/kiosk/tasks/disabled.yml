@@ -20,8 +20,5 @@
   loop:
     - /var/lib/boetticher/credentials/companion-agent.cred
     - /var/lib/boetticher/credentials/companion-agent.sha256
-    - /var/lib/boetticher/credentials/pulse-agent-token.cred
-    - /var/lib/boetticher/credentials/pulse-agent-token.sha256
   when:
-    - capability.unit == 'pulse-agent.service'
     - not (capability.enabled | bool)

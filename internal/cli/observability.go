@@ -107,10 +107,6 @@ func runObservabilityCapability(capability, action string, args []string, input 
 		fmt.Fprintf(out, "Module %s\n  Desired  %s\n  State    %s\n", capability, desired, desired)
 		return nil
 	}
-	if action == "status" && capability == "aiops" && !aiopsEnabled(config.Modules) {
-		fmt.Fprintln(out, "Module aiops\n  Desired  unconfigured\n  State    unconfigured")
-		return nil
-	}
 	transport, err := observabilityTransport(config)
 	if err != nil {
 		return err
@@ -143,13 +139,6 @@ func runObservabilityCapability(capability, action string, args []string, input 
 			}
 			serviceStates = append(serviceStates, serviceName+"-endpoint="+endpoint)
 		}
-	}
-	if action == "status" && capability == "aiops" {
-		runnerState, runnerErr := client.HolmesRunnerStatus(ctx, b)
-		if runnerErr != nil {
-			return fmt.Errorf("module aiops Holmes runner unavailable: %w", runnerErr)
-		}
-		serviceStates = append(serviceStates, "holmes-runner="+runnerState)
 	}
 	fmt.Fprintf(out, "Module %s\n  Desired  %t\n  Guest    %d (%s)\n  Services %s\n", capability, observability.Enabled(config.Modules), b.VMID, state, strings.Join(serviceStates, ", "))
 	if action == "plan" {
@@ -375,18 +364,9 @@ func requiredObservabilityServices(capability string, modules clientservices.Mod
 		return []string{"victoriametrics.service", "grafana.service"}
 	case "statuspage":
 		return []string{"gatus.service"}
-	case "aiops":
-		if modules.AIOps == nil || !clientservices.Enabled(modules.AIOps.Enabled) || modules.AIOps.Holmes == nil || !clientservices.Enabled(modules.AIOps.Holmes.Enabled) {
-			return nil
-		}
-		return []string{"bifrost.service"}
 	default:
 		return observability.ServicesForModules(modules)
 	}
-}
-
-func aiopsEnabled(modules clientservices.Modules) bool {
-	return modules.AIOps != nil && clientservices.Enabled(modules.AIOps.Enabled) && modules.AIOps.Holmes != nil && clientservices.Enabled(modules.AIOps.Holmes.Enabled)
 }
 
 func capabilityConfigured(modules clientservices.Modules, capability string) bool {
@@ -417,15 +397,11 @@ func prepareObservabilityApplyConfig(config controllerhost.LabConfig, publicDoma
 		return controllerhost.LabConfig{}, errors.New("observability apply requires --public-domain DOMAIN on first apply")
 	}
 	if holmesModel != "" {
-		if prepared.Modules.AIOps == nil {
+		if prepared.Modules.Observability.Monitoring.Holmes == nil {
 			enabled := true
-			prepared.Modules.AIOps = &clientservices.AIOpsConfig{Enabled: &enabled}
+			prepared.Modules.Observability.Monitoring.Holmes = &clientservices.HolmesConfig{Enabled: &enabled, ModelAlias: "operations"}
 		}
-		if prepared.Modules.AIOps.Holmes == nil {
-			enabled := true
-			prepared.Modules.AIOps.Holmes = &clientservices.HolmesConfig{Enabled: &enabled, ModelAlias: "operations"}
-		}
-		holmes := prepared.Modules.AIOps.Holmes
+		holmes := prepared.Modules.Observability.Monitoring.Holmes
 		enabled := true
 		holmes.Enabled = &enabled
 		if holmes.ModelAlias == "" {

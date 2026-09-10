@@ -96,7 +96,8 @@ modules:
 The peer forward uses TCP and UDP port `35796` on both the external and guest
 side. Before applying, the operator must complete or confirm the matching
 AirVPN forwarded-port setup and supply the assigned port in this intent. The
-supported operator journey is:
+forward is enforced by the live firewall-integrated VPN provider; there is no
+separate Boetticher VPN-router guest. The supported operator journey is:
 
 ```text
 boetticher module media plan
@@ -121,7 +122,8 @@ checks are source and local-runtime safeguards and make no deployment or
 packet-acceptance claim.
 
 The VM firewall admits HTTPS only from TRUSTED (`10.10.30.0/24`) and Tailnet
-SNAT (`10.10.5.10`); the VPN appliance owns peer-forward provenance. Caddy
+SNAT (`10.10.5.10`); the integrated firewall provider owns peer-forward
+provenance. Caddy
 rejects unknown service names, Docker forwarding is fail-closed, and IPv6 is
 disabled. The Cloudflare token must be scoped to DNS Write plus Zone Read for
 the configured application domain. The five configured service aliases plus
@@ -144,7 +146,11 @@ configured VPN with unverified egress remains distinct from a failed or
 unconfigured VPN.
 
 Native observations and regressions are bounded: VPN failure is not `OFF`, and
-healthy DHCP plus failed DNS is not `healthy`. Keep the Blinkt mapping fixed at
+healthy DHCP plus failed DNS is not `healthy`. `NETWORK` is an aggregate of
+Firewall, DNS, and DHCP/NTP control-plane status; it does not execute the
+packet-acceptance suite. A red aggregate therefore indicates desired/provider
+drift or a failed local predicate, not proof of a network or VPN outage. Keep
+the Blinkt mapping fixed at
 eight pixels: `CTL HOST NETWORK VPN TAILNET SPEEDTEST CTRL-UPDATES HOST-UPDATES`.
 The StreamDeck home shows the Host summary, speedtest `NET`, guest pages,
 `NETWORK`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH`; its detail views expose
@@ -175,7 +181,7 @@ public Caddy DNS-01 frontend and native journal upload with system trust. The
 Host-owned `vmbr1.99` path is `10.10.99.5/24` with LAB routes via `10.10.99.1`.
 Stage 5 uses one intentionally integrated `observability` capability. Monitoring,
 logging, and status page are query/status facets of that runtime, not separate
-deployable Modules. AIOps is a separate optional consumer over observability.
+deployable Modules. Holmes is a nested Monitoring operation over this runtime.
 
 The managed firewall keeps inter-zone forwarding disabled for this access. Its
 owned rules allow TCP/22 from TRUSTED and the identity-bound Tailnet router to
@@ -253,7 +259,7 @@ boetticher module observability plan|apply|status|test|teardown|secrets
 boetticher module logging query|status
 boetticher module monitoring status
 boetticher module statuspage status
-boetticher module aiops ask QUESTION
+boetticher module monitoring ask QUESTION
 boetticher module observability alerts pushover apply|status|test|remove
 ```
 
@@ -262,8 +268,8 @@ boetticher module observability alerts pushover apply|status|test|remove
 observability state volumes. It owns VictoriaMetrics, VictoriaLogs, Grafana,
 Gatus, and the optional explicitly configured Bifrost/Holmes route. Monitoring,
 logging, and status page remain read-only facets; they have no independent
-lifecycle or runtime ownership. AIOps is an optional consumer over this runtime,
-and `module aiops ask` is an explicit model operation.
+lifecycle or runtime ownership. Holmes is configured under Monitoring, and
+`module monitoring ask` is the explicit nested monitoring operation.
 Teardown stops the whole owned guest and retains its data for a later apply.
 Apply provisions the public Caddy frontend and native collection paths. Live
 Controller/Host acceptance of that path remains `NOT TESTED` in this phase.
@@ -273,12 +279,12 @@ accepts only POST `/upload` from the three resolved collection sources and
 does not trust forwarded headers. Metrics paths are fixed per target and use
 Basic Auth; arbitrary upstream paths are denied.
 
-When Holmes is enabled under AIOps intent, the same LXC runs the pinned Holmes
+When Holmes is enabled under Monitoring intent, the same LXC runs the pinned Holmes
 0.40 runner on demand. Holmes can use only the local Prometheus-compatible
 VictoriaMetrics endpoint and VictoriaLogs endpoint. Bifrost is the sole model
 route at `127.0.0.1:4000/v1`; its separate `holmes-client-token` is the only
 credential Holmes receives, and upstream provider keys remain Bifrost-only.
-`module aiops ask QUESTION` requires normal operator approval before a model
+`module monitoring ask QUESTION` requires normal operator approval before a model
 request that may incur charges. The runner is unprivileged and bounded, uses
 pinned localhost routes, and does not save transcripts. Kernel-level LXC
 egress containment remains `NOT TESTED`.

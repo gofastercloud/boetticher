@@ -269,7 +269,7 @@ func planFromSite(s model.Site, airvpnProfile *AirVPNProfile) (Plan, error) {
 			NAT:             true,
 			Route:           "direct",
 			Description:     "boetticher AirVPN provider WireGuard handshake only",
-			SourceCIDR:      model.AirVPNGuestAddress + "/32",
+			SourceCIDR:      model.TransitGateway + "/32",
 			DestinationHost: airvpnProfile.EndpointHost,
 		})
 	}
@@ -474,7 +474,7 @@ func policyRoutes(s model.Site) []PolicyRoute {
 			SourceCIDR:       source,
 			Table:            51820,
 			Priority:         10000 + index*2,
-			DefaultGateway:   model.AirVPNGuestAddress,
+			DefaultGateway:   model.TransitGateway,
 			DefaultInterface: "transit0",
 			InternalRoutes:   append([]PolicyRouteEntry(nil), routes...),
 		})
@@ -568,8 +568,8 @@ func policyRules(s model.Site) []PolicyRule {
 			Description: "boetticher " + name,
 		})
 	}
-	// Pulse is a Core service protected by the endpoint's mTLS boundary. Allow
-	// the modeled client zones to reach only the fixed Pulse HTTPS address;
+	// Observability is a Core service protected by the endpoint's mTLS boundary. Allow
+	// the modeled client zones to reach only the fixed observability HTTPS address;
 	// source-zone selectors keep this useful for operators without granting
 	// access to the rest of INFRA.
 	if monitor, ok := componentReference(s, "monitor"); ok && monitor.Module == "monitoring" && monitor.Address != "" {
@@ -580,14 +580,14 @@ func policyRules(s model.Site) []PolicyRule {
 				}
 				rules = append(rules, PolicyRule{
 					Sequence:        len(rules) + 1,
-					Name:            source + " HTTPS to Pulse",
+					Name:            source + " HTTPS to observability",
 					From:            source,
 					To:              "INFRA",
 					Action:          "allow",
 					Protocol:        "tcp",
 					Ports:           []string{"443"},
-					Counter:         "boetticher_" + strings.ToLower(source) + "_https_to_pulse",
-					Description:     "boetticher " + source + " HTTPS to Pulse",
+					Counter:         "boetticher_" + strings.ToLower(source) + "_https_to_observability",
+					Description:     "boetticher " + source + " HTTPS to observability",
 					SourceCIDR:      zone.Network,
 					DestinationCIDR: monitor.Address + "/32",
 				})
@@ -656,7 +656,6 @@ func policyRules(s model.Site) []PolicyRule {
 	// module's SSH port, and only while the module is declared.
 	for _, target := range []struct{ name, host, counter string }{
 		{"tailnet-router", "lab-tailnet-01", "tailnet_router"},
-		{"airvpn", "lab-airvpn-01", "airvpn"},
 	} {
 		appliance, ok := componentReference(s, target.host)
 		if !ok {
@@ -727,7 +726,7 @@ func userRuleDestinationSelector(s model.Site, rule model.UserFirewallRule) (str
 	if zone, cidr, ok := userSelector(s, rule.Destination); ok {
 		return zone, cidr, true
 	}
-	if model.IsReservedServersPulseRule(s, rule.Source, rule.Destination, strings.ToLower(rule.Protocol), rule.Ports) {
+	if model.IsReservedServersObservabilityRule(s, rule.Source, rule.Destination, strings.ToLower(rule.Protocol), rule.Ports) {
 		return "INFRA", rule.Destination, true
 	}
 	return "", "", false
@@ -1073,7 +1072,7 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	transitNATSources := make(map[string]struct{})
 	for _, rule := range plan.Rules {
 		if rule.Action == "allow" && rule.From == "TRANSIT" && rule.To == "WAN" && rule.SourceCIDR != "" {
-			if plan.AirVPN != nil && rule.SourceCIDR == model.AirVPNGuestAddress+"/32" {
+			if plan.AirVPN != nil && rule.SourceCIDR == model.TransitGateway+"/32" {
 				continue
 			}
 			transitNATSources[rule.SourceCIDR] = struct{}{}
@@ -1108,7 +1107,7 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	}
 	b.WriteString("  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n")
 	if airvpnEndpointSet != "" {
-		fmt.Fprintf(&b, "    oifname \"wan0\" ip saddr %s ip daddr @%s udp dport %d masquerade comment \"boetticher:nat-airvpn-handshake\"\n", model.AirVPNGuestAddress+"/32", airvpnEndpointSet, plan.AirVPN.EndpointPort)
+		fmt.Fprintf(&b, "    oifname \"wan0\" ip saddr %s ip daddr @%s udp dport %d masquerade comment \"boetticher:nat-airvpn-handshake\"\n", model.TransitGateway+"/32", airvpnEndpointSet, plan.AirVPN.EndpointPort)
 	}
 	for _, source := range transitNATSourceList {
 		fmt.Fprintf(&b, "    oifname \"wan0\" ip saddr %s masquerade comment \"boetticher:nat-transit\"\n", source)

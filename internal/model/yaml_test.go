@@ -1,7 +1,6 @@
 package model
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -159,8 +158,8 @@ func TestDNSHasNoProviderSelection(t *testing.T) {
 	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    enabled: false\n")); err == nil || !strings.Contains(err.Error(), "mandatory module") {
 		t.Fatalf("DNS disable was accepted: %v", err)
 	}
-	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  logging:\n    enabled: false\n")); err != nil {
-		t.Fatalf("optional logging disable was rejected: %v", err)
+	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  logging:\n    enabled: false\n")); err == nil || !strings.Contains(err.Error(), "modules.logging") {
+		t.Fatalf("retired logging module was accepted: %v", err)
 	}
 }
 
@@ -168,45 +167,6 @@ func TestParseSiteConfigRejectsUnknownModuleName(t *testing.T) {
 	_, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitroing:\n    enabled: true\n"))
 	if err == nil || !strings.Contains(err.Error(), "modules.monitroing") {
 		t.Fatalf("unknown module name was accepted: %v", err)
-	}
-}
-
-func TestParseSiteConfigAllowsGatusModule(t *testing.T) {
-	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  gatus:\n    enabled: true\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.Modules.Gatus == nil || config.Modules.Gatus.Enabled == nil || !*config.Modules.Gatus.Enabled {
-		t.Fatalf("Gatus module configuration was not decoded: %#v", config.Modules.Gatus)
-	}
-}
-
-func TestParseSiteConfigAllowsTypedAirVPNSelectorAndNetworkMode(t *testing.T) {
-	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
-modules:
-  airvpn:
-    enabled: true
-    servers: europe
-  bifrost:
-    enabled: true
-    network: airvpn
-    upstreams:
-      - name: provider
-        base_url: https://provider.example/v1
-        api_key_secret: provider_api_key
-    models:
-      - alias: selected
-        upstream: provider
-        model: provider/model
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.Modules.AirVPN == nil || config.Modules.AirVPN.Servers != "europe" || config.Modules.AirVPN.Enabled == nil || !*config.Modules.AirVPN.Enabled {
-		t.Fatalf("unexpected AirVPN configuration: %#v", config.Modules.AirVPN)
-	}
-	if config.Modules.Bifrost == nil || config.Modules.Bifrost.Network != ModuleNetworkAirVPN {
-		t.Fatalf("unexpected typed client network mode: %#v", config.Modules.Bifrost)
 	}
 }
 
@@ -368,29 +328,5 @@ secret_metadata:
 	}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("default-off Bifrost should not require unused runtime config: %v", err)
-	}
-}
-
-func TestAIOpsConfigurationIsStrictAndProviderNeutral(t *testing.T) {
-	data := []byte(`api_version: boetticher/v3
-platform_version: 0.3.33
-schema_version: 3
-modules:
-  aiops:
-    enabled: true
-    model_alias: operations-investigator
-`)
-	config, err := ParseSiteConfig(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config.Modules.AIOps == nil || config.Modules.AIOps.ModelAlias != "operations-investigator" {
-		t.Fatalf("unexpected aiops config: %#v", config.Modules.AIOps)
-	}
-	for _, field := range []string{"provider", "model", "api_key", "ssh_probes", "tools"} {
-		invalid := bytes.Replace(data, []byte("    model_alias: operations-investigator\n"), []byte("    model_alias: operations-investigator\n    "+field+": forbidden\n"), 1)
-		if _, err := ParseSiteConfig(invalid); err == nil {
-			t.Fatalf("aiops field %s was accepted", field)
-		}
 	}
 }

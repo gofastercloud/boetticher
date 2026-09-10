@@ -21,7 +21,7 @@ import (
 
 type ConsoleTile struct{ Label, Value, State, Action, Target string }
 
-var consoleLabels = []string{"PI", "LAB LINK", "GATEWAY", "DNS", "PROXMOX", "PULSE", "AGENT", "DISPLAYS"}
+var consoleLabels = []string{"PI", "LAB LINK", "GATEWAY", "DNS", "PROXMOX", "DISPLAYS"}
 
 func ConsoleTiles(s companion.Snapshot) []ConsoleTile {
 	tiles := make([]ConsoleTile, 15)
@@ -33,7 +33,11 @@ func ConsoleTiles(s companion.Snapshot) []ConsoleTile {
 		if i >= 8 {
 			break
 		}
-		tiles[i] = ConsoleTile{consoleLabels[i], item.Value, item.Status, "select", item.ID}
+		label := "MODULE"
+		if i < len(consoleLabels) {
+			label = consoleLabels[i]
+		}
+		tiles[i] = ConsoleTile{label, item.Value, item.Status, "select", item.ID}
 		if item.ID == "airvpn" {
 			tiles[i].Label = "AIRVPN"
 		}

@@ -111,42 +111,6 @@ case "$name" in
     grep -Fxq 'ExecStart=/usr/local/bin/blocky --config /etc/blocky/config.yml' "$rootfs/etc/systemd/system/blocky.service"
     test -d "$rootfs/var/lib/blocky"
     ;;
-  boetticher-logging)
-    test -x "$rootfs/usr/lib/systemd/systemd-journal-remote"
-    test -x "$rootfs/usr/bin/journalctl"
-    test -x "$rootfs/usr/local/libexec/boetticher-log-query"
-    grep -Fxq 'ExecStart=/usr/local/libexec/boetticher-log-query' "$rootfs/etc/systemd/system/boetticher-log-query.service"
-    ;;
-  boetticher-monitoring)
-    test -x "$rootfs/usr/sbin/nginx"
-    test -x "$rootfs/opt/pulse/bin/pulse"
-    test -f "$rootfs/opt/pulse/VERSION"
-    grep -Fxq '6.4.1' "$rootfs/opt/pulse/VERSION"
-    test -x "$rootfs/usr/lib/boetticher/run-pulse"
-    test -f "$rootfs/etc/systemd/system/pulse.service"
-    grep -Fxq 'User=pulse' "$rootfs/etc/systemd/system/pulse.service"
-    grep -Fxq 'Group=pulse' "$rootfs/etc/systemd/system/pulse.service"
-    grep -Fxq 'ExecStart=/usr/lib/boetticher/run-pulse' "$rootfs/etc/systemd/system/pulse.service"
-    grep -Fxq 'Environment=BIND_ADDRESS=127.0.0.1' "$rootfs/etc/systemd/system/pulse.service"
-    test -d "$rootfs/var/lib/pulse"
-    chroot "$rootfs" runuser -u pulse -- test -x /usr/lib/boetticher/run-pulse
-    chroot "$rootfs" runuser -u pulse -- test -x /opt/pulse/bin/pulse
-    chroot "$rootfs" runuser -u pulse -- test -r /opt/pulse/VERSION
-    test ! -e "$rootfs/etc/systemd/system/pulse-update.service"
-    test ! -e "$rootfs/etc/systemd/system/pulse-update.timer"
-    if find "$rootfs" -type f \( -name 'pulse-agent' -o -name 'pulse-agent-*' \) -print -quit | grep -q .; then
-      echo "monitoring artifact contains a Pulse agent" >&2
-      exit 1
-    fi
-    if chroot "$rootfs" dpkg-query -W -f='${binary:Package}\n' 2>/dev/null | grep -Eq '^(postgresql|zabbix|zabbix-agent)'; then
-      echo "monitoring artifact contains an obsolete database or monitoring agent" >&2
-      exit 1
-    fi
-    if grep -R -n -E 'pulse_admin_password|pulse_proxmox_token|pulse_api_token|synthetic-secret' "$rootfs/opt/pulse" "$rootfs/usr/lib/boetticher" 2>/dev/null; then
-      echo "monitoring artifact contains a monitoring credential" >&2
-      exit 1
-    fi
-    ;;
   boetticher-tailnet-router)
     test -x "$rootfs/usr/bin/tailscale"
     test -x "$rootfs/usr/sbin/tailscaled"
@@ -155,22 +119,6 @@ case "$name" in
     test ! -e "$rootfs/etc/tailscale/auth.key"
     if grep -R -n -E 'advertise-exit-node|auth-key|auth_key' "$rootfs/etc" "$rootfs/usr/lib" 2>/dev/null; then
       echo "tailnet-router artifact contains forbidden exit-node or auth-key configuration" >&2
-      exit 1
-    fi
-    ;;
-  boetticher-airvpn)
-    test -x "$rootfs/usr/bin/wg"
-    test -x "$rootfs/usr/bin/wireguard-go"
-    test -x "$rootfs/usr/sbin/nft"
-    test -f "$rootfs/etc/systemd/system/boetticher-airvpn.service"
-    for helper in airvpn-prepare airvpn-routes-up airvpn-routes-down airvpn-forwarding-up airvpn-forwarding-down; do
-      test -x "$rootfs/usr/lib/boetticher/$helper"
-    done
-    grep -Fq 'WG_QUICK_USERSPACE_IMPLEMENTATION=/usr/bin/wireguard-go' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
-    grep -Fq 'ExecStart=/usr/bin/wg-quick up /run/boetticher/airvpn0.conf' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
-    grep -Fq 'ExecStop=/usr/bin/wg-quick down /run/boetticher/airvpn0.conf' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
-    if grep -R -n -E 'PrivateKey|PresharedKey|airvpn_wireguard_config|Api-Key' "$rootfs/etc" "$rootfs/usr/lib" 2>/dev/null; then
-      echo "airvpn artifact contains provider profile or credential configuration" >&2
       exit 1
     fi
     ;;
@@ -192,68 +140,6 @@ case "$name" in
       echo "bifrost artifact contains generated TLS material" >&2
       exit 1
     fi
-    ;;
-  boetticher-arr)
-    test -x "$rootfs/usr/sbin/nginx"
-    for app in sonarr radarr lidarr prowlarr; do
-      test -f "$rootfs/etc/systemd/system/$app.service"
-      grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/$app.service"
-      if grep -Fq 'MemoryDenyWriteExecute' "$rootfs/etc/systemd/system/$app.service"; then
-        echo "arr artifact blocks the .NET JIT with MemoryDenyWriteExecute" >&2
-        exit 1
-      fi
-    done
-    test -x "$rootfs/opt/sonarr/Sonarr"
-    test -x "$rootfs/opt/radarr/Radarr"
-    test -x "$rootfs/opt/lidarr/Lidarr"
-    test -x "$rootfs/opt/prowlarr/Prowlarr"
-    test -x "$rootfs/usr/bin/qbittorrent-nox"
-    test -x "$rootfs/usr/local/libexec/boetticher-arr-configure"
-    test ! -e "$rootfs/opt/readarr"
-    test ! -e "$rootfs/etc/systemd/system/readarr.service"
-    chroot "$rootfs" getent passwd sonarr | grep -Fq ':2200:2200:'
-    chroot "$rootfs" getent passwd radarr | grep -Fq ':2201:2200:'
-    chroot "$rootfs" getent passwd lidarr | grep -Fq ':2202:2200:'
-    chroot "$rootfs" getent passwd prowlarr | grep -Fq ':2204:2200:'
-    chroot "$rootfs" getent passwd qbittorrent | grep -Fq ':2205:2200:'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' qbittorrent-nox | grep -Fxq '5.1.0-2'
-    grep -Fq 'User=qbittorrent' "$rootfs/etc/systemd/system/qbittorrent.service"
-    test ! -e "$rootfs/etc/nginx/sites-enabled/default"
-    if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
-      echo "arr artifact contains generated TLS material" >&2
-      exit 1
-    fi
-    ;;
-  boetticher-aiops)
-    test -x "$rootfs/usr/local/libexec/boetticher-aiops"
-    test -f "$rootfs/etc/systemd/system/boetticher-aiops.service"
-    test -f "$rootfs/etc/systemd/system/boetticher-aiops.socket"
-    test -f "$rootfs/etc/systemd/system/holmes.service"
-    test -f "$rootfs/etc/boetticher-aiops/config.yaml"
-    grep -Fq 'HOLMES_HOST=127.0.0.1' "$rootfs/etc/systemd/system/holmes.service"
-    grep -Fq 'IPAddressDeny=any' "$rootfs/etc/systemd/system/boetticher-aiops.service"
-    grep -Fq 'IPAddressAllow=localhost' "$rootfs/etc/systemd/system/boetticher-aiops.service"
-    grep -Fq 'NoNewPrivileges=true' "$rootfs/etc/systemd/system/boetticher-aiops.service"
-    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/boetticher-aiops.service"
-    grep -Fxq 'User=boetticher-aiops' "$rootfs/etc/systemd/system/boetticher-aiops.service"
-    grep -Fxq 'ExecStart=/usr/local/libexec/boetticher-aiops' "$rootfs/etc/systemd/system/boetticher-aiops.service"
-    grep -Fxq 'User=holmes' "$rootfs/etc/systemd/system/holmes.service"
-    grep -Fxq 'ExecStart=/opt/holmes/bin/python -u /opt/holmes/server.py' "$rootfs/etc/systemd/system/holmes.service"
-    chroot "$rootfs" runuser -u boetticher-aiops -- test -x /usr/local/libexec/boetticher-aiops
-    chroot "$rootfs" runuser -u holmes -- test -r /opt/holmes/server.py
-    test ! -e "$rootfs/etc/boetticher-aiops/runtime.env"
-    ;;
-  boetticher-gatus)
-    printf '%s\n' 'boetticher smoke check: Gatus executable'
-    test -x "$rootfs/usr/local/bin/gatus"
-    test -f "$rootfs/etc/systemd/system/gatus.service"
-    grep -Fq -- 'User=gatus' "$rootfs/etc/systemd/system/gatus.service"
-    grep -Fxq 'Group=gatus' "$rootfs/etc/systemd/system/gatus.service"
-    grep -Fxq 'Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml' "$rootfs/etc/systemd/system/gatus.service"
-    grep -Fxq 'ExecStart=/usr/local/bin/gatus' "$rootfs/etc/systemd/system/gatus.service"
-    chroot "$rootfs" runuser -u gatus -- test -x /usr/local/bin/gatus
-    test ! -e "$rootfs/etc/boetticher/gatus/config.yaml"
     ;;
   boetticher-network-probe)
     for path in /usr/sbin/arping /usr/bin/dig /usr/bin/iperf3 /usr/bin/nc /usr/bin/nmap /usr/bin/tcpdump /usr/bin/curl /usr/bin/openssl /usr/bin/jq; do

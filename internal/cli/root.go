@@ -53,8 +53,6 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runSSHConfig(args[1:], out)
 	case "access":
 		return runAccess(args[1:], out)
-	case "firewall":
-		return runFirewall(args[1:], out)
 	case "module":
 		return runModuleWithInput(args[1:], input, out, errOut)
 	case "config":
@@ -63,10 +61,6 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runHardware(args[1:], out)
 	case "recover":
 		return runRecovery(args[1:], out)
-	case "logs":
-		return runLogs(args[1:], out)
-	case "aiops":
-		return runAIOps(args[1:], out)
 	}
 	fmt.Fprintln(errOut, "usage: boetticher <command>")
 	return fmt.Errorf("unknown or incomplete command %q", strings.Join(args, " "))
@@ -81,10 +75,12 @@ func retiredCommandError(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "firewall":
+		return errors.New("boetticher firewall is retired; use boetticher module firewall")
 	case "logs":
 		return errors.New("boetticher logs is retired; use boetticher module logging query")
 	case "aiops":
-		return errors.New("boetticher aiops is retired; use boetticher module aiops ask")
+		return errors.New("boetticher aiops is retired; use boetticher module monitoring ask")
 	case "dhcp":
 		return errors.New("boetticher dhcp is retired; use boetticher module dhcp")
 	case "dns":

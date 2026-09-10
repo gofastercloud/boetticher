@@ -17,25 +17,25 @@ type checkDefinition struct {
 }
 
 const (
-	checkDesiredPlatformModel       = "desired_platform_model"
-	checkCanonicalPlatformModel     = "canonical_platform_model_validates"
-	checkFirewallPolicyProjection   = "firewall_policy_projection"
-	checkDNSDDNSProjection          = "dns_ddns_projection"
-	checkPulseMonitoringProjection  = "pulse_monitoring_projection"
-	checkPlatformBackupProjection   = "platform_backup_projection"
-	checkStorageProjection          = "storage_projection"
-	checkQualifiedApplianceEvidence = "qualified_appliance_evidence"
-	checkDeploymentOperationState   = "deployment_operation_state"
-	checkSSHBastionAllowList        = "ssh_bastion_allow_list"
-	checkGeneratedSSHConfiguration  = "generated_ssh_configuration"
-	checkAuthenticatedSSHJourney    = "authenticated_ssh_journey"
-	checkManagedGatewayDHCPDDNS     = "managed_gateway_dhcp_ddns"
-	checkManagedGatewayUpstreamDHCP = "managed_gateway_upstream_dhcp"
-	checkPublishedServiceMapping    = "published_service_mapping"
-	checkManagedGatewayServices     = "managed_gateway_services"
-	checkSmallstepCAService         = "smallstep_ca_service"
-	checkPulseLeafCertificate       = "pulse_leaf_certificate"
-	checkExternalGatewayContract    = "external_gateway_contract"
+	checkDesiredPlatformModel         = "desired_platform_model"
+	checkCanonicalPlatformModel       = "canonical_platform_model_validates"
+	checkFirewallPolicyProjection     = "firewall_policy_projection"
+	checkDNSDDNSProjection            = "dns_ddns_projection"
+	checkObservabilityProjection      = "observability_projection"
+	checkPlatformBackupProjection     = "platform_backup_projection"
+	checkStorageProjection            = "storage_projection"
+	checkQualifiedApplianceEvidence   = "qualified_appliance_evidence"
+	checkDeploymentOperationState     = "deployment_operation_state"
+	checkSSHBastionAllowList          = "ssh_bastion_allow_list"
+	checkGeneratedSSHConfiguration    = "generated_ssh_configuration"
+	checkAuthenticatedSSHJourney      = "authenticated_ssh_journey"
+	checkManagedGatewayDHCPDDNS       = "managed_gateway_dhcp_ddns"
+	checkManagedGatewayUpstreamDHCP   = "managed_gateway_upstream_dhcp"
+	checkPublishedServiceMapping      = "published_service_mapping"
+	checkManagedGatewayServices       = "managed_gateway_services"
+	checkSmallstepCAService           = "smallstep_ca_service"
+	checkObservabilityLeafCertificate = "observability_leaf_certificate"
+	checkExternalGatewayContract      = "external_gateway_contract"
 )
 
 var checkDefinitions = []checkDefinition{
@@ -43,7 +43,7 @@ var checkDefinitions = []checkDefinition{
 	{ID: checkCanonicalPlatformModel, Label: "canonical platform model validates", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
 	{ID: checkFirewallPolicyProjection, Label: "firewall policy projection", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
 	{ID: checkDNSDDNSProjection, Label: "DNS/DDNS projection", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
-	{ID: checkPulseMonitoringProjection, Label: "Pulse monitoring projection", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
+	{ID: checkObservabilityProjection, Label: "observability projection", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
 	{ID: checkPlatformBackupProjection, Label: "platform backup projection", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
 	{ID: checkStorageProjection, Label: "storage projection", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
 	{ID: checkQualifiedApplianceEvidence, Label: "qualified appliance evidence", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
@@ -56,7 +56,7 @@ var checkDefinitions = []checkDefinition{
 	{ID: checkPublishedServiceMapping, Label: "published service mapping", EvidenceTier: statusmodel.TierDeployed, HealthVisible: true},
 	{ID: checkManagedGatewayServices, Label: "managed gateway services", EvidenceTier: statusmodel.TierDeployed, HealthVisible: true},
 	{ID: checkSmallstepCAService, Label: "Smallstep CA service", EvidenceTier: statusmodel.TierDeployed, HealthVisible: true},
-	{ID: checkPulseLeafCertificate, Label: "Pulse leaf certificate", EvidenceTier: statusmodel.TierDeployed, HealthVisible: true},
+	{ID: checkObservabilityLeafCertificate, Label: "observability leaf certificate", EvidenceTier: statusmodel.TierDeployed, HealthVisible: true},
 	{ID: checkExternalGatewayContract, Label: "external gateway contract", EvidenceTier: statusmodel.TierLocal, HealthVisible: true},
 }
 

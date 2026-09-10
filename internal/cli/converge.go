@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,7 +24,6 @@ import (
 	"syscall"
 	"time"
 
-	aiopsmodel "github.com/gofastercloud/boetticher/internal/aiops"
 	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/appliance"
 	"github.com/gofastercloud/boetticher/internal/artifacts"
@@ -35,9 +33,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
-	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
-	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
@@ -334,34 +330,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			})
 		}
 	}
-	var airvpnProfile *preparedAirVPNProfile
-	if err := report.timed("validate", "provider", "airvpn-profile", func() error {
-		var profileErr error
-		// Deployment only consumes the retained encrypted profile. Provider
-		// generation is an explicit operator operation, so PLAN never creates
-		// credentials or depends on WAN access.
-		airvpnProfile, profileErr = prepareAirVPNProfile(ctx, *siteDir, s, *ageIdentity, true, false)
-		return profileErr
-	}); err != nil {
-		return err
-	}
 	var firewallPlan firewall.Plan
 	if err := report.timed("validate", "local", "firewall-plan", func() error {
-		if airvpnProfile == nil {
-			firewallPlan, err = firewall.PlanFromSite(s)
-		} else {
-			firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)
-		}
+		firewallPlan, err = firewall.PlanFromSite(s)
 		return err
 	}); err != nil {
 		return err
-	}
-	if airvpnProfile != nil && airvpnProfile.Created {
-		report.recordMutation("Secrets", "airvpn_wireguard_config", "encrypted provider profile stored", true)
-	}
-	var airvpnMetadata *firewall.AirVPNProfile
-	if airvpnProfile != nil {
-		airvpnMetadata = &airvpnProfile.Metadata
 	}
 	report.complete()
 	if *dryRun {
@@ -454,16 +428,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	var node string
 	var guestStates map[int]deploymentGuestArtifactState
 	var rootRunner proxmox.SSHRunner
-	if airvpnMetadata != nil {
-		if err := report.timed("artifacts", "provider", "airvpn-endpoint", func() error {
-			var bindErr error
-			firewallPlan, bindErr = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
-			return bindErr
-		}); err != nil {
-			return err
-		}
-		airvpnMetadata = firewallPlan.AirVPN
-	}
 	if backupPlan, err = backup.PlanFromSite(s); err != nil {
 		return err
 	}
@@ -598,11 +562,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	var variables []byte
 	if err := report.timed("credentials-pki", "local", "ansible-variables", func() error {
-		if airvpnMetadata == nil {
-			variables, err = ansible.VariablesWithOperatorKey(s, durableOperatorPublicKey)
-		} else {
-			variables, err = ansible.VariablesWithOperatorKeyAndAirVPN(s, durableOperatorPublicKey, *airvpnMetadata)
-		}
+		variables, err = ansible.VariablesWithOperatorKey(s, durableOperatorPublicKey)
 		return err
 	}); err != nil {
 		return err
@@ -616,11 +576,8 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	runtimeVariables["boetticher_appliance_artifact"] = true
-	// Agent installation is enabled only in the post-Pulse bootstrap pass,
-	// after the scoped report token and encrypted credential projection exist.
-	runtimeVariables["pulse_agent_install_enabled"] = false
-	monitoringEnabled := modules.IsEnabled(s, "monitoring")
-	aiopsEnabled := modules.IsEnabled(s, "aiops")
+	// The legacy host-agent projection was removed; current observability
+	// collection is reconciled by its own capability path.
 	secretValues := map[string]string{}
 	platformSecrets, err := site.LoadPlatformSecretCache(*siteDir, s, *ageIdentity)
 	if err != nil {
@@ -663,30 +620,8 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("load validated root revocation list for nginx chain validation: %w", err)
 	}
 	runtimeVariables["client_crl_bundle_pem"] = clientCRL + rootCRL
-	var pulseAdminPassword string
-	if monitoringEnabled {
-		var loadErr error
-		pulseAdminPassword, loadErr = platformSecrets.Get("pulse_admin_password")
-		if loadErr != nil {
-			return fmt.Errorf("load encrypted Pulse administrative password: %w", loadErr)
-		}
-		secretValues["pulse_admin_password"] = pulseAdminPassword
-		pulseProxyAuthSecret, created, loadErr := loadOrCreateRandomSecret(*siteDir, *ageIdentity, s, "pulse_proxy_auth_secret")
-		if loadErr != nil {
-			return loadErr
-		}
-		if created {
-			report.recordMutation("Secrets", "pulse_proxy_auth_secret", "credential stored", true)
-		}
-		secretValues["pulse_proxy_auth_secret"] = pulseProxyAuthSecret
-	}
 	activeCredentialBindings := make([]deploymentCredential, 0, len(credentialBindings))
 	for _, binding := range credentialBindings {
-		if binding.Guest == "lab-aiops-01" {
-			// Pulse-scoped tokens and the webhook secret are reconciled only
-			// after Pulse and AI Router pass their live qualification gates.
-			continue
-		}
 		if _, alreadyLoaded := secretValues[binding.SecretKey]; alreadyLoaded {
 			activeCredentialBindings = append(activeCredentialBindings, binding)
 			continue
@@ -712,7 +647,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	// Nginx uses the issuing CA as its direct client trust anchor so the
 	// issuing-CA CRL can be checked without requiring a separate root CRL.
-	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	runtimeVariables["step_ca_root_cert_pem"] = authority.RootCertPEM
 	runtimeVariables["step_ca_intermediate_cert_pem"] = authority.IssuingCertPEM
 	runtimeVariables["boetticher_skip_step_ca"] = true
@@ -724,7 +658,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	runtimeVariables["pki_bootstrap_phase"] = true
 	if err := report.timed("credentials-pki", "local", "projections", func() error {
-		return writeModelProjectionsWithResolverAndAirVPN(*siteDir, s, endpointLookup, airvpnMetadata)
+		return writeModelProjectionsWithResolver(*siteDir, s, endpointLookup)
 	}); err != nil {
 		return err
 	}
@@ -781,22 +715,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("commit module purge completion: %w", err)
 		}
 		report.recordMutation("Generated state", "module purge intent", "cleared after verified purge", true)
-	}
-	var pulseProxmoxToken string
-	if monitoringEnabled {
-		pulseProxmoxToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token")
-		if errors.Is(err, site.ErrPlatformSecretMissing) {
-			pulseProxmoxToken, err = proxmox.ReplacePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")
-			if err != nil {
-				return err
-			}
-			if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token", pulseProxmoxToken); err != nil {
-				return fmt.Errorf("store encrypted Pulse Proxmox token: %w", err)
-			}
-			report.recordMutation("Secrets", "pulse_proxmox_token", "credential stored", true)
-		} else if err != nil {
-			return fmt.Errorf("load encrypted Pulse Proxmox token: %w", err)
-		}
 	}
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		changed, err := proxmoxClient.EnsureLVMThinStorageWithMutation(ctx, storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool)
@@ -1081,23 +999,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			var finalFirewallPlan firewall.Plan
 			var planErr error
-			if airvpnMetadata == nil {
-				finalFirewallPlan, planErr = firewall.PlanFromSiteWithUpstream(s, upstream)
-			} else {
-				finalFirewallPlan, planErr = firewall.PlanFromSiteWithUpstreamAndAirVPN(s, upstream, *airvpnMetadata)
-			}
+			finalFirewallPlan, planErr = firewall.PlanFromSiteWithUpstream(s, upstream)
 			if planErr != nil {
 				return fmt.Errorf("HOLD: resolve published service policy from upstream lease: %w", planErr)
-			}
-			if airvpnMetadata != nil {
-				if err := report.timed("network", "provider", "airvpn-endpoint", func() error {
-					var bindErr error
-					finalFirewallPlan, bindErr = firewall.BindAirVPNEndpoint(finalFirewallPlan, endpointLookup)
-					return bindErr
-				}); err != nil {
-					return fmt.Errorf("HOLD: resolve AirVPN provider endpoint: %w", err)
-				}
-				airvpnMetadata = finalFirewallPlan.AirVPN
 			}
 			finalRuleset, renderErr := renderDeploymentNFTWithResolver(finalFirewallPlan, endpointLookup)
 			if renderErr != nil {
@@ -1105,11 +1009,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			var finalVariables []byte
 			var variablesErr error
-			if airvpnMetadata == nil {
-				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, durableOperatorPublicKey)
-			} else {
-				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstreamAndAirVPN(s, upstream, durableOperatorPublicKey, *airvpnMetadata)
-			}
+			finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, durableOperatorPublicKey)
 			if variablesErr != nil {
 				return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
 			}
@@ -1203,220 +1103,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("record deployment verify phase: %w", err)
 	}
 	report.start("health", "Run live health gates")
-	var pulseForward *proxmox.SSHLocalForward
-	var aiRouterForward *proxmox.SSHLocalForward
-	defer func() {
-		if pulseForward != nil {
-			_ = pulseForward.Close()
-		}
-		if aiRouterForward != nil {
-			_ = aiRouterForward.Close()
-		}
-	}()
-	if monitoringEnabled {
-		bastionRunner := proxmoxBastionSSHRunner(s, *siteDir)
-		pulseRunner := bastionRunner
-		pulseForward, err = pulseRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
-		if err != nil {
-			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
-		}
-		pulseBaseURL := "https://" + pulseForward.Address()
-		pulseOperatorCertificate, issueErr := pki.IssueClient(authority, "operator", s.Network.Domain, time.Now().UTC())
-		if issueErr != nil {
-			return fmt.Errorf("issue Pulse operator client certificate: %w", issueErr)
-		}
-		pulseAdmin, clientErr := pulse.NewAdminClient(pulse.ClientConfig{
-			BaseURL: pulseBaseURL, AdminUser: "admin", AdminPassword: pulseAdminPassword,
-			CAPEM:         authority.RootCertPEM,
-			ClientCertPEM: pulseOperatorCertificate.ChainPEM, ClientKeyPEM: pulseOperatorCertificate.KeyPEM,
-			ServerName: "monitor." + s.Network.Domain,
-		})
-		if clientErr != nil {
-			return clientErr
-		}
-		if s.Companion.Capabilities().Enabled {
-			if _, _, err := loadOrCreatePulseToken(*siteDir, *ageIdentity, s, "companion_read_token", func() (string, error) { return pulseAdmin.CreateReadToken(ctx, "boetticher companion read") }); err != nil {
-				return fmt.Errorf("prepare Companion read credential: %w", err)
-			}
-			if s.Companion.Capabilities().PulseAgent {
-				if _, _, err := loadOrCreatePulseToken(*siteDir, *ageIdentity, s, "companion_agent_token", func() (string, error) { return pulseAdmin.CreateAgentReportToken(ctx, "boetticher companion report") }); err != nil {
-					return fmt.Errorf("prepare Companion report credential: %w", err)
-				}
-			}
-		}
-		if aiopsEnabled && (*onlyModule == "" || *onlyModule == "aiops") {
-			clientCertificate, issueErr := pki.IssueClient(authority, "aiops-router-client", s.Network.Domain, time.Now().UTC())
-			if issueErr != nil {
-				return fmt.Errorf("issue runtime AIOps canary certificate: %w", issueErr)
-			}
-			aiRouterForward, err = bastionRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.20.60", 443)
-			if err != nil {
-				return fmt.Errorf("open AI Router canary tunnel through Proxmox bastion: %w", err)
-			}
-			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, pulseBaseURL, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath, report, temporaryPrivateKey); err != nil {
-				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
-			}
-		}
-		if err := pulseAdmin.ConfigureProxmox(ctx, pulse.PVEConfig{
-			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox:8006",
-			PreviousHost: "https://proxmox." + s.Network.Domain + ":8006",
-			TokenID:      proxmox.PulseMonitoringUser + "!" + proxmox.PulseMonitoringToken, TokenSecret: pulseProxmoxToken,
-			VerifySSL: true, MonitorVMs: true, MonitorContainers: true, MonitorStorage: true, MonitorBackups: true,
-			MonitorPhysicalDisks: false, MonitorTemperatures: false,
-		}); err != nil {
-			return err
-		}
-		readToken, tokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token")
-		if errors.Is(tokenErr, site.ErrPlatformSecretMissing) {
-			readToken, tokenErr = pulseAdmin.CreateReadToken(ctx, "boetticher monitoring read")
-			if tokenErr != nil {
-				return tokenErr
-			}
-			if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token", readToken); err != nil {
-				return fmt.Errorf("store encrypted Pulse read token: %w", err)
-			}
-			report.recordMutation("Secrets", "pulse_api_token", "credential stored", true)
-		} else if tokenErr != nil {
-			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
-		}
-		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
-			BaseURL: pulseBaseURL, APIToken: readToken,
-			CAPEM:      authority.RootCertPEM,
-			ServerName: "monitor." + s.Network.Domain,
-		})
-		if clientErr != nil {
-			return clientErr
-		}
-		readTokenRefreshed := false
-		refreshPulseReadToken := func() error {
-			if readTokenRefreshed {
-				return errors.New("Pulse read token was already refreshed during this deployment")
-			}
-			readToken, tokenErr = pulseAdmin.CreateReadToken(ctx, "boetticher monitoring read")
-			if tokenErr != nil {
-				return tokenErr
-			}
-			if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token", readToken); err != nil {
-				return fmt.Errorf("store encrypted Pulse read token: %w", err)
-			}
-			report.recordMutation("Secrets", "pulse_api_token", "credential refreshed", true)
-			pulseRead, clientErr = pulse.NewReadClient(pulse.ClientConfig{
-				BaseURL: pulseBaseURL, APIToken: readToken,
-				CAPEM:      authority.RootCertPEM,
-				ServerName: "monitor." + s.Network.Domain,
-			})
-			if clientErr != nil {
-				return clientErr
-			}
-			readTokenRefreshed = true
-			return nil
-		}
-		var health pulse.HealthStatus
-		err = report.timed("health", "health", "pulse", func() error {
-			var healthErr error
-			health, healthErr = pulseRead.Health(ctx)
-			return healthErr
-		})
-		if err != nil {
-			return fmt.Errorf("verify Pulse health: %w", err)
-		}
-		if !strings.EqualFold(health.Status, "healthy") {
-			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
-		}
-		if _, err := pulseRead.StateSummary(ctx); err != nil {
-			if !pulse.IsUnauthorized(err) {
-				return fmt.Errorf("verify Pulse state summary: %w", err)
-			}
-			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
-				return fmt.Errorf("refresh Pulse read token after unauthorized response: %w", refreshErr)
-			}
-			if _, retryErr := pulseRead.StateSummary(ctx); retryErr != nil {
-				return fmt.Errorf("verify Pulse state summary after read-token refresh: %w", retryErr)
-			}
-		}
-		if _, err := pulseRead.Resources(ctx); err != nil {
-			if !pulse.IsUnauthorized(err) || readTokenRefreshed {
-				return fmt.Errorf("verify Pulse resources: %w", err)
-			}
-			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
-				return fmt.Errorf("refresh Pulse read token after unauthorized response: %w", refreshErr)
-			}
-			if _, retryErr := pulseRead.Resources(ctx); retryErr != nil {
-				return fmt.Errorf("verify Pulse resources after read-token refresh: %w", retryErr)
-			}
-		}
-
-		agentBindings, bindingErr := monitoringAgentCredentialBindings(s)
-		if bindingErr != nil {
-			return bindingErr
-		}
-		if len(agentBindings) > 0 {
-			agentToken, agentTokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token")
-			if errors.Is(agentTokenErr, site.ErrPlatformSecretMissing) {
-				agentToken, agentTokenErr = pulseAdmin.CreateAgentReportToken(ctx, "boetticher monitoring agent")
-				if agentTokenErr != nil {
-					return agentTokenErr
-				}
-				if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token", agentToken); err != nil {
-					return fmt.Errorf("store encrypted Pulse agent token: %w", err)
-				}
-				report.recordMutation("Secrets", "pulse_agent_token", "credential stored", true)
-			} else if agentTokenErr != nil {
-				return fmt.Errorf("load encrypted Pulse agent token: %w", agentTokenErr)
-			}
-
-			for _, target := range ansible.MonitoringAgentTargets(s) {
-				var agentRunner proxmox.CommandRunner
-				if target == model.LogicalProxmoxIdentity {
-					agentRunner = proxmox.SSHRunner{
-						IdentityFile:  operatorIdentityFile(s),
-						ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
-						StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity,
-					}
-				} else {
-					agentRunner = applianceSSHRunnerWithIdentity(s, *siteDir, target, temporaryPrivateKey)
-				}
-				if err := installCredentialsForGuest(ctx, agentRunner, target, agentBindings, map[string]string{"pulse_agent_token": agentToken}); err != nil {
-					return fmt.Errorf("install Pulse agent credential on %s: %w", target, err)
-				}
-			}
-			agentDropIns, dropInErr := credentialDropIns(agentBindings)
-			if dropInErr != nil {
-				return dropInErr
-			}
-			existingDropIns, ok := runtimeVariables["credential_dropins"].(map[string]map[string]string)
-			if !ok {
-				existingDropIns = map[string]map[string]string{}
-			}
-			for guest, dropIns := range agentDropIns {
-				if existingDropIns[guest] == nil {
-					existingDropIns[guest] = map[string]string{}
-				}
-				for unit, content := range dropIns {
-					existingDropIns[guest][unit] = content
-				}
-			}
-			runtimeVariables["credential_dropins"] = existingDropIns
-			runtimeVariables["pulse_agent_install_enabled"] = true
-			agentVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
-			if marshalErr != nil {
-				return marshalErr
-			}
-			agentVariables = append(agentVariables, '\n')
-			for _, target := range ansible.MonitoringAgentTargets(s) {
-				if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
-					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
-				}
-			}
-		}
-
-	}
-	if pulseForward != nil {
-		if err := pulseForward.Close(); err != nil {
-			return fmt.Errorf("close Pulse API tunnel: %w", err)
-		}
-		pulseForward = nil
-	}
+	// Legacy appliance health integrations were removed with Pulse/AIOps.
+	// Current observability and VPN health are owned by their capability paths.
+	report.complete()
 	report.complete()
 	report.start("persist", "Persist final state")
 	backupChanged, err := proxmox.ApplyBackupJobWithRunner(ctx, rootRunner, s.BootstrapAddress, "root", node, proxmox.BackupJob{
@@ -1436,7 +1125,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		s.PendingDNSDeletions = nil
 	}
 	if err := report.timed("persist", "local", "projections", func() error {
-		return writeModelProjectionsWithResolverAndAirVPN(*siteDir, s, endpointLookup, airvpnMetadata)
+		return writeModelProjectionsWithResolver(*siteDir, s, endpointLookup)
 	}); err != nil {
 		return err
 	}
@@ -1460,7 +1149,7 @@ func withDeploymentTimeout(ctx context.Context) (context.Context, context.Cancel
 // runScopedModuleDeploy deliberately starts from a verified full deployment
 // baseline. It reuses that baseline's rendered inventory and variables, then
 // touches only the selected module's LXC guests and their credentials. Core
-// policy, storage, DNS, Pulse, backups, ACLs, bastion policy, and projections
+// policy, storage, DNS, backups, ACLs, bastion policy, and projections
 // remain owned by full deploy.
 func runScopedModuleDeploy(ctx context.Context, siteDir, ageIdentity, module, planDigest string, confirm, dryRun bool, s model.Site, revision string, out io.Writer, report *deploymentReport, registerCleanup deploymentCleanupRegistrar, registerCommit func(func() error), registerFailure func(func(error))) error {
 	if dryRun {
@@ -1998,172 +1687,8 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 	return nil
 }
 
-func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, pulseBaseURL, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string, report *deploymentReport, identityData []byte) error {
-	modelConfig, err := selectedAIOpsModel(s)
-	if err != nil {
-		return err
-	}
-	runner := applianceSSHRunnerWithIdentity(s, siteDir, "lab-bifrost-01", identityData)
-	var metadata []byte
-	err = report.timed("health", "health", "bifrost", func() error {
-		var metadataErr error
-		metadata, metadataErr = runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-bifrost-model-capabilities", modelConfig.Alias})
-		return metadataErr
-	})
-	if err != nil {
-		return fmt.Errorf("read pinned Bifrost model metadata: %w", err)
-	}
-	if _, err := aiopsmodel.DecodeModelCapabilities(metadata); err != nil {
-		return err
-	}
-	routerClient, err := controllerMTLSClient(authority, controllerCertificate, routerForwardAddress)
-	if err != nil {
-		return err
-	}
-	canaryContext, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-	if err := report.timed("health", "health", "aiops", func() error {
-		return aiopsmodel.QualifyModelAlias(canaryContext, routerClient, "https://ai."+s.Network.Domain+"/v1/chat/completions", s.ModuleConfig["aiops"].ModelAlias)
-	}); err != nil {
-		return err
-	}
-
-	webhookSecret, created, err := loadOrCreateRandomSecret(siteDir, ageIdentity, s, "aiops_webhook_secret")
-	if err != nil {
-		return err
-	}
-	if created {
-		report.recordMutation("Secrets", "aiops_webhook_secret", "credential stored", true)
-	}
-	readToken, created, err := loadOrCreatePulseToken(siteDir, ageIdentity, s, "aiops_pulse_read_token", func() (string, error) {
-		return pulseAdmin.CreateReadToken(ctx, "boetticher aiops read")
-	})
-	if err != nil {
-		return err
-	}
-	pulseRead, err := pulse.NewReadClient(pulse.ClientConfig{
-		BaseURL: pulseBaseURL, APIToken: readToken,
-		CAPEM:      authority.RootCertPEM,
-		ServerName: "monitor." + s.Network.Domain,
-	})
-	if err != nil {
-		return fmt.Errorf("configure AIOps Pulse read client: %w", err)
-	}
-	if _, err := pulseRead.StateSummary(ctx); err != nil {
-		if !pulse.IsUnauthorized(err) {
-			return fmt.Errorf("validate AIOps Pulse read token: %w", err)
-		}
-		readToken, err = pulseAdmin.CreateReadToken(ctx, "boetticher aiops read")
-		if err != nil {
-			return fmt.Errorf("refresh AIOps Pulse read token: %w", err)
-		}
-		if err := site.StorePlatformSecret(siteDir, s, ageIdentity, "aiops_pulse_read_token", readToken); err != nil {
-			return fmt.Errorf("store refreshed AIOps Pulse read token: %w", err)
-		}
-		report.recordMutation("Secrets", "aiops_pulse_read_token", "credential refreshed", true)
-		pulseRead, err = pulse.NewReadClient(pulse.ClientConfig{
-			BaseURL: pulseBaseURL, APIToken: readToken,
-			CAPEM:      authority.RootCertPEM,
-			ServerName: "monitor." + s.Network.Domain,
-		})
-		if err != nil {
-			return fmt.Errorf("reconfigure AIOps Pulse read client: %w", err)
-		}
-		if _, err := pulseRead.StateSummary(ctx); err != nil {
-			return fmt.Errorf("validate refreshed AIOps Pulse read token: %w", err)
-		}
-	}
-	if created {
-		report.recordMutation("Secrets", "aiops_pulse_read_token", "credential stored", true)
-	}
-	noteToken, created, err := loadOrCreatePulseToken(siteDir, ageIdentity, s, "aiops_pulse_note_token", func() (string, error) {
-		return pulseAdmin.CreateIncidentNoteToken(ctx, "boetticher aiops notes")
-	})
-	if err != nil {
-		return err
-	}
-	if created {
-		report.recordMutation("Secrets", "aiops_pulse_note_token", "credential stored", true)
-	}
-	if err := pulseAdmin.ConfigureAIOpsWebhook(ctx, "https://aiops."+s.Network.Domain+"/v1/pulse/events", webhookSecret, "10.10.20.90/32"); err != nil {
-		return err
-	}
-
-	allBindings, err := deploymentCredentialBindings(s)
-	if err != nil {
-		return err
-	}
-	var bindings []deploymentCredential
-	for _, binding := range allBindings {
-		if binding.Guest == "lab-aiops-01" {
-			bindings = append(bindings, binding)
-		}
-	}
-	values := map[string]string{"aiops_webhook_secret": webhookSecret, "aiops_pulse_read_token": readToken, "aiops_pulse_note_token": noteToken}
-	aiopsRunner := applianceSSHRunnerWithIdentity(s, siteDir, "lab-aiops-01", identityData)
-	if err := installCredentialsForGuest(ctx, aiopsRunner, "lab-aiops-01", bindings, values); err != nil {
-		return err
-	}
-	dropIns, err := credentialDropIns(bindings)
-	if err != nil {
-		return err
-	}
-	existing, _ := runtimeVariables["credential_dropins"].(map[string]map[string]string)
-	if existing == nil {
-		existing = map[string]map[string]string{}
-	}
-	existing["lab-aiops-01"] = dropIns["lab-aiops-01"]
-	runtimeVariables["credential_dropins"] = existing
-	runtimeVariables["aiops_runtime_credentials_ready"] = true
-	runtimeVariables["aiops_model_alias_qualified"] = true
-	variables, err := json.MarshalIndent(runtimeVariables, "", "  ")
-	if err != nil {
-		return err
-	}
-	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report, identityData)
-}
-
-func selectedAIOpsModel(s model.Site) (model.BifrostModelConfig, error) {
-	alias := s.ModuleConfig["aiops"].ModelAlias
-	var selected model.BifrostModelConfig
-	for _, candidate := range s.ModuleConfig["bifrost"].Models {
-		if candidate.Alias != alias {
-			continue
-		}
-		if selected.Alias != "" {
-			return model.BifrostModelConfig{}, errors.New("AIOps model alias is ambiguous")
-		}
-		selected = candidate
-	}
-	if selected.Alias == "" {
-		return model.BifrostModelConfig{}, errors.New("AIOps model alias is undeclared")
-	}
-	return selected, nil
-}
-
-func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertificate, forwardAddress string) (*http.Client, error) {
-	identity, err := tls.X509KeyPair([]byte(certificate.ChainPEM), []byte(certificate.KeyPEM))
-	if err != nil {
-		return nil, fmt.Errorf("load controller AIOps canary identity: %w", err)
-	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM([]byte(authority.RootCertPEM + authority.IssuingCertPEM)) {
-		return nil, errors.New("platform CA contains no certificates")
-	}
-	forwardHost, forwardPort, err := net.SplitHostPort(forwardAddress)
-	if err != nil || forwardHost != "127.0.0.1" || forwardPort == "" {
-		return nil, errors.New("AI Router canary requires a loopback SSH forward")
-	}
-	dialer := &net.Dialer{Timeout: 30 * time.Second}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, net.JoinHostPort(forwardHost, forwardPort))
-		},
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{identity}}, DisableCompression: true, ResponseHeaderTimeout: 30 * time.Second,
-	}
-	return &http.Client{Transport: transport, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("AI Router redirects are forbidden") }}, nil
-}
-
+// The retired Pulse/AIOps qualification helpers were removed. Holmes is
+// configured and invoked through the unified observability capability.
 func loadOrCreateRandomSecret(siteDir, ageIdentity string, s model.Site, key string) (string, bool, error) {
 	value, err := site.LoadPlatformSecret(siteDir, s, ageIdentity, key)
 	if err == nil {
@@ -2183,27 +1708,6 @@ func loadOrCreateRandomSecret(siteDir, ageIdentity string, s model.Site, key str
 	return value, true, nil
 }
 
-func loadOrCreatePulseToken(siteDir, ageIdentity string, s model.Site, key string, create func() (string, error)) (string, bool, error) {
-	value, err := site.LoadPlatformSecret(siteDir, s, ageIdentity, key)
-	if err == nil {
-		return value, false, nil
-	}
-	if !errors.Is(err, site.ErrPlatformSecretMissing) {
-		return "", false, fmt.Errorf("load encrypted %s: %w", key, err)
-	}
-	value, err = create()
-	if err != nil {
-		return "", false, err
-	}
-	if err := site.StorePlatformSecret(siteDir, s, ageIdentity, key, value); err != nil {
-		return "", false, fmt.Errorf("store encrypted %s: %w", key, err)
-	}
-	return value, true, nil
-}
-
-// installModuleRuntimeConfigs is the deployment boundary for the common
-// non-secret appliance contract. Module declarations remain the source of
-// guest identity and runtime configuration; the SSH runner is only the Core
 // transport used to install the already-validated document.
 func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Site, plan proxmox.Plan, identityData []byte, onlyModule string) error {
 	declarations := make(map[string]model.ModuleDeclaration, len(s.Declarations))

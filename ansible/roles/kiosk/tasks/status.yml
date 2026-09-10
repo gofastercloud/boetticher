@@ -8,17 +8,6 @@
     mode: '0755'
   notify: restart boetticher-companion
 
-- name: Install private-CA trust for Companion consumers
-  ansible.builtin.copy:
-    content: "{{ kiosk_root_ca_pem }}"
-    dest: /etc/boetticher/companion-ca.pem
-    owner: root
-    group: root
-    mode: '0644'
-  notify:
-    - restart boetticher-companion
-    - restart pulse-agent
-
 - name: Render public Companion configuration
   ansible.builtin.copy:
     content: "{{ companion_config | to_nice_json }}\n"

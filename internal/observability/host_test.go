@@ -72,7 +72,7 @@ func payloadFixture(t *testing.T) string {
 
 func observabilityTestModules() clientservices.Modules {
 	enabled := true
-	return clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled}, AIOps: &clientservices.AIOpsConfig{Enabled: &enabled, Holmes: &clientservices.HolmesConfig{Enabled: &enabled, ModelAlias: "operations", Bifrost: clientservices.BifrostConfig{ClientCredential: "holmes-client-token", Upstreams: []clientservices.BifrostUpstream{{Name: "provider", BaseURL: "https://provider.example", SecretRef: "provider-key"}}, Models: []clientservices.BifrostModel{{Alias: "operations", Upstream: "provider", Model: "model"}}}}}}
+	return clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, Monitoring: clientservices.MonitoringConfig{Holmes: &clientservices.HolmesConfig{Enabled: &enabled, ModelAlias: "operations", Bifrost: clientservices.BifrostConfig{ClientCredential: "holmes-client-token", Upstreams: []clientservices.BifrostUpstream{{Name: "provider", BaseURL: "https://provider.example", SecretRef: "provider-key"}}, Models: []clientservices.BifrostModel{{Alias: "operations", Upstream: "provider", Model: "model"}}}}}}}
 }
 
 func observabilityTestSecrets() map[string][]byte {
@@ -262,7 +262,7 @@ func TestServicesForModulesIncludesCaddyAndOnlyConfiguredBifrost(t *testing.T) {
 		t.Fatalf("unconfigured service set = %#v", base)
 	}
 	enabled := true
-	modules := clientservices.Modules{AIOps: &clientservices.AIOpsConfig{Enabled: &enabled, Holmes: &clientservices.HolmesConfig{Enabled: &enabled}}}
+	modules := clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, Monitoring: clientservices.MonitoringConfig{Holmes: &clientservices.HolmesConfig{Enabled: &enabled}}}}
 	configured := ServicesForModules(modules)
 	if !containsService(configured, "bifrost.service") || !containsService(configured, "caddy.service") {
 		t.Fatalf("configured service set = %#v", configured)

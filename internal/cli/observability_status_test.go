@@ -37,7 +37,7 @@ func TestCapabilityStatusUsesOnlyOwnedComponentServices(t *testing.T) {
 	enabled := true
 	loadLabConfig = func() (controllerhost.LabConfig, error) {
 		holmesEnabled := true
-		return controllerhost.LabConfig{Name: "lab", Proxmox: controllerhost.ProxmoxConfig{Address: "192.0.2.10", User: "root", Repository: "no-subscription"}, Modules: clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled}, AIOps: &clientservices.AIOpsConfig{Enabled: &holmesEnabled, Holmes: &clientservices.HolmesConfig{Enabled: &holmesEnabled, ModelAlias: "operations", Bifrost: clientservices.BifrostConfig{ClientCredential: "holmes-client-token", Upstreams: []clientservices.BifrostUpstream{{Name: "provider", BaseURL: "https://provider.example", SecretRef: "provider-key"}}, Models: []clientservices.BifrostModel{{Alias: "operations", Upstream: "provider", Model: "provider/model"}}}}}}}, nil
+		return controllerhost.LabConfig{Name: "lab", Proxmox: controllerhost.ProxmoxConfig{Address: "192.0.2.10", User: "root", Repository: "no-subscription"}, Modules: clientservices.Modules{Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, Monitoring: clientservices.MonitoringConfig{Holmes: &clientservices.HolmesConfig{Enabled: &holmesEnabled, ModelAlias: "operations", Bifrost: clientservices.BifrostConfig{ClientCredential: "holmes-client-token", Upstreams: []clientservices.BifrostUpstream{{Name: "provider", BaseURL: "https://provider.example", SecretRef: "provider-key"}}, Models: []clientservices.BifrostModel{{Alias: "operations", Upstream: "provider", Model: "provider/model"}}}}}}}}, nil
 	}
 	observabilityTransport = func(controllerhost.LabConfig) (observability.Runner, error) {
 		return capabilityStatusRunner{bifrostDown: true}, nil

@@ -39,7 +39,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "bifrost" && name != "printer" && name != "aiops" && name != "gatus" && name != "airvpn" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "tailnet-router" && name != "bifrost" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
@@ -78,7 +78,7 @@ func validateModuleConfigShape(data []byte) error {
 				}
 				continue
 			}
-			if name != "display" && name != "streamdeck" && name != "pulse_agent" {
+			if name != "display" && name != "streamdeck" {
 				return fmt.Errorf("site.yml: companion.%s: unknown field", name)
 			}
 			if value.Kind != yaml.MappingNode {
@@ -107,12 +107,7 @@ func validateModuleConfigShape(data []byte) error {
 		allowed := map[string]bool{}
 		switch name {
 		case "dns":
-		case "monitoring", "firewall", "printer":
-			allowed["enabled"] = true
-			if name == "printer" {
-				allowed["network"] = true
-			}
-		case "logging":
+		case "monitoring", "firewall":
 			allowed["enabled"] = true
 		case "tailnet-router":
 			allowed["enabled"] = true
@@ -121,15 +116,6 @@ func validateModuleConfigShape(data []byte) error {
 			allowed["network"] = true
 			allowed["upstreams"] = true
 			allowed["models"] = true
-		case "aiops", "gatus":
-			allowed["enabled"] = true
-			allowed["network"] = true
-			if name == "aiops" {
-				allowed["model_alias"] = true
-			}
-		case "airvpn":
-			allowed["enabled"] = true
-			allowed["servers"] = true
 		default:
 			return fmt.Errorf("site.yml: modules.%s: unknown first-party module", name)
 		}
@@ -151,14 +137,8 @@ func validateModuleConfigShape(data []byte) error {
 			if field == "network" && fieldValue.Tag != "!!str" {
 				return fmt.Errorf("site.yml: modules.%s.network: expected a string", name)
 			}
-			if name == "airvpn" && field == "servers" && fieldValue.Tag != "!!str" {
-				return fmt.Errorf("site.yml: modules.airvpn.servers: expected a string")
-			}
 			if name == "bifrost" && (field == "upstreams" || field == "models") && fieldValue.Kind != yaml.SequenceNode {
 				return fmt.Errorf("site.yml: modules.bifrost.%s: expected a list", field)
-			}
-			if name == "aiops" && field == "model_alias" && fieldValue.Tag != "!!str" {
-				return fmt.Errorf("site.yml: modules.aiops.model_alias: expected a string")
 			}
 		}
 	}

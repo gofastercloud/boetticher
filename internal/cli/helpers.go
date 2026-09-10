@@ -14,7 +14,6 @@ import (
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
-	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
@@ -72,10 +71,6 @@ func writeModelProjections(dir string, s model.Site) error {
 }
 
 func writeModelProjectionsWithResolver(dir string, s model.Site, endpointLookup func(string) ([]net.IP, error)) error {
-	return writeModelProjectionsWithResolverAndAirVPN(dir, s, endpointLookup, nil)
-}
-
-func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpointLookup func(string) ([]net.IP, error), airvpnProfile *firewall.AirVPNProfile) error {
 	if err := pathguard.ValidateNoSymlinkComponents(filepath.Join(dir, "generated")); err != nil {
 		return fmt.Errorf("refuse generated projection path: %w", err)
 	}
@@ -86,21 +81,9 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if err != nil {
 		return err
 	}
-	var firewallPlan firewall.Plan
-	if airvpnProfile == nil {
-		firewallPlan, err = firewall.PlanFromSite(s)
-	} else {
-		firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, *airvpnProfile)
-	}
+	firewallPlan, err := firewall.PlanFromSite(s)
 	if err != nil {
 		return err
-	}
-	if airvpnProfile != nil {
-		firewallPlan, err = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
-		if err != nil {
-			return err
-		}
-		*airvpnProfile = *firewallPlan.AirVPN
 	}
 	if err := clearObsoleteGeneratedProjections(dir); err != nil {
 		return err
@@ -129,21 +112,6 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if _, err := backup.PlanFromSite(s); err != nil {
 		return err
 	}
-	if modules.IsEnabled(s, "logging") {
-		loggingPlan, err := logging.PlanFromSite(s)
-		if err != nil {
-			return err
-		}
-		if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.conf"), []byte(logging.CollectorConfiguration(loggingPlan))); err != nil {
-			return err
-		}
-		if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.service.d", "boetticher.conf"), []byte(logging.CollectorServiceOverride(loggingPlan))); err != nil {
-			return err
-		}
-		if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.socket.d", "boetticher.conf"), []byte(logging.CollectorSocketOverride(loggingPlan))); err != nil {
-			return err
-		}
-	}
 	blockyConfig, renderErr := dns.RenderBlockyConfig(dnsPlan)
 	if renderErr != nil {
 		return renderErr
@@ -161,12 +129,7 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if err := writePublic(filepath.Join(dir, "generated", "ansible", "inventory.ini"), []byte(inventory)); err != nil {
 		return err
 	}
-	var variables []byte
-	if airvpnProfile == nil {
-		variables, err = ansible.Variables(s)
-	} else {
-		variables, err = ansible.VariablesWithAirVPN(s, *airvpnProfile)
-	}
+	variables, err := ansible.Variables(s)
 	if err != nil {
 		return err
 	}

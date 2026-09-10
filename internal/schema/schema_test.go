@@ -69,19 +69,6 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 		}
 	}
 
-	logging, ok := modules.Properties["logging"]
-	if !ok {
-		t.Fatal("logging module schema property is absent")
-	}
-	var loggingRef struct {
-		Ref string `json:"$ref"`
-	}
-	if err := json.Unmarshal(logging, &loggingRef); err != nil {
-		t.Fatal(err)
-	}
-	if loggingRef.Ref != "#/$defs/ToggleModuleConfig" {
-		t.Fatalf("logging module schema ref = %q", loggingRef.Ref)
-	}
 	for _, name := range []string{"monitoring", "firewall"} {
 		var ref struct {
 			Ref string `json:"$ref"`
@@ -101,17 +88,6 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	}
 	if tailnetRef.Ref != "#/$defs/TailnetRouterConfig" {
 		t.Fatalf("tailnet-router module schema ref = %q", tailnetRef.Ref)
-	}
-	for _, name := range []string{"gatus"} {
-		var ref struct {
-			Ref string `json:"$ref"`
-		}
-		if err := json.Unmarshal(modules.Properties[name], &ref); err != nil {
-			t.Fatalf("decode %s module schema ref: %v", name, err)
-		}
-		if ref.Ref != "#/$defs/NetworkToggleModuleConfig" {
-			t.Fatalf("%s module schema ref = %q", name, ref.Ref)
-		}
 	}
 	if _, ok := document.Definitions["ToggleModuleConfig"].Properties["network"]; ok {
 		t.Fatal("non-network toggle schema exposes network")

@@ -30,12 +30,6 @@ const (
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-20260327-2429"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2"
 	QualifiedGatewayImageSHA512 = "09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c"
-	PulseVersion                = "6.4.1"
-	PulseReleaseURL             = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-v6.4.1-linux-amd64.tar.gz"
-	PulseReleaseSHA256          = "543e967718c6e71763b7a76d9c3c9c992157206810959750b4aa0aa0631bf1e0"
-	PulseAgentVersion           = "6.4.1"
-	PulseAgentReleaseURL        = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-agent-linux-amd64"
-	PulseAgentReleaseSHA256     = "974708439f052136cac2a334ad790bf9da12b3f1c8e758ebe7bc0a8d2a505ce9"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
 	AuthoritativePackageVersion = "4.9.17-1pdns.trixie"
@@ -49,10 +43,7 @@ const (
 	DNS01VMID                   = 110
 	MonitorVMID                 = 120
 	GatusVMID                   = 250
-	LoggingVMID                 = 140
-	PrinterVMID                 = 230
 	LegacyStreamDeckVMID        = 220
-	AirVPNGuestVMID             = 260
 	DefaultGatewayUpstreamMAC   = "02:00:00:00:01:01"
 	GatewayManagementAddress    = "192.168.4.28"
 	GatewayManagementNetwork    = "192.168.4.0/22"
@@ -61,7 +52,6 @@ const (
 	TransitVLAN                 = 5
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
-	AirVPNGuestAddress          = "10.10.5.20"
 	CompanionZone               = "SERVERS"
 	CompanionHostname           = "lab-display-01"
 	CompanionAddress            = "10.10.20.50"
@@ -92,11 +82,6 @@ const (
 	TagNTP                      = "ntp"
 	TagObservability            = "observability"
 	TagMonitoringAgent          = "monitoring-agent"
-)
-
-const (
-	PulseAgentARM64ReleaseURL    = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-agent-linux-arm64"
-	PulseAgentARM64ReleaseSHA256 = "7012ab620b5a02803c465882b4ae8af4cde6acef24e7b8c05eff26b093c0ae53"
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
@@ -252,7 +237,6 @@ type Site struct {
 
 type TestedVersions struct {
 	Gateway string `yaml:"gateway" json:"gateway"`
-	Pulse   string `yaml:"pulse" json:"pulse"`
 }
 
 type Gateway struct {
@@ -613,11 +597,11 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 	for _, component := range []Component{
 		{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "firewall"},
 		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
-		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Pulse monitoring", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
+		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Unified observability", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
 	} {
 		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, ModuleOwnershipTag(component.Module), TagBackup}
 		component.SSHUser, component.SSHPort = DefaultAdminSSHUser, 22
-		component.Logging = component.Module != "logging"
+		component.Logging = true
 		site.Components = append(site.Components, component)
 	}
 	return site
@@ -633,7 +617,6 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		LogicalProxmoxIdentity: LogicalProxmoxIdentity,
 		TestedVersions: TestedVersions{
 			Gateway: QualifiedGatewayImage,
-			Pulse:   PulseVersion,
 		},
 		Network: Network{
 			Domain: DefaultDomain,
@@ -928,9 +911,6 @@ func (s Site) Validate() error {
 	if s.TestedVersions.Gateway != QualifiedGatewayImage {
 		return fmt.Errorf("tested_versions.gateway must equal the qualified image %q", QualifiedGatewayImage)
 	}
-	if s.TestedVersions.Pulse != PulseVersion {
-		return fmt.Errorf("tested_versions.pulse must be %q", PulseVersion)
-	}
 	if s.PhysicalNetwork.Mode != ModeVirtualOnly && s.PhysicalNetwork.Mode != ModePhysicalTrunk {
 		return fmt.Errorf("physical_network.mode must be virtual-only or physical-trunk")
 	}
@@ -974,9 +954,6 @@ func (s Site) Validate() error {
 			}
 			seen[value] = true
 		}
-	}
-	if port := s.ModuleConfig["airvpn"].QBittorrentPort; !ValidQBittorrentPort(port) {
-		return errors.New("modules.airvpn.qbittorrent_port: use 0 to disable or a reserved port from 2049 to 65535 excluding ARR web/API ports")
 	}
 	if bifrost, ok := s.ModuleConfig["bifrost"]; ok && (bifrost.Enabled != nil && *bifrost.Enabled || len(bifrost.Upstreams) > 0 || len(bifrost.Models) > 0) {
 		if err := ValidateBifrostConfig(bifrost); err != nil {
@@ -1154,12 +1131,6 @@ func (s Site) Validate() error {
 			address string
 			vmid    int
 		}{address: "10.10.10.20", vmid: MonitorVMID}
-	}
-	if composed && resolvedModuleEnabled(s.Modules, "logging", false) {
-		requiredComponents["lab-log-01"] = struct {
-			address string
-			vmid    int
-		}{address: "10.10.10.40", vmid: LoggingVMID}
 	}
 	if composed && s.Gateway.Mode == GatewayModeManaged && resolvedModuleEnabled(s.Modules, "firewall", true) {
 		requiredComponents["lab-fw-01"] = struct {
@@ -1439,15 +1410,7 @@ func validateDHCPReservations(s Site) error {
 			return fmt.Errorf("DHCP reservation %q must use the fixed SERVERS zone", reservation.Hostname)
 		}
 		if reservation.DNSOverride != "" || reservation.NTPOverride != "" {
-			valid := false
-			for _, c := range s.PlatformComponents() {
-				if c.ProductOwned && c.Name == reservation.Hostname && c.Address == reservation.Address && c.VMID == reservation.VMID && s.ModuleConfig[c.Module].Network == ModuleNetworkAirVPN && reservation.DNSOverride == AirVPNGuestAddress && reservation.NTPOverride == AirVPNGuestAddress {
-					valid = true
-				}
-			}
-			if !valid {
-				return fmt.Errorf("DHCP service overrides require an AirVPN-selected managed guest: %s", reservation.Hostname)
-			}
+			return fmt.Errorf("DHCP service overrides are no longer part of the current reservation contract: %s", reservation.Hostname)
 		}
 		if !IsDNSLabel(reservation.Hostname) {
 			return fmt.Errorf("DHCP reservation hostname %q must be one DNS label", reservation.Hostname)
@@ -1614,7 +1577,7 @@ func validateUserFirewallRules(s Site) error {
 		if err != nil {
 			return fmt.Errorf("firewall rule %s: %w", rule.ID, err)
 		}
-		if (firewallSelectorProtected(s, source) || firewallSelectorProtected(s, destination)) && !IsReservedServersPulseRule(s, source, destination, protocol, ports) {
+		if (firewallSelectorProtected(s, source) || firewallSelectorProtected(s, destination)) && !IsReservedServersObservabilityRule(s, source, destination, protocol, ports) {
 			return fmt.Errorf("firewall rule %s crosses a protected Core boundary", rule.ID)
 		}
 		key := source + "|" + destination + "|" + protocol + "|" + strings.Join(ports, ",")
@@ -1723,11 +1686,11 @@ func firewallSelectorProtected(s Site, selector string) bool {
 	return false
 }
 
-// IsReservedServersPulseRule is the one user-workload exception to the Core
-// boundary. An external, reservation-backed dashboard may read the fixed
-// Pulse HTTPS endpoint, but it cannot widen that access to another Core
+// IsReservedServersObservabilityRule is the one user-workload exception to the
+// Core boundary. A reservation-backed dashboard may read the fixed
+// observability HTTPS endpoint, but it cannot widen that access to another Core
 // service, port, or an entire zone.
-func IsReservedServersPulseRule(s Site, source, destination, protocol string, ports []string) bool {
+func IsReservedServersObservabilityRule(s Site, source, destination, protocol string, ports []string) bool {
 	if protocol != "tcp" || len(ports) != 1 || ports[0] != "443" {
 		return false
 	}

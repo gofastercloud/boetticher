@@ -28,7 +28,7 @@ func main() {
 		ListenAddress:  firewall.TelemetryListenAddress,
 		Port:           firewall.TelemetryPort,
 		Interval:       time.Duration(firewall.TelemetrySampleIntervalSec) * time.Second,
-		AllowedSources: []string{firewall.TelemetryPulseSource},
+		AllowedSources: []string{firewall.TelemetryObservabilitySource},
 	}, store)
 	if err != nil {
 		log.Fatalf("configure firewall telemetry: %v", err)

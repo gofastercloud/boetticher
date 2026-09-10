@@ -143,14 +143,14 @@ func Render(ctx context.Context, deck Deck, state *State) error {
 	}
 	if state == nil {
 		return renderAll(ctx, deck, size, func(int) (string, string, color.Color) {
-			return "PULSE", "WAIT", red
+			return "OBSERVE", "WAIT", red
 		})
 	}
 	hosts := ProxmoxHosts(state.Resources)
 	return renderAll(ctx, deck, size, func(index int) (string, string, color.Color) {
 		if index >= len(hosts) {
 			if index == 0 {
-				return "PULSE", "NO HOSTS", red
+				return "OBSERVE", "NO HOSTS", red
 			}
 			return "", "", black
 		}

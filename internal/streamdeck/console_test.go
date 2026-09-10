@@ -28,11 +28,9 @@ func TestRunConsoleKeepsRetryingWhenStreamDeckIsAbsent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
 	err := RunConsole(ctx, Config{
-		PulseURL:      "https://monitor.example",
-		VendorID:      DefaultVendorID,
-		ProductID:     DefaultProductID,
-		Model:         DefaultModel,
-		CACertificate: "ca",
+		VendorID:  DefaultVendorID,
+		ProductID: DefaultProductID,
+		Model:     DefaultModel,
 	}, func(context.Context, Config) (Deck, error) {
 		return nil, errors.New("StreamDeck not present")
 	})

@@ -20,21 +20,16 @@ const (
 )
 
 type Config struct {
-	PulseURL      string `json:"pulse_url"`
-	CAFile        string `json:"ca_file"`
-	EthernetMAC   string `json:"ethernet_mac"`
-	Address       string `json:"address"`
-	Gateway       string `json:"gateway"`
-	DNS           string `json:"dns"`
-	DNSName       string `json:"dns_name"`
-	DNSAddress    string `json:"dns_address"`
-	AgentID       string `json:"agent_id"`
-	AgentHostname string `json:"agent_hostname"`
-	Display       bool   `json:"display"`
-	StreamDeck    bool   `json:"streamdeck"`
-	PulseAgent    bool   `json:"pulse_agent"`
-	AirVPN        bool   `json:"airvpn"`
-	Tailnet       bool   `json:"tailnet"`
+	EthernetMAC string `json:"ethernet_mac"`
+	Address     string `json:"address"`
+	Gateway     string `json:"gateway"`
+	DNS         string `json:"dns"`
+	DNSName     string `json:"dns_name"`
+	DNSAddress  string `json:"dns_address"`
+	Display     bool   `json:"display"`
+	StreamDeck  bool   `json:"streamdeck"`
+	AirVPN      bool   `json:"airvpn"`
+	Tailnet     bool   `json:"tailnet"`
 }
 
 type Item struct {
@@ -77,8 +72,8 @@ type State struct {
 	Refresh chan struct{}
 }
 
-var itemIDs = []string{"pi", "link", "gateway", "dns", "proxmox", "pulse", "agent", "peripherals"}
-var itemLabels = []string{"Pi health", "Lab link", "Gateway", "DNS", "Proxmox", "Pulse", "Agent reporting", "Local displays"}
+var itemIDs = []string{"pi", "link", "gateway", "dns", "proxmox", "peripherals"}
+var itemLabels = []string{"Pi health", "Lab link", "Gateway", "DNS", "Proxmox", "Local displays"}
 var views = []string{"overview", "core", "resources", "pi"}
 
 func NewState(c Config) *State {
@@ -86,13 +81,9 @@ func NewState(c Config) *State {
 	for i, id := range itemIDs {
 		s.data.Items = append(s.data.Items, Item{ID: id, Label: itemLabels[i], Status: Waiting, Reason: "Waiting for the first observation"})
 	}
-	if !c.PulseAgent {
-		s.data.Items[6].Status = Disabled
-		s.data.Items[6].Reason = "Pulse agent disabled"
-	}
 	if !c.Display && !c.StreamDeck {
-		s.data.Items[7].Status = Disabled
-		s.data.Items[7].Reason = "HDMI and StreamDeck disabled"
+		s.data.Items[5].Status = Disabled
+		s.data.Items[5].Reason = "HDMI and StreamDeck disabled"
 	}
 	for _, module := range []struct {
 		id, label string
@@ -145,7 +136,7 @@ func (s *State) Snapshot() Snapshot {
 		if out.Modules[i].Status != Disabled && !fresh(out.Modules[i].ObservedAt, now) {
 			out.Modules[i].Status = Waiting
 			out.Modules[i].Value = "No data"
-			out.Modules[i].Reason = "No fresh module metrics from Pulse"
+			out.Modules[i].Reason = "No fresh module observation"
 		}
 		for j := range out.Modules[i].Checks {
 			if !fresh(out.Modules[i].Checks[j].ObservedAt, now) {
@@ -176,7 +167,7 @@ func (s *State) Snapshot() Snapshot {
 		out.Resources[i].Status = assertedStatus(out.Resources[i].Status)
 	}
 	if out.Display || out.StreamDeck {
-		item := &out.Items[7]
+		item := &out.Items[5]
 		item.Status = Healthy
 		item.Value = "Ready"
 		item.Reason = "Enabled displays are updating"

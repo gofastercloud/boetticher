@@ -50,7 +50,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 | --- | --- |
 | Build your first lab or learn the everyday rhythm | [Start here](start.html) |
 | See how the zones, guests, storage, access, and recovery fit together | [The lab](lab.html) |
-| Add a dashboard, AI helper, or AirVPN exit | [Modules](modules.html) |
+| Add observability, protected VPN egress, or an AI helper | [Modules](modules.html) |
 | Prepare the Controller | [Controller](controller.html) |
 | Look up a flag or browse the CLI menu | [Commands](commands.html) |
 
@@ -75,4 +75,4 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 
 ## Built by a lot of clever people
 
-Boetticher is the small connector between a pile of fantastic open-source work. Huge thanks to the maintainers of [Proxmox VE](https://www.proxmox.com/), [Debian](https://www.debian.org/), [Ansible](https://www.ansible.com/), [Pulse](https://github.com/rcourtman/Pulse), [OpenWrt](https://openwrt.org/), [Stubby](https://github.com/getdnsapi/stubby), [Quad9](https://quad9.net/), [WireGuard](https://www.wireguard.com/), and every project in the [third-party notices](https://github.com/gofastercloud/boetticher/blob/main/THIRD_PARTY_NOTICES.md). They did the hard work; this project is delighted to stand on it.
+Boetticher is the small connector between a pile of fantastic open-source work. Huge thanks to the maintainers of [Proxmox VE](https://www.proxmox.com/), [Debian](https://www.debian.org/), [Ansible](https://www.ansible.com/), [OpenWrt](https://openwrt.org/), [Stubby](https://github.com/getdnsapi/stubby), [Quad9](https://quad9.net/), [WireGuard](https://www.wireguard.com/), and every project in the [third-party notices](https://github.com/gofastercloud/boetticher/blob/main/THIRD_PARTY_NOTICES.md). They did the hard work; this project is delighted to stand on it.

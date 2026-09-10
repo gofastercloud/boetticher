@@ -7,12 +7,11 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-	image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-gatus|image-network-probe|images) ;;
-  image-airvpn) ;;
+	image-base|image-dns-blocky|image-firewall|image-tailnet-router|image-bifrost|image-network-probe|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-printer image-network-probe"
+default_image_targets="image-base image-dns-blocky image-firewall image-tailnet-router image-network-probe"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,8 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-	  image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-gatus|image-network-probe) ;;
-      image-airvpn) ;;
+	  image-base|image-dns-blocky|image-firewall|image-tailnet-router|image-bifrost|image-network-probe) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -155,20 +153,11 @@ powerdns_key_sha256=efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923de
 powerdns_repo=https://repo.powerdns.com/debian
 powerdns_suite=trixie-auth-49
 powerdns_package_version=4.9.17-1pdns.trixie
-pulse_version=6.4.1
-pulse_release_url=https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-v6.4.1-linux-amd64.tar.gz
-pulse_release_sha256=543e967718c6e71763b7a76d9c3c9c992157206810959750b4aa0aa0631bf1e0
 tailscale_package_version=1.102.3
 tailscale_key_url=https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
 tailscale_key_sha256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
 tailscale_keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
-aiops_python_package_version=3.13.5-1
-aiops_python_venv_package_version=3.13.5-1
-aiops_pip_package_version=25.1.1+dfsg-1
 bifrost_nginx_package_version=1.26.3-3+deb13u7
-holmes_source_url=https://codeload.github.com/HolmesGPT/holmesgpt/tar.gz/3d201559c0f3648a6c567aece09662f4f407bcc9
-holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a755be
-holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
 step_cli_version=0.30.6
@@ -469,24 +458,6 @@ install_powerdns() {
     "$rootfs/etc/apt/keyrings/auth-49-pub.asc"
 }
 
-install_pulse() {
-  rootfs=$1
-  release="$cache_root/downloads/pulse-v${pulse_version}-linux-amd64.tar.gz"
-  download_cached "$release" "$pulse_release_url" "$pulse_release_sha256" sha256sum
-  install_packages "$rootfs" nginx
-  install -D -m 0755 /dev/null "$rootfs/opt/pulse/bin/pulse"
-  tar -xOf "$release" ./bin/pulse > "$rootfs/opt/pulse/bin/pulse"
-  chmod 0755 "$rootfs/opt/pulse/bin/pulse"
-  install -D -m 0644 /dev/null "$rootfs/opt/pulse/VERSION"
-  tar -xOf "$release" ./VERSION > "$rootfs/opt/pulse/VERSION"
-  if ! grep -Fxq "$pulse_version" "$rootfs/opt/pulse/VERSION"; then
-    echo "HOLD: Pulse archive VERSION does not match the qualified release" >&2
-    return 2
-  fi
-  chroot "$rootfs" useradd --system --home-dir /var/lib/pulse --create-home --shell /usr/sbin/nologin pulse
-  chroot "$rootfs" chown -R pulse:pulse /var/lib/pulse /opt/pulse
-}
-
 package_lxc() {
   name=$1
   rootfs=$(rootfs_for "$name")
@@ -585,28 +556,6 @@ EOF
   package_lxc boetticher-dns-blocky
 }
 
-build_logging() {
-  printf '%s\n' 'boetticher build stage: logging'
-  rootfs=$(prepare_rootfs boetticher-logging)
-  install_packages "$rootfs" systemd-journal-remote nginx
-  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-log-query" ./cmd/boetticher-log-query
-  install -D -m 0644 images/logging/runtime/boetticher-log-query.service "$rootfs/etc/systemd/system/boetticher-log-query.service"
-  chroot "$rootfs" useradd --system --user-group --no-create-home --shell /usr/sbin/nologin boetticher-log-query
-  write_artifact_identity "$rootfs" logging
-  package_lxc boetticher-logging
-}
-
-build_monitoring() {
-  printf '%s\n' 'boetticher build stage: monitoring'
-  rootfs=$(prepare_rootfs boetticher-monitoring)
-  install_pulse "$rootfs"
-  install -D -m 0755 images/monitoring/runtime/run-pulse.sh "$rootfs/usr/lib/boetticher/run-pulse"
-  chmod 0755 "$rootfs/usr/lib/boetticher"
-  install -D -m 0644 images/monitoring/runtime/pulse.service "$rootfs/etc/systemd/system/pulse.service"
-  write_artifact_identity "$rootfs" monitoring
-  package_lxc boetticher-monitoring
-}
-
 build_tailnet_router() {
   printf '%s\n' 'boetticher build stage: tailnet-router'
   rootfs=$(prepare_rootfs boetticher-tailnet-router)
@@ -628,25 +577,6 @@ build_tailnet_router() {
   package_lxc boetticher-tailnet-router
 }
 
-build_airvpn() {
-  printf '%s\n' 'boetticher build stage: airvpn'
-  rootfs=$(prepare_rootfs boetticher-airvpn)
-  install_packages "$rootfs" wireguard-tools wireguard-go nftables iproute2 dnsmasq
-  install -d -m 0700 "$rootfs/run/boetticher"
-  install -D -m 0644 images/airvpn/runtime/boetticher-airvpn.service "$rootfs/etc/systemd/system/boetticher-airvpn.service"
-  install -D -m 0644 images/airvpn/runtime/boetticher-airvpn-firewall.service "$rootfs/etc/systemd/system/boetticher-airvpn-firewall.service"
-  install -D -m 0600 images/airvpn/runtime/bootstrap.nft "$rootfs/etc/nftables.d/airvpn.nft"
-  install -D -m 0644 images/airvpn/runtime/99-boetticher-airvpn.conf "$rootfs/etc/sysctl.d/99-boetticher-airvpn.conf"
-  chroot "$rootfs" systemctl enable boetticher-airvpn-firewall.service
-  install -D -m 0755 images/airvpn/runtime/airvpn-prepare "$rootfs/usr/lib/boetticher/airvpn-prepare"
-  install -D -m 0755 images/airvpn/runtime/airvpn-routes-up "$rootfs/usr/lib/boetticher/airvpn-routes-up"
-  install -D -m 0755 images/airvpn/runtime/airvpn-routes-down "$rootfs/usr/lib/boetticher/airvpn-routes-down"
-  install -D -m 0755 images/airvpn/runtime/airvpn-forwarding-up "$rootfs/usr/lib/boetticher/airvpn-forwarding-up"
-  install -D -m 0755 images/airvpn/runtime/airvpn-forwarding-down "$rootfs/usr/lib/boetticher/airvpn-forwarding-down"
-  write_artifact_identity "$rootfs" airvpn
-  package_lxc boetticher-airvpn
-}
-
 build_bifrost() {
   printf '%s\n' 'boetticher build stage: bifrost'
   rootfs=$(prepare_rootfs boetticher-bifrost)
@@ -659,51 +589,6 @@ build_bifrost() {
   ln -s boetticher-bifrost "$rootfs/usr/local/libexec/boetticher-bifrost-model-capabilities"
   write_artifact_identity "$rootfs" bifrost
   package_lxc boetticher-bifrost
-}
-
-build_printer() {
-  printf '%s\n' 'boetticher build stage: printer'
-  rootfs=$(prepare_rootfs boetticher-printer)
-  install_packages "$rootfs" python3=3.13.5-1 python3-venv=3.13.5-1 python3-pip=25.1.1+dfsg-1 python3-dev build-essential nginx=1.26.3-3+deb13u7
-  chroot "$rootfs" groupadd --system --gid 2200 octoprint
-  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/octoprint --create-home --shell /usr/sbin/nologin octoprint
-  chroot "$rootfs" python3 -m venv /opt/octoprint
-  install -D -m 0644 images/printer/runtime/requirements.lock "$rootfs/tmp/octoprint-requirements.lock"
-  pip_install "$rootfs" /opt/octoprint/bin/pip install --require-hashes --requirement /tmp/octoprint-requirements.lock
-  chroot "$rootfs" apt-get purge --yes --auto-remove python3-dev build-essential
-  chroot "$rootfs" apt-get clean
-  rm -rf "$rootfs/var/lib/apt/lists/"*
-  install -D -m 0644 images/printer/runtime/octoprint.service "$rootfs/etc/systemd/system/octoprint.service"
-  rm -f "$rootfs/tmp/octoprint-requirements.lock" "$rootfs/etc/nginx/sites-enabled/default"
-  write_artifact_identity "$rootfs" printer
-  package_lxc boetticher-printer
-}
-
-build_aiops() {
-  printf '%s\n' 'boetticher build stage: aiops'
-  rootfs=$(prepare_rootfs boetticher-aiops)
-  install_packages "$rootfs" \
-    "python3=$aiops_python_package_version" \
-    "python3-venv=$aiops_python_venv_package_version" \
-    "python3-pip=$aiops_pip_package_version"
-  chroot "$rootfs" python3 -m venv /opt/holmes
-  install -D -m 0644 images/aiops/runtime/requirements.lock "$rootfs/tmp/aiops-requirements.lock"
-  pip_install "$rootfs" /opt/holmes/bin/pip install --require-hashes --requirement /tmp/aiops-requirements.lock
-  chroot "$rootfs" /opt/holmes/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("holmesgpt") == "0.40.0"'
-  holmes_archive="$cache_root/downloads/holmesgpt-0.40.0.tar.gz"
-  download_cached "$holmes_archive" "$holmes_source_url" "$holmes_source_sha256" sha256sum
-  tar -xOf "$holmes_archive" "$holmes_source_root/server.py" > "$rootfs/opt/holmes/server.py"
-  chmod 0644 "$rootfs/opt/holmes/server.py"
-  rm -f "$rootfs/tmp/aiops-requirements.lock"
-  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-aiops" ./cmd/boetticher-aiops
-  chroot "$rootfs" useradd --system --home-dir /var/lib/boetticher/aiops --shell /usr/sbin/nologin boetticher-aiops
-  chroot "$rootfs" useradd --system --no-create-home --shell /usr/sbin/nologin holmes
-  install -D -m 0644 images/aiops/runtime/boetticher-aiops.service "$rootfs/etc/systemd/system/boetticher-aiops.service"
-  install -D -m 0644 images/aiops/runtime/boetticher-aiops.socket "$rootfs/etc/systemd/system/boetticher-aiops.socket"
-  install -D -m 0644 images/aiops/runtime/holmes.service "$rootfs/etc/systemd/system/holmes.service"
-  install -D -m 0644 images/aiops/runtime/holmes.yaml "$rootfs/etc/boetticher-aiops/config.yaml"
-  write_artifact_identity "$rootfs" aiops
-  package_lxc boetticher-aiops
 }
 
 prepare_firewall_package_cache() {
@@ -1000,55 +885,14 @@ build_dns_blocky_target() {
   build_dns_blocky
 }
 
-build_logging_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_logging
-}
-
-build_monitoring_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_monitoring
-}
-
 build_tailnet_router_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_tailnet_router
 }
 
-build_airvpn_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_airvpn
-}
-
 build_bifrost_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_bifrost
-}
-
-build_printer_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_printer
-}
-
-build_aiops_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_aiops
-}
-
-build_gatus_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  rootfs=$(prepare_rootfs boetticher-gatus)
-  install_packages "$rootfs" nginx ca-certificates
-  archive="$cache_root/downloads/gatus-v5.36.0.tar.gz"
-  download_cached "$archive" "$gatus_source_url" "$gatus_source_sha256" sha256sum
-  source_root="$work_root/gatus-source"; rm -rf "$source_root"; mkdir -p "$source_root"
-  tar -xzf "$archive" -C "$source_root" --strip-components=1
-  (cd "$source_root" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/bin/gatus" .)
-  chmod 0755 "$rootfs/usr/local/bin/gatus"
-  chroot "$rootfs" useradd --system --home-dir /var/lib/gatus --create-home --shell /usr/sbin/nologin gatus
-  install -D -m 0644 images/gatus/runtime/gatus.service "$rootfs/etc/systemd/system/gatus.service"
-  write_artifact_identity "$rootfs" gatus
-  package_lxc boetticher-gatus
 }
 
 build_network_probe_target() {
@@ -1064,14 +908,8 @@ build_network_probe_target() {
 case "$target" in
   image-base) run_timed_image_target "$target" build_base ;;
   image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
-  image-logging) run_timed_image_target "$target" build_logging_target ;;
-  image-monitoring) run_timed_image_target "$target" build_monitoring_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
-  image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
   image-bifrost) run_timed_image_target "$target" build_bifrost_target ;;
-  image-printer) run_timed_image_target "$target" build_printer_target ;;
-  image-aiops) run_timed_image_target "$target" build_aiops_target ;;
-  image-gatus) run_timed_image_target "$target" build_gatus_target ;;
   image-network-probe) run_timed_image_target "$target" build_network_probe_target ;;
   image-firewall) run_timed_image_target "$target" build_firewall ;;
   images) build_selected_images ;;

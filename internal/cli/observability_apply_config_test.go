@@ -17,10 +17,10 @@ func TestPrepareObservabilityApplyRequiresExplicitDomainAndLeavesHolmesOff(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Modules.Observability == nil || prepared.Modules.Observability.PublicDomain != "example.com" || prepared.Modules.AIOps != nil {
-		t.Fatalf("fresh apply implicitly changed Holmes/AIOps: %#v", prepared.Modules)
+	if prepared.Modules.Observability == nil || prepared.Modules.Observability.PublicDomain != "example.com" || prepared.Modules.Observability.Monitoring.Holmes != nil {
+		t.Fatalf("fresh apply implicitly changed Holmes monitoring: %#v", prepared.Modules)
 	}
-	if config.Modules.Observability != nil || config.Modules.AIOps != nil {
+	if config.Modules.Observability != nil {
 		t.Fatal("preparation mutated the input configuration")
 	}
 }
@@ -32,14 +32,14 @@ func TestPrepareObservabilityApplyExplicitHolmesModelPreservesExistingSettings(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Modules.AIOps == nil || prepared.Modules.AIOps.Holmes == nil || prepared.Modules.AIOps.Holmes.ModelAlias != "operations" || !clientservices.Enabled(prepared.Modules.AIOps.Holmes.Enabled) {
-		t.Fatalf("explicit Holmes route was not prepared: %#v", prepared.Modules.AIOps)
+	if prepared.Modules.Observability == nil || prepared.Modules.Observability.Monitoring.Holmes == nil || prepared.Modules.Observability.Monitoring.Holmes.ModelAlias != "operations" || !clientservices.Enabled(prepared.Modules.Observability.Monitoring.Holmes.Enabled) {
+		t.Fatalf("explicit Holmes route was not prepared: %#v", prepared.Modules.Observability)
 	}
-	model := prepared.Modules.AIOps.Holmes.Bifrost.Models[0]
-	if model.Upstream != "openrouter" || model.Model != "openai/gpt-4.1-mini" || prepared.Modules.AIOps.Holmes.Bifrost.ClientCredential != "holmes-client-token" {
-		t.Fatalf("explicit Bifrost route = %#v", prepared.Modules.AIOps.Holmes.Bifrost)
+	model := prepared.Modules.Observability.Monitoring.Holmes.Bifrost.Models[0]
+	if model.Upstream != "openrouter" || model.Model != "openai/gpt-4.1-mini" || prepared.Modules.Observability.Monitoring.Holmes.Bifrost.ClientCredential != "holmes-client-token" {
+		t.Fatalf("explicit Bifrost route = %#v", prepared.Modules.Observability.Monitoring.Holmes.Bifrost)
 	}
-	if config.Modules.AIOps != nil {
+	if config.Modules.Observability != nil {
 		t.Fatal("explicit preparation mutated the input configuration")
 	}
 }

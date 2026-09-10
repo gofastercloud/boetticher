@@ -507,7 +507,7 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer file.Close()
-		if header.Filename != "boetticher-logging-1.0.0-amd64.tar.zst" {
+		if header.Filename != "boetticher-base-0.1.0-amd64.tar.zst" {
 			t.Fatalf("filename = %q", header.Filename)
 		}
 		data, err := io.ReadAll(file)
@@ -517,7 +517,7 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 		return response([]byte(`{"data":null}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := client.UploadStorageFile(context.Background(), "lab-proxmox-01", "local", "vztmpl", path, "boetticher-logging-1.0.0-amd64.tar.zst", wantChecksum); err != nil {
+	if err := client.UploadStorageFile(context.Background(), "lab-proxmox-01", "local", "vztmpl", path, "boetticher-base-0.1.0-amd64.tar.zst", wantChecksum); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -46,7 +46,7 @@
     # for other users permits traversal without directory listing or reads.
     mode: '0751'
   when:
-    - inventory_hostname in logging_upload_configs
+    - inventory_hostname in (logging_upload_configs | default({}))
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Allow endpoint services to traverse the boetticher identity path
@@ -57,7 +57,7 @@
     group: systemd-journal
     mode: '0750'
   when:
-    - inventory_hostname in logging_upload_configs
+    - inventory_hostname in (logging_upload_configs | default({}))
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Disable the restricted Chrony service in appliances
@@ -80,18 +80,6 @@
     - inventory_hostname not in groups.get('proxmox', [])
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
-- name: Pin the Proxmox API certificate hostname for Pulse
-  ansible.builtin.lineinfile:
-    path: /etc/hosts
-    regexp: '^\s*{{ proxmox_management_address | regex_escape }}\s+proxmox(\s|$)'
-    line: "{{ proxmox_management_address }} proxmox"
-    state: present
-    create: true
-  when:
-    - inventory_hostname == 'lab-monitor-01'
-    - proxmox_management_address is defined
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
 - name: Pin the Core CA on the gateway without primary recursive DNS
   ansible.builtin.lineinfile:
     path: /etc/hosts
@@ -109,19 +97,7 @@
     create: true
   when:
     - inventory_hostname in groups.get('proxmox', [])
-    - inventory_hostname in logging_upload_configs
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
-- name: Pin the Pulse monitoring hostname for host agents
-  ansible.builtin.lineinfile:
-    path: /etc/hosts
-    regexp: '^\s*\S+\s+monitor\.{{ domain | regex_escape }}(\s|$)'
-    line: "{{ (monitoring_plan.components | selectattr('name', 'equalto', 'lab-monitor-01') | map(attribute='address') | first) }} monitor.{{ domain }}"
-    state: present
-    create: true
-  when:
-    - inventory_hostname in (pulse_agent_targets | default([]))
-    - monitoring_plan.components | selectattr('name', 'equalto', 'lab-monitor-01') | list | length == 1
+    - inventory_hostname in (logging_upload_configs | default({}))
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Install bounded local journald configuration
@@ -135,7 +111,7 @@
 
 - name: Write bounded local journald configuration
   ansible.builtin.copy:
-    content: "[Journal]\nSystemMaxUse={{ logging_plan.local_journal_max_use }}\nRuntimeMaxUse=64M\n"
+    content: "[Journal]\nSystemMaxUse=256M\nRuntimeMaxUse=64M\n"
     dest: /etc/systemd/journald.conf.d/boetticher.conf
     owner: root
     group: root
@@ -151,7 +127,7 @@
     group: systemd-journal
     mode: '0750'
   when:
-    - inventory_hostname in logging_upload_configs
+    - inventory_hostname in (logging_upload_configs | default({}))
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Issue and renew the endpoint-local logging client certificate from Smallstep
@@ -175,14 +151,14 @@
     step_ca_endpoint_key_group: systemd-journal
     step_ca_endpoint_key_mode: '0640'
   when:
-    - inventory_hostname in logging_upload_configs
+    - inventory_hostname in (logging_upload_configs | default({}))
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Check whether the endpoint-local logging certificate is ready
   ansible.builtin.stat:
     path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.crt"
   register: logging_client_certificate_ready
-  when: inventory_hostname in logging_upload_configs
+  when: inventory_hostname in (logging_upload_configs | default({}))
 
 - name: Install the platform CA for endpoint journal upload
   ansible.builtin.copy:
@@ -192,7 +168,7 @@
     group: root
     mode: '0644'
   when:
-    - inventory_hostname in logging_upload_configs
+    - inventory_hostname in (logging_upload_configs | default({}))
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Install the asynchronous journal-upload configuration skeleton
@@ -203,7 +179,7 @@
     group: root
     mode: '0644'
   when:
-    - inventory_hostname in logging_upload_configs
+    - inventory_hostname in (logging_upload_configs | default({}))
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Install bounded journal-upload retry policy
@@ -228,7 +204,7 @@
       ansible.builtin.systemd:
         daemon_reload: true
   when:
-    - inventory_hostname in logging_upload_configs
+    - inventory_hostname in (logging_upload_configs | default({}))
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Enable asynchronous journal upload after endpoint certificate installation
@@ -237,8 +213,8 @@
     enabled: true
     state: started
   when:
-    - inventory_hostname in logging_upload_configs
-    - logging_client_certificate_ready.stat.exists
+    - inventory_hostname in (logging_upload_configs | default({}))
+    - logging_client_certificate_ready.stat.exists | default(false)
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']
 
 - name: Create declared systemd credential drop-in directories
@@ -276,121 +252,3 @@
     - inventory_hostname in groups.get('firewall', [])
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - credential_dropins[inventory_hostname]['kea-dhcp-ddns-server.service'] is defined
-
-- name: Force IPv4 for AirVPN-selected appliance package maintenance
-  ansible.builtin.copy:
-    content: |
-      Acquire::ForceIPv4 "true";
-    dest: /etc/apt/apt.conf.d/99boetticher-force-ipv4
-    owner: root
-    group: root
-    mode: '0644'
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-    - inventory_hostname not in groups.get('proxmox', [])
-    - inventory_hostname in (airvpn_selected_guests | default([])) or inventory_hostname == 'lab-airvpn-01'
-
-- name: Install Pulse host-agent hardware collection dependencies
-  ansible.builtin.apt:
-    name:
-      - lm-sensors
-      - smartmontools
-    state: present
-    update_cache: "{{ inventory_hostname not in groups.get('proxmox', []) }}"
-    cache_valid_time: "{{ 0 if inventory_hostname in groups.get('proxmox', []) else 3600 }}"
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Require the encrypted Pulse host-agent credential projection
-  ansible.builtin.assert:
-    that:
-      - credential_dropins[inventory_hostname]['pulse-agent.service'] is defined
-    fail_msg: "Pulse host-agent setup requires the encrypted report-token credential"
-  no_log: true
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Create Pulse host-agent state directory
-  ansible.builtin.file:
-    path: /var/lib/boetticher/pulse-agent
-    state: directory
-    owner: root
-    group: root
-    mode: '0700'
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Install the Boetticher CA for Pulse host-agent HTTPS
-  ansible.builtin.copy:
-    content: "{{ pulse_server_ca_pem }}"
-    dest: /usr/local/share/ca-certificates/boetticher-pulse.crt
-    owner: root
-    group: root
-    mode: '0644'
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Refresh system CA trust for the Pulse host agent
-  ansible.builtin.command: update-ca-certificates
-  register: pulse_agent_ca_update
-  changed_when: "'0 added, 0 removed' not in pulse_agent_ca_update.stdout"
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Install the exact pinned Pulse host-agent binary
-  ansible.builtin.get_url:
-    url: "{{ pulse_agent_release_url }}"
-    dest: /usr/local/bin/pulse-agent
-    checksum: "sha256:{{ pulse_agent_release_sha256 }}"
-    owner: root
-    group: root
-    mode: '0755'
-  notify: restart pulse-agent
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Verify the pinned Pulse host-agent version
-  ansible.builtin.command: /usr/local/bin/pulse-agent --version
-  register: pulse_agent_version_result
-  changed_when: false
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Prove the expected Pulse host-agent version is installed
-  ansible.builtin.assert:
-    that:
-      - pulse_agent_version in pulse_agent_version_result.stdout
-    fail_msg: "Installed Pulse host-agent did not report the pinned version"
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Install the Pulse host-agent systemd service
-  ansible.builtin.template:
-    src: pulse-agent.service.j2
-    dest: /etc/systemd/system/pulse-agent.service
-    owner: root
-    group: root
-    mode: '0644'
-  notify: restart pulse-agent
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))
-
-- name: Enable the Pulse host-agent service
-  ansible.builtin.systemd_service:
-    name: pulse-agent
-    enabled: true
-    state: started
-    daemon_reload: true
-  when:
-    - pulse_agent_install_enabled | default(false) | bool
-    - inventory_hostname in (pulse_agent_targets | default([]))

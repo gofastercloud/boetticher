@@ -40,10 +40,10 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 	if capability == "logging" && action == "query" {
 		return runLoggingQuery(remaining, out, errOut)
 	}
-	if capability == "aiops" && action == "ask" {
-		return runAIOpsAsk(remaining, input, out, errOut)
+	if capability == "monitoring" && action == "ask" {
+		return runMonitoringAsk(remaining, input, out, errOut)
 	}
-	if capability == "logging" || capability == "monitoring" || capability == "statuspage" || capability == "aiops" {
+	if capability == "logging" || capability == "monitoring" || capability == "statuspage" {
 		if action != "status" {
 			return fmt.Errorf("module %s exposes status/operations only; lifecycle is owned by module observability", capability)
 		}

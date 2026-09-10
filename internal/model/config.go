@@ -57,15 +57,13 @@ type SiteConfig struct {
 // ModulesConfig holds the settings for built-in modules. Each module has a
 // typed shape; an internal lookup map is built later for the deploy code.
 type ModulesConfig struct {
-	DNS           *DNSModuleConfig           `yaml:"dns,omitempty" json:"dns,omitempty"`
-	Monitoring    *ToggleModuleConfig        `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
-	Firewall      *ToggleModuleConfig        `yaml:"firewall,omitempty" json:"firewall,omitempty"`
-	Logging       *ToggleModuleConfig        `yaml:"logging,omitempty" json:"logging,omitempty"`
-	TailnetRouter *TailnetRouterConfig       `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
-	Bifrost       *BifrostModuleConfig       `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
-	AIOps         *AIOpsModuleConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
-	Gatus         *NetworkToggleModuleConfig `yaml:"gatus,omitempty" json:"gatus,omitempty"`
-	AirVPN        *AirVPNModuleConfig        `yaml:"airvpn,omitempty" json:"airvpn,omitempty"`
+	DNS        *DNSModuleConfig    `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Monitoring *ToggleModuleConfig `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+	Firewall   *ToggleModuleConfig `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	// Logging, status-page, and Holmes are facets of Observability rather than
+	// independent site modules.
+	TailnetRouter *TailnetRouterConfig `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
+	Bifrost       *BifrostModuleConfig `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
 }
 
 // CompanionConfig is the fixed capability contract for an external Pi. New
@@ -76,7 +74,6 @@ type CompanionConfig struct {
 	EthernetMAC      string                     `yaml:"ethernet_mac,omitempty" json:"ethernet_mac,omitempty" jsonschema_description:"Physical Ethernet MAC used for the fixed SERVERS reservation."`
 	Display          *CompanionCapabilityConfig `yaml:"display,omitempty" json:"display,omitempty"`
 	StreamDeck       *CompanionCapabilityConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
-	PulseAgent       *CompanionCapabilityConfig `yaml:"pulse_agent,omitempty" json:"pulse_agent,omitempty"`
 	StreamDeckSerial string                     `yaml:"streamdeck_serial,omitempty" json:"streamdeck_serial,omitempty"`
 }
 
@@ -88,7 +85,6 @@ type CompanionCapabilities struct {
 	Enabled    bool
 	Display    bool
 	StreamDeck bool
-	PulseAgent bool
 }
 
 // Capabilities applies one simple rule: a disabled or omitted companion
@@ -103,7 +99,6 @@ func (c *CompanionConfig) Capabilities() CompanionCapabilities {
 		Enabled:    enabled,
 		Display:    enabled && capabilityEnabled(c.Display),
 		StreamDeck: enabled && capabilityEnabled(c.StreamDeck),
-		PulseAgent: enabled && capabilityEnabled(c.PulseAgent),
 	}
 }
 
@@ -184,15 +179,6 @@ type TailnetRouterConfig struct {
 	TrustedClients []string `yaml:"trusted_clients,omitempty" json:"trusted_clients,omitempty"`
 }
 
-// NetworkToggleModuleConfig is the on/off setting for an optional module that
-// declares an external egress path.
-type NetworkToggleModuleConfig struct {
-	// Enabled selects whether an optional module should be deployed.
-	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	// Network selects the external egress path for network-capable modules.
-	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
-}
-
 // BifrostModuleConfig configures the provider-neutral Bifrost AI endpoint and
 // its friendly model aliases.
 type BifrostModuleConfig struct {
@@ -218,24 +204,6 @@ type BifrostModelConfig struct {
 	Alias    string `yaml:"alias" json:"alias"`
 	Upstream string `yaml:"upstream" json:"upstream"`
 	Model    string `yaml:"model" json:"model"`
-}
-
-// AIOpsModuleConfig selects the model alias used by the read-only AIOps helper.
-type AIOpsModuleConfig struct {
-	Enabled    *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Network    ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
-	ModelAlias string            `yaml:"model_alias" json:"model_alias"`
-}
-
-// AirVPNModuleConfig controls the controller-side AirVPN profile generator.
-// The API key lives at the controller-only secret path, never in site.yml.
-type AirVPNModuleConfig struct {
-	// QBittorrentPort is the AirVPN-reserved TCP/UDP peer port; zero disables forwarding.
-	QBittorrentPort int `yaml:"qbittorrent_port,omitempty" json:"qbittorrent_port,omitempty"`
-	// Enabled turns the optional AirVPN transit guest on or off.
-	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	// Servers is the AirVPN server selector, such as europe.
-	Servers string `yaml:"servers" json:"servers"`
 }
 
 // ValidQBittorrentPort excludes local application listeners from provider reservations.
@@ -266,23 +234,11 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.Firewall != nil {
 		result["firewall"] = ModuleConfig{Enabled: cloneBool(m.Firewall.Enabled)}
 	}
-	if m.Logging != nil {
-		result["logging"] = ModuleConfig{Enabled: cloneBool(m.Logging.Enabled)}
-	}
 	if m.TailnetRouter != nil {
 		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled)}
 	}
 	if m.Bifrost != nil {
 		result["bifrost"] = ModuleConfig{Enabled: cloneBool(m.Bifrost.Enabled), Network: m.Bifrost.Network, Upstreams: cloneBifrostUpstreams(m.Bifrost.Upstreams), Models: cloneBifrostModels(m.Bifrost.Models)}
-	}
-	if m.AIOps != nil {
-		result["aiops"] = ModuleConfig{Enabled: cloneBool(m.AIOps.Enabled), Network: m.AIOps.Network, ModelAlias: m.AIOps.ModelAlias}
-	}
-	if m.Gatus != nil {
-		result["gatus"] = ModuleConfig{Enabled: cloneBool(m.Gatus.Enabled), Network: m.Gatus.Network}
-	}
-	if m.AirVPN != nil {
-		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers, QBittorrentPort: m.AirVPN.QBittorrentPort}
 	}
 	return result
 }
@@ -298,23 +254,11 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	if config, ok := input["firewall"]; ok {
 		result.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
-	if config, ok := input["logging"]; ok {
-		result.Logging = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
-	}
 	if config, ok := input["tailnet-router"]; ok {
 		result.TailnetRouter = &TailnetRouterConfig{Enabled: cloneBool(config.Enabled), TrustedClients: append([]string(nil), config.TailnetTrustedClients...)}
 	}
 	if config, ok := input["bifrost"]; ok {
 		result.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
-	}
-	if config, ok := input["aiops"]; ok {
-		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, ModelAlias: config.ModelAlias}
-	}
-	if config, ok := input["gatus"]; ok {
-		result.Gatus = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
-	}
-	if config, ok := input["airvpn"]; ok {
-		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers, QBittorrentPort: config.QBittorrentPort}
 	}
 	return result
 }
@@ -336,8 +280,6 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			return errors.New("modules.firewall.network: module is not network-capable")
 		}
 		m.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
-	case "logging":
-		m.Logging = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	case "tailnet-router":
 		if config.Network != "" {
 			return errors.New("modules.tailnet-router.network: module is not network-capable")
@@ -351,24 +293,6 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			models = m.Bifrost.Models
 		}
 		m.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(upstreams), Models: cloneBifrostModels(models)}
-	case "aiops":
-		alias := config.ModelAlias
-		if alias == "" && m.AIOps != nil {
-			alias = m.AIOps.ModelAlias
-		}
-		m.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, ModelAlias: alias}
-	case "gatus":
-		m.Gatus = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
-	case "airvpn":
-		servers := config.Servers
-		port := config.QBittorrentPort
-		if servers == "" && m.AirVPN != nil {
-			servers = m.AirVPN.Servers
-			if port == 0 {
-				port = m.AirVPN.QBittorrentPort
-			}
-		}
-		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers, QBittorrentPort: port}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}
@@ -385,9 +309,6 @@ func cloneCompanionConfig(value *CompanionConfig) *CompanionConfig {
 	}
 	if value.StreamDeck != nil {
 		result.StreamDeck = &CompanionCapabilityConfig{Enabled: cloneBool(value.StreamDeck.Enabled)}
-	}
-	if value.PulseAgent != nil {
-		result.PulseAgent = &CompanionCapabilityConfig{Enabled: cloneBool(value.PulseAgent.Enabled)}
 	}
 	return result
 }
@@ -570,9 +491,6 @@ func (c SiteConfig) BaseSite() Site {
 	}
 	if c.TestedVersions.Gateway != "" {
 		s.TestedVersions.Gateway = c.TestedVersions.Gateway
-	}
-	if c.TestedVersions.Pulse != "" {
-		s.TestedVersions.Pulse = c.TestedVersions.Pulse
 	}
 	if c.Network.Domain != "" {
 		s.Network.Domain = c.Network.Domain

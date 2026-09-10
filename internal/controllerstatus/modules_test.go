@@ -118,7 +118,7 @@ func TestModuleCheckerDistinguishesVPNFailureAndDNSFailureFromOff(t *testing.T) 
 			case "module dns status":
 				return []byte("DNS: FAIL\n"), errors.New("dns unavailable")
 			case "module vpn status":
-				return []byte("VPN: BLOCKED\n"), errors.New("vpn unavailable")
+				return []byte("VPN: BLOCKED\nReason: provider state drift\n"), errors.New("vpn unavailable")
 			case "module tailnet status --json":
 				return []byte(`{"configured":false,"state":"off","detail":"Tailnet capability not configured","observed_at":"` + time.Now().UTC().Format(time.RFC3339Nano) + `"}`), nil
 			case "module firewall status":
@@ -137,6 +137,9 @@ func TestModuleCheckerDistinguishesVPNFailureAndDNSFailureFromOff(t *testing.T) 
 	}
 	if result.VPN.State != Failed || !result.VPN.Configured {
 		t.Fatalf("failed VPN result = %#v", result.VPN)
+	}
+	if result.VPN.Detail != "provider state drift" {
+		t.Fatalf("VPN failure detail was collapsed: %#v", result.VPN)
 	}
 }
 

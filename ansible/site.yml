@@ -11,14 +11,6 @@
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
         - firewall_plan.mode == 'managed'
 
-- name: Configure the AirVPN DNS and routing foundation before managed appliances
-  hosts: airvpn
-  become: false
-  gather_facts: false
-  roles:
-    - role: airvpn
-      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
 - name: Configure managed appliance runtime state
   hosts: managed
   # Deployment connects as the temporary root SSH identity installed during
@@ -34,24 +26,10 @@
     - base
     - role: chrony
       when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-    - role: monitor
-      when: inventory_hostname in groups.get('monitor', [])
-    - role: logging
-      when: inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'
     - role: tailnet-router
       when:
         - inventory_hostname in groups.get('tailnet-router', [])
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-    - role: airvpn-client
-      when:
-        - inventory_hostname in (airvpn_selected_guests | default([]))
-        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-    - role: bifrost
-      when: inventory_hostname in groups.get('bifrost', [])
-    - role: aiops
-      when: inventory_hostname in groups.get('aiops', [])
-    - role: gatus
-      when: inventory_hostname in groups.get('gatus', [])
 
 - name: Reconcile Core-owned USB exports after appliance configuration
   hosts: proxmox

@@ -174,8 +174,3 @@
     argv: [sysctl, -w, net.ipv4.ip_forward=1]
   changed_when: true
   when: tailnet_forwarding_state.stdout | trim != '1'
-
-- name: Configure module-local Pulse VPN sensors
-  ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/vpn-sensors.yml"
-  vars:
-    vpn_health_module: tailnet-router

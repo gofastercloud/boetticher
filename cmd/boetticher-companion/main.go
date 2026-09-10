@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -47,16 +45,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	credentialDir := os.Getenv("CREDENTIALS_DIRECTORY")
-	if credentialDir == "" {
-		return fmt.Errorf("missing credential directory")
-	}
-	token, err := os.ReadFile(filepath.Join(credentialDir, "pulse-token"))
-	if err != nil {
-		return err
-	}
 	state := companion.NewState(config)
-	collector, err := companion.NewCollector(config, state, strings.TrimSpace(string(token)))
+	collector, err := companion.NewCollector(config, state, "")
 	if err != nil {
 		return err
 	}

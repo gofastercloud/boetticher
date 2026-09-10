@@ -24,7 +24,6 @@ const (
 	CapabilityMonitoring    Capability = "monitoring"
 	CapabilityLogging       Capability = "logging"
 	CapabilityTailnetAccess Capability = "tailnet-access"
-	CapabilityAirVPNTransit Capability = "airvpn-transit"
 	CapabilityAIAPI         Capability = "ai-api"
 )
 
@@ -78,22 +77,10 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
-		"monitoring": {
-			Name: "monitoring", Description: "Pulse platform monitoring with Proxmox API data and tagged-host hardware telemetry", Version: "1.0.0", Policy: DefaultOn,
-			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
-				{Name: "lab-monitor-01", VMID: model.MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Pulse monitoring", DNSAliases: []string{"monitor"}, URL: "https://monitor." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			},
-		},
 		"firewall": {
 			Name: "firewall", Description: "Managed Debian gateway, nftables, and Kea capability", Version: "1.0.0", Policy: DefaultOn,
 			Provides: []Capability{CapabilityGateway}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeManagement}, Guests: []model.Component{
 				{Name: "lab-fw-01", VMID: model.ProxmoxVMID, Hostname: "lab-fw-01", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			},
-		},
-		"logging": {
-			Name: "logging", Description: "Optional central systemd journal collection", Version: "1.0.0", Policy: DefaultOff,
-			DependsOn: []string{"dns"}, Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityLogging}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
-				{Name: "lab-log-01", VMID: model.LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"tailnet-router": {
@@ -101,14 +88,6 @@ func FirstPartyRegistry() Registry {
 			Requires: []Capability{CapabilityGateway, CapabilityDNS}, Provides: []Capability{CapabilityTailnetAccess}, ReservedVMIDStart: 200, ReservedVMIDEnd: 209,
 			StaticDeviceSlots: 1, Placement: PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
 				{Name: "lab-tailnet-01", VMID: 200, Hostname: "lab-tailnet-01", Address: "10.10.5.10", Role: "Tailnet subnet router", DNSAliases: []string{"tailnet-router", "tailnet"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			},
-		},
-		"airvpn": {
-			Name: "airvpn", Description: "AirVPN WireGuard external egress transit node", Version: "1.0.0", Policy: DefaultOff,
-			Requires: []Capability{CapabilityGateway, CapabilityDNS, CapabilityNTP}, Provides: []Capability{CapabilityAirVPNTransit}, ReservedVMIDStart: 260, ReservedVMIDEnd: 269,
-			Configuration: []model.ModuleConfigField{{Key: "servers", Type: model.ModuleConfigString, Prompt: "AirVPN server selector", Description: "AirVPN named server, country, or region selector used once to generate the retained WireGuard profile", Required: true}, {Key: "qbittorrent_port", Type: model.ModuleConfigString, Prompt: "AirVPN reserved qBittorrent peer port", Description: "Existing AirVPN TCP/UDP reservation with matching remote and local ports; 0 disables inbound forwarding", Default: "0"}},
-			Placement:     PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
-				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"bifrost": {
@@ -130,15 +109,6 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-bifrost-01", VMID: 210, Hostname: "lab-bifrost-01", Address: "10.10.20.60", Role: "Bifrost AI API router", DNSAliases: []string{"bifrost", "ai"}, URL: "https://bifrost." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
-		"aiops": {
-			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
-			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the Bifrost module", Required: true, Resolver: "bifrost-model-alias"}},
-			DependsOn:     []string{"monitoring", "logging", "bifrost"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
-			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			},
-		},
-		"gatus": {Name: "gatus", Description: "Generated status page for declared services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true, DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS}, ReservedVMIDStart: 250, ReservedVMIDEnd: 259, Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{{Name: "lab-gatus-01", VMID: model.GatusVMID, Hostname: "lab-gatus-01", Address: "10.10.20.100", Role: "Gatus status page", DNSAliases: []string{"gatus"}, URL: "https://gatus." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true}}},
 	}}
 }
 
@@ -168,7 +138,7 @@ func (r Registry) ConfigurationFields(name string, config model.SiteConfig) ([]m
 	if definition.NetworkCapable {
 		allowed := definition.AllowedNetworkModes
 		if len(allowed) == 0 {
-			allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+			allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect}
 		}
 		defaultMode := definition.DefaultNetworkMode
 		if defaultMode == "" {
@@ -316,7 +286,7 @@ func (r Registry) Validate() error {
 		if definition.NetworkCapable {
 			allowed := definition.AllowedNetworkModes
 			if len(allowed) == 0 {
-				allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+				allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect}
 			}
 			if definition.DefaultNetworkMode != "" && !containsNetworkMode(allowed, definition.DefaultNetworkMode) {
 				return fmt.Errorf("module %s has a default network mode that is not allowed", definition.Name)
@@ -446,33 +416,10 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 	if err := validateModuleNetworkModes(r, configs); err != nil {
 		return nil, err
 	}
-	if port := configs["airvpn"].QBittorrentPort; !model.ValidQBittorrentPort(port) {
-		return nil, fmt.Errorf("modules.airvpn.qbittorrent_port: use 0 to disable or a reserved port from 2049 to 65535 excluding ARR web/API ports")
-	}
-	if airvpn, ok := configs["airvpn"]; ok && (airvpn.Enabled != nil && *airvpn.Enabled || airvpn.Servers != "") {
-		if airvpn.Servers == "" {
-			return nil, fmt.Errorf("modules.airvpn.servers: a server or region selector is required when AirVPN is enabled")
-		}
-		if !modelToken(airvpn.Servers) {
-			return nil, fmt.Errorf("modules.airvpn.servers: selector contains unsafe characters")
-		}
-	}
 	for name, moduleConfig := range configs {
 		if name == "bifrost" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
 			if err := model.ValidateBifrostConfig(moduleConfig); err != nil {
 				return nil, err
-			}
-		}
-		if name == "aiops" && moduleConfig.Enabled != nil && *moduleConfig.Enabled {
-			if !modelToken(moduleConfig.ModelAlias) {
-				return nil, fmt.Errorf("modules.aiops.model_alias: a safe declared AI Router alias is required")
-			}
-			bifrost, ok := configs["bifrost"]
-			if !ok {
-				return nil, fmt.Errorf("modules.aiops.model_alias: Bifrost configuration is required")
-			}
-			if _, err := model.ResolveBifrostAlias(bifrost, moduleConfig.ModelAlias); err != nil {
-				return nil, fmt.Errorf("modules.aiops.model_alias: %w", err)
 			}
 		}
 	}
@@ -504,15 +451,6 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 			}
 		}
 		active["firewall"] = false
-	}
-	for name, moduleConfig := range configs {
-		if moduleConfig.Network != model.ModuleNetworkAirVPN || !active[name] {
-			continue
-		}
-		airvpn, explicitlyConfigured := configs["airvpn"]
-		if !explicitlyConfigured || airvpn.Enabled == nil || !*airvpn.Enabled || !active["airvpn"] {
-			return nil, fmt.Errorf("modules.%s.network: AirVPN egress requires modules.airvpn.enabled=true", name)
-		}
 	}
 	for name := range active {
 		if !active[name] {
@@ -619,7 +557,7 @@ func validateModuleNetworkModes(r Registry, configs map[string]model.ModuleConfi
 		}
 		allowed := definition.AllowedNetworkModes
 		if len(allowed) == 0 {
-			allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+			allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect}
 		}
 		if !containsNetworkMode(allowed, config.Network) {
 			return fmt.Errorf("modules.%s.network: unsupported mode %q", name, config.Network)
@@ -704,9 +642,6 @@ func topologicalOrder(r Registry, active map[string]bool, configs map[string]mod
 func effectiveDependencies(r Registry, definition ModuleDefinition, active map[string]bool, configs map[string]model.ModuleConfig) []string {
 	seen := map[string]bool{}
 	dependencies := append([]string(nil), definition.DependsOn...)
-	if definition.NetworkCapable && configs[definition.Name].Network == model.ModuleNetworkAirVPN {
-		dependencies = append(dependencies, "airvpn")
-	}
 	for _, dependency := range dependencies {
 		seen[dependency] = true
 	}

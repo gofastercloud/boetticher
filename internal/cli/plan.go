@@ -113,16 +113,7 @@ func runPlanRequest(request planRequest, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("calculate model revision: %w", err)
 	}
-	airvpnProfile, err := prepareAirVPNProfile(context.Background(), siteDir, s, ageIdentity, true, false)
-	if err != nil {
-		return err
-	}
-	var firewallPlan firewall.Plan
-	if airvpnProfile == nil {
-		firewallPlan, err = firewall.PlanFromSite(s)
-	} else {
-		firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)
-	}
+	firewallPlan, err := firewall.PlanFromSite(s)
 	if err != nil {
 		return fmt.Errorf("plan firewall: %w", err)
 	}
@@ -212,13 +203,6 @@ func addLivePlanObservations(ctx context.Context, siteDir string, s model.Site, 
 		return fmt.Errorf("observe planned guest state: %w", err)
 	}
 	plan.Observations = deploymentObservations{Node: node, Guests: deploymentGuestObservations(guestPlans, guestStates)}
-	if plan.Firewall.AirVPN != nil {
-		resolved, err := firewall.BindAirVPNEndpoint(plan.Firewall, endpointLookup)
-		if err != nil {
-			return err
-		}
-		plan.Firewall = resolved
-	}
 	if err := validateExternalEndpointReadiness(s, endpointLookup); err != nil {
 		return err
 	}

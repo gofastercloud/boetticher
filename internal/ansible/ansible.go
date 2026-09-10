@@ -19,11 +19,8 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
-	"github.com/gofastercloud/boetticher/internal/gatus"
-	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
-	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 	"github.com/gofastercloud/boetticher/internal/usbexport"
@@ -187,19 +184,7 @@ func retainSuffix(current, data []byte, limit int) []byte {
 // generic component tag. Monitoring is the only module that owns this
 // projection; an untagged guest is never selected implicitly.
 func MonitoringAgentTargets(s model.Site) []string {
-	seen := map[string]bool{}
-	result := make([]string, 0)
-	for _, component := range s.PlatformComponents() {
-		for _, tag := range component.Tags {
-			if tag == model.TagMonitoringAgent && !seen[component.Name] {
-				seen[component.Name] = true
-				result = append(result, component.Name)
-				break
-			}
-		}
-	}
-	sort.Strings(result)
-	return result
+	return nil
 }
 
 func Inventory(s model.Site) (string, error) {
@@ -216,8 +201,7 @@ func Inventory(s model.Site) (string, error) {
 	}
 	b.WriteString(revision + "\n\n")
 	groups := map[string][]model.Component{
-		"dns": {}, "monitor": {}, "logging": {},
-		"tailnet-router": {}, "airvpn": {}, "bifrost": {}, "printer": {}, "aiops": {}, "gatus": {},
+		"dns": {}, "monitor": {}, "tailnet-router": {}, "bifrost": {},
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		groups["firewall"] = nil
@@ -234,11 +218,8 @@ func Inventory(s model.Site) (string, error) {
 		if component.Name == "lab-monitor-01" {
 			groups["monitor"] = append(groups["monitor"], component)
 		}
-		if component.Name == "lab-log-01" {
-			groups["logging"] = append(groups["logging"], component)
-		}
 		switch component.Module {
-		case "tailnet-router", "airvpn", "bifrost", "printer", "aiops", "gatus":
+		case "tailnet-router", "bifrost":
 			groups[component.Module] = append(groups[component.Module], component)
 		}
 	}
@@ -259,14 +240,13 @@ func Inventory(s model.Site) (string, error) {
 		address = s.BootstrapAddress
 	}
 	writeHostAt(&b, *proxmoxComponent, address)
-	for _, group := range []string{"dns", "monitor", "logging", "tailnet-router", "airvpn", "bifrost", "printer", "aiops"} {
+	for _, group := range []string{"dns", "monitor", "tailnet-router", "bifrost"} {
 		writeInventoryGroup(&b, group, groups[group])
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		writeInventoryGroup(&b, "firewall", groups["firewall"])
 	}
-	writeInventoryGroup(&b, "gatus", groups["gatus"])
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nlogging\ntailnet-router\nairvpn\nbifrost\nprinter\narr\naiops\ngatus\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\ntailnet-router\nbifrost\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
@@ -290,30 +270,18 @@ func writeHostAt(b *strings.Builder, component model.Component, address string) 
 }
 
 func Variables(s model.Site) ([]byte, error) {
-	return variables(s, nil, "", nil)
+	return variables(s, nil, "")
 }
 
 func VariablesWithOperatorKey(s model.Site, publicKey string) ([]byte, error) {
-	return variables(s, nil, publicKey, nil)
+	return variables(s, nil, publicKey)
 }
 
 func VariablesWithOperatorKeyAndUpstream(s model.Site, upstream firewall.UpstreamObservation, publicKey string) ([]byte, error) {
-	return variables(s, &upstream, publicKey, nil)
+	return variables(s, &upstream, publicKey)
 }
 
-func VariablesWithOperatorKeyAndAirVPN(s model.Site, publicKey string, profile firewall.AirVPNProfile) ([]byte, error) {
-	return variables(s, nil, publicKey, &profile)
-}
-
-func VariablesWithAirVPN(s model.Site, profile firewall.AirVPNProfile) ([]byte, error) {
-	return variables(s, nil, "", &profile)
-}
-
-func VariablesWithOperatorKeyAndUpstreamAndAirVPN(s model.Site, upstream firewall.UpstreamObservation, publicKey string, profile firewall.AirVPNProfile) ([]byte, error) {
-	return variables(s, &upstream, publicKey, &profile)
-}
-
-func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPublicKey string, airvpnProfile *firewall.AirVPNProfile) ([]byte, error) {
+func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPublicKey string) ([]byte, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
@@ -321,48 +289,18 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 	if err != nil {
 		return nil, err
 	}
-	gatusConfig, err := gatus.RenderConfiguration(s)
-	if err != nil {
-		return nil, err
-	}
 	dnsPlan, err := dns.PlanFromSite(s)
 	if err != nil {
 		return nil, err
 	}
-	monitoringPlan, err := pulse.PlanFromSite(s)
-	if err != nil {
-		return nil, err
-	}
 	var firewallPlan firewall.Plan
-	if airvpnProfile != nil && upstream == nil {
-		firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, *airvpnProfile)
-	} else if airvpnProfile != nil {
-		firewallPlan, err = firewall.PlanFromSiteWithUpstreamAndAirVPN(s, *upstream, *airvpnProfile)
-	} else if upstream == nil {
+	if upstream == nil {
 		firewallPlan, err = firewall.PlanFromSite(s)
 	} else {
 		firewallPlan, err = firewall.PlanFromSiteWithUpstream(s, *upstream)
 	}
 	if err != nil {
 		return nil, err
-	}
-	var loggingPlan logging.Plan
-	var loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride string
-	loggingEnabled := false
-	for _, component := range s.PlatformComponents() {
-		if component.Module == "logging" {
-			loggingEnabled = true
-			break
-		}
-	}
-	if loggingEnabled {
-		loggingPlan, err = logging.PlanFromSite(s)
-		if err != nil {
-			return nil, err
-		}
-		loggingCollectorConfig = logging.CollectorConfiguration(loggingPlan)
-		loggingServiceOverride = logging.CollectorServiceOverride(loggingPlan)
-		loggingSocketOverride = logging.CollectorSocketOverride(loggingPlan)
 	}
 	usbPlan, err := usbexport.PlanFromSite(s)
 	if err != nil {
@@ -372,12 +310,6 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 	blockyConfig, err = dns.RenderBlockyConfig(dnsPlan)
 	if err != nil {
 		return nil, err
-	}
-	loggingUploads := map[string]string{}
-	for _, component := range s.PlatformComponents() {
-		if loggingEnabled && component.Logging && component.Name != logging.CollectorName {
-			loggingUploads[component.Name] = logging.UploadConfiguration(loggingPlan, component.Name)
-		}
 	}
 	value := struct {
 		ModelRevision                  string                                           `json:"model_revision"`
@@ -392,29 +324,17 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 		DNSPlan                        dns.Plan                                         `json:"dns_plan"`
 		FirewallPlan                   firewall.Plan                                    `json:"firewall_plan"`
 		FirewallInterfaceConfigDigests map[string]firewall.InterfaceConfigurationDigest `json:"firewall_interface_config_digests,omitempty"`
-		MonitoringPlan                 pulse.Plan                                       `json:"monitoring_plan"`
-		PulseAgentTargets              []string                                         `json:"pulse_agent_targets"`
-		PulseAgentVersion              string                                           `json:"pulse_agent_version"`
-		PulseAgentReleaseURL           string                                           `json:"pulse_agent_release_url"`
-		PulseAgentReleaseSHA256        string                                           `json:"pulse_agent_release_sha256"`
 		BlockyConfig                   string                                           `json:"blocky_config"`
-		LoggingPlan                    logging.Plan                                     `json:"logging_plan"`
-		LoggingCollectorConfig         string                                           `json:"logging_collector_config"`
-		LoggingServiceOverride         string                                           `json:"logging_collector_service_override"`
-		LoggingSocketOverride          string                                           `json:"logging_collector_socket_override"`
-		LoggingUploadConfigs           map[string]string                                `json:"logging_upload_configs"`
 		ModuleConfigs                  map[string]model.ModuleConfig                    `json:"module_configs"`
 		ModuleDeclarations             []model.ModuleDeclaration                        `json:"module_declarations"`
-		GatusConfig                    string                                           `json:"gatus_config"`
 		USBExportManifests             []usbexport.GuestManifest                        `json:"usb_export_manifests"`
 		NetworkProbeOperatorPublicKey  string                                           `json:"network_probe_operator_public_key,omitempty"`
 		ApplianceResolvers             map[string][]string                              `json:"appliance_resolvers"`
-		AirVPNSelectedGuests           []string                                         `json:"airvpn_selected_guests"`
 		FirewallNonPublicIPv4          []string                                         `json:"firewall_non_public_ipv4"`
 		TrustedLabServices             []model.TrustedLabService                        `json:"trusted_lab_services"`
 		TailnetTrustedClients          []string                                         `json:"tailnet_trusted_clients"`
 		HostIsolation                  firewall.HostIsolation                           `json:"host_isolation"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride, loggingUploads, s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey, model.ApplianceResolverMap(s), model.AirVPNSelectedNames(s), firewall.NonPublicIPv4, model.TrustedLabServices(), s.ModuleConfig["tailnet-router"].TailnetTrustedClients, firewall.HostIsolationForSite(s)}
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), string(blockyConfig), s.ModuleConfig, s.Declarations, usbPlan, operatorPublicKey, model.ApplianceResolverMap(s), firewall.NonPublicIPv4, model.TrustedLabServices(), s.ModuleConfig["tailnet-router"].TailnetTrustedClients, firewall.HostIsolationForSite(s)}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

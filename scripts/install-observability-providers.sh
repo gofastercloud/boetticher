@@ -107,7 +107,7 @@ esac
 holmes_root=${BOETTICHER_OBSERVABILITY_HOLMES_ROOT:-$asset_root/../holmes}
 holmes_lock=$holmes_root/requirements.lock
 if [ ! -f "$holmes_lock" ]; then
-  holmes_lock=$script_dir/../images/aiops/runtime/requirements.lock
+  holmes_lock=$script_dir/../controller/observability/holmes/requirements.lock
 fi
 
 catalog_value() {
