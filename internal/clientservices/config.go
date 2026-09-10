@@ -132,10 +132,24 @@ type MonitoringConfig struct {
 	Holmes        *HolmesConfig `yaml:"holmes,omitempty" json:"holmes,omitempty"`
 }
 type HolmesConfig struct {
-	Enabled    *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ModelAlias string        `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
-	Bifrost    BifrostConfig `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
+	Enabled                   *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ModelAlias                string        `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
+	DailyBudgetUSD            float64       `yaml:"daily_budget_usd,omitempty" json:"daily_budget_usd,omitempty"`
+	InvestigationBudgetUSD    float64       `yaml:"investigation_budget_usd,omitempty" json:"investigation_budget_usd,omitempty"`
+	InvestigationDeadlineSecs int           `yaml:"investigation_deadline_seconds,omitempty" json:"investigation_deadline_seconds,omitempty"`
+	MaxRounds                 int           `yaml:"max_rounds,omitempty" json:"max_rounds,omitempty"`
+	MaxQueue                  int           `yaml:"max_queue,omitempty" json:"max_queue,omitempty"`
+	RetentionDays             int           `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
+	Bifrost                   BifrostConfig `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
 }
+
+// OpenRouterModel names are explicit operator choices. The primary model is
+// not selected implicitly by apply; fallback remains a qualification decision.
+const (
+	HolmesDeepSeekFlash41Model       = "deepseek/deepseek-v4.1-flash"
+	HolmesDeepSeekFlashFallbackModel = "deepseek/deepseek-v4-flash"
+)
+
 type BifrostConfig struct {
 	ClientCredential string            `yaml:"client_credential,omitempty" json:"client_credential,omitempty"`
 	Upstreams        []BifrostUpstream `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
@@ -570,6 +584,24 @@ func validateObservability(modules Modules) error {
 	}
 	if modules.Observability != nil && modules.Observability.Monitoring.Holmes != nil && Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
 		h := modules.Observability.Monitoring.Holmes
+		if h.DailyBudgetUSD < 0 || h.DailyBudgetUSD > 2 {
+			return errors.New("modules.monitoring.holmes.daily_budget_usd must be between 0 and 2")
+		}
+		if h.InvestigationBudgetUSD < 0 || h.InvestigationBudgetUSD > 0.25 {
+			return errors.New("modules.monitoring.holmes.investigation_budget_usd must be between 0 and 0.25")
+		}
+		if h.InvestigationDeadlineSecs != 0 && (h.InvestigationDeadlineSecs < 30 || h.InvestigationDeadlineSecs > 300) {
+			return errors.New("modules.monitoring.holmes.investigation_deadline_seconds must be between 30 and 300")
+		}
+		if h.MaxRounds != 0 && (h.MaxRounds < 1 || h.MaxRounds > 6) {
+			return errors.New("modules.monitoring.holmes.max_rounds must be between 1 and 6")
+		}
+		if h.MaxQueue != 0 && (h.MaxQueue < 1 || h.MaxQueue > 100) {
+			return errors.New("modules.monitoring.holmes.max_queue must be between 1 and 100")
+		}
+		if h.RetentionDays != 0 && (h.RetentionDays < 1 || h.RetentionDays > 3650) {
+			return errors.New("modules.monitoring.holmes.retention_days must be between 1 and 3650")
+		}
 		if h.Bifrost.ClientCredential != "holmes-client-token" {
 			return errors.New("modules.monitoring.holmes.bifrost.client_credential must be holmes-client-token")
 		}

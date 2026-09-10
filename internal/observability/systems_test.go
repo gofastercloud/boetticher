@@ -38,9 +38,10 @@ func TestRenderGatusConfigProjectsAndRemovesOnlyOwnedSystems(t *testing.T) {
 }
 
 func TestMediaGatusEndpointsUsePinnedHealthPathsAndInternalListener(t *testing.T) {
-	m := clientservices.Modules{Media: &clientservices.MediaConfig{Enabled: true, ApplicationDomain: "media.example.test", Aliases: clientservices.MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"}}}
+	enabled := true
+	m := clientservices.Modules{Media: &clientservices.MediaConfig{Enabled: true, ApplicationDomain: "media.example.test", Aliases: clientservices.MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"}}, VPN: &clientservices.VPNConfig{Enabled: &enabled}}
 	endpoints, err := MediaGatusEndpoints(m)
-	if err != nil || len(endpoints) != 11 {
+	if err != nil || len(endpoints) != 12 {
 		t.Fatalf("media endpoints = %d, err=%v", len(endpoints), err)
 	}
 	for _, endpoint := range endpoints {

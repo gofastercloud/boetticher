@@ -25,7 +25,7 @@ func TestProviderAssetsPinnedAndLoopbackOnly(t *testing.T) {
 			t.Fatalf("invalid pin %s: %#v", name, v)
 		}
 	}
-	for _, unit := range []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "bifrost.service", "caddy.service"} {
+	for _, unit := range []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "bifrost.service", "boetticher-incidentd.service", "caddy.service"} {
 		b, err := os.ReadFile(filepath.Join("assets", unit))
 		if err != nil {
 			t.Fatal(err)
@@ -187,7 +187,12 @@ func TestOperatorDashboardsAndGatusUseManagedObservabilitySources(t *testing.T) 
 			t.Errorf("Grafana alerting configuration missing %q", required)
 		}
 	}
-	if strings.Count(string(alerts), "expression: A") != 3 || strings.Count(string(alerts), "expression: B") != 3 {
+	for _, required := range []string{"boetticher-critical-service-failure", "boetticher-vpn-egress-failure", "gatus_results_endpoint_success"} {
+		if !strings.Contains(string(alerts), required) {
+			t.Errorf("Grafana alerting configuration missing %q", required)
+		}
+	}
+	if strings.Count(string(alerts), "expression: A") != 5 || strings.Count(string(alerts), "expression: B") != 5 {
 		t.Fatalf("Grafana alerts do not reduce time series before threshold evaluation")
 	}
 }

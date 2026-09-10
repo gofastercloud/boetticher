@@ -62,6 +62,44 @@ groups:
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: '__expr__'
             model: {conditions: [{evaluator: {params: [3], type: lt}, operator: {type: and}, query: {params: [B, 5m, now]}, reducer: {params: [], type: last}, type: query}], datasource: {type: __expr__, uid: '__expr__'}, expression: B, refId: C, type: threshold}
+      - uid: boetticher-critical-service-failure
+        title: Boetticher critical service failure
+        condition: C
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model: {expr: 'min(gatus_results_endpoint_success{group=~"observability|boetticher-operator-systems|boetticher-media"})', format: time_series, refId: A}
+          - refId: B
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [], datasource: {type: __expr__, uid: '__expr__'}, expression: A, reducer: last, refId: B, type: reduce}
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [{evaluator: {params: [1], type: lt}, operator: {type: and}, query: {params: [B, 5m, now]}, reducer: {params: [], type: last}, type: query}], datasource: {type: __expr__, uid: '__expr__'}, expression: B, refId: C, type: threshold}
+      - uid: boetticher-vpn-egress-failure
+        title: Boetticher VPN-protected egress failure
+        condition: C
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model: {expr: 'min(gatus_results_endpoint_success{name=~".*vpn.*|.*qbittorrent.*"})', format: time_series, refId: A}
+          - refId: B
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [], datasource: {type: __expr__, uid: '__expr__'}, expression: A, reducer: last, refId: B, type: reduce}
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [{evaluator: {params: [1], type: lt}, operator: {type: and}, query: {params: [B, 5m, now]}, reducer: {params: [], type: last}, type: query}], datasource: {type: __expr__, uid: '__expr__'}, expression: B, refId: C, type: threshold}
 deleteContactPoints:
   - orgId: 1
     uid: boetticher-pushover

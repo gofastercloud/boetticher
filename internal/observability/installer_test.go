@@ -39,6 +39,12 @@ func TestProviderInstallerStagesGatusAssetsAndOrdersAccountBeforeOwnership(t *te
 	if err := os.WriteFile(filepath.Join(root, "etc", "passwd"), []byte("root:x:0:0:root:/root:/bin/sh\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "var", "lib", "boetticher", "credentials"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "var", "lib", "boetticher", "credentials", "holmes-client-token.cred"), []byte("fixture-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	writeExecutable(t, filepath.Join(fakeBin, "useradd"), "#!/bin/sh\nset -eu\nroot=/\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = --root ]; then root=$2; shift 2; continue; fi\n  account=$1\n  shift\ndone\nprintf 'useradd %s\\n' \"$account\" >> \"$TEST_CALL_LOG\"\nprintf '%s:x:2200:2200::/var/lib/%s:/usr/sbin/nologin\\n' \"$account\" \"$account\" >> \"$root/etc/passwd\"\n")
 	writeExecutable(t, filepath.Join(fakeBin, "chown"), "#!/bin/sh\nprintf 'chown %s\\n' \"$*\" >> \"$TEST_CALL_LOG\"\n")
 	writeExecutable(t, filepath.Join(fakeBin, "systemctl"), "#!/bin/sh\nprintf 'systemctl %s\\n' \"$*\" >> \"$TEST_CALL_LOG\"\n")
@@ -90,6 +96,12 @@ func TestProviderInstallerStagesGatusAssetsAndOrdersAccountBeforeOwnership(t *te
 	config, err = os.ReadFile(filepath.Join(root, "etc", "boetticher", "gatus", "config.yaml"))
 	if err != nil || !strings.Contains(string(config), "name: bifrost") {
 		t.Fatalf("enabled Bifrost probe was not retained: err=%v config=%s", err, config)
+	}
+	if !strings.Contains(string(config), "http://127.0.0.1:8091/webhooks/gatus") || !strings.Contains(string(config), "${BOETTICHER_INCIDENT_TOKEN}") {
+		t.Fatalf("enabled incident webhook was not retained safely: %s", config)
+	}
+	if _, err := os.Stat(filepath.Join(root, "etc", "systemd", "system", "gatus.service.d", "boetticher-incident.conf")); err != nil {
+		t.Fatalf("incident credential drop-in missing: %v", err)
 	}
 	for _, path := range []string{"etc/boetticher/gatus/config.yaml", "etc/systemd/system/gatus.service"} {
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
@@ -490,7 +502,7 @@ func TestProviderInstallerStagesInternalOnlyCaddyConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(config)
-	for _, required := range []string{"admin unix//run/caddy/admin.sock", "auto_https disable_redirects", "bind 10.10.10.20", "https://observability.example.com", "https://status.example.com", "https://metrics.example.com", "https://ingest.example.com", "basic_auth", "BOETTICHER_METRICS_PASSWORD_HASH", "remote_ip 10.10.10.20", "remote_ip 10.10.10.21 10.10.10.22 10.10.10.20", "respond 403"} {
+	for _, required := range []string{"admin unix//run/caddy/admin.sock", "auto_https disable_redirects", "bind 10.10.10.20", "https://observability.example.com", "https://status.example.com", "https://metrics.example.com", "https://ingest.example.com", "path /incidents* /api/incidents*", "forward_auth 127.0.0.1:3000", "reverse_proxy 127.0.0.1:8091", "basic_auth", "BOETTICHER_METRICS_PASSWORD_HASH", "remote_ip 10.10.10.20", "remote_ip 10.10.10.21 10.10.10.22 10.10.10.20", "respond 403"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("Caddy config missing %q: %s", required, text)
 		}

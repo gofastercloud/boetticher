@@ -260,6 +260,7 @@ boetticher module logging query|status
 boetticher module monitoring status
 boetticher module statuspage status
 boetticher module monitoring ask QUESTION
+boetticher module monitoring incidents list|show|investigate [ID]
 boetticher module observability alerts pushover apply|status|test|remove
 ```
 
@@ -280,13 +281,20 @@ does not trust forwarded headers. Metrics paths are fixed per target and use
 Basic Auth; arbitrary upstream paths are denied.
 
 When Holmes is enabled under Monitoring intent, the same LXC runs the pinned Holmes
-0.40 runner on demand. Holmes can use only the local Prometheus-compatible
-VictoriaMetrics endpoint and VictoriaLogs endpoint. Bifrost is the sole model
-route at `127.0.0.1:4000/v1`; its separate `holmes-client-token` is the only
-credential Holmes receives, and upstream provider keys remain Bifrost-only.
-`module monitoring ask QUESTION` requires normal operator approval before a model
-request that may incur charges. The runner is unprivileged and bounded, uses
-pinned localhost routes, and does not save transcripts. Kernel-level LXC
+0.40 runner and the bounded incident service. Holmes can use only the local
+Prometheus-compatible VictoriaMetrics endpoint and VictoriaLogs endpoint.
+Bifrost is the sole model route at `127.0.0.1:4000/v1`; its separate
+`holmes-client-token` is the only credential Holmes and incident intake receive,
+and upstream provider keys remain Bifrost-only. Gatus alerts are accepted only
+on the loopback incident webhook; the private report UI is exposed through the
+existing Grafana session via Caddy forward-auth. `module monitoring incidents`
+lists, shows, and triggers one bounded read-only investigation. The queue is
+SQLite-backed, deduplicated, restart-recoverable, retained for 30 days, and
+capped at 100 terminal/current records. Each investigation is limited to one
+attempt, six tool rounds, five minutes, and the configured model alias.
+`module monitoring ask QUESTION` still requires normal operator approval before
+a model request that may incur charges. The runner is unprivileged and bounded,
+uses pinned localhost routes, and does not save transcripts. Kernel-level LXC
 egress containment remains `NOT TESTED`.
 
 Pushover is an optional alert contact. `module observability alerts pushover
@@ -312,13 +320,30 @@ network access boundary. Grafana sign-in and private metrics authentication
 remain enabled; no status-page password is required for a fresh deployment.
 
 To opt into Holmes/Bifrost, also set `holmes-client-token` and
-`openrouter-api-key`, then apply with the explicit provider model:
+`openrouter-api-key`, then apply with an explicitly qualified provider model
+(DeepSeek V4.1 Flash is the current candidate; the V4 Flash route remains an
+explicit fallback, never an implicit downgrade):
 
 ```text
 boetticher module observability secrets set holmes-client-token
 boetticher module observability secrets set openrouter-api-key
-boetticher module observability apply --public-domain example.com --holmes-model openai/gpt-4.1-mini --yes
+boetticher module observability apply --public-domain example.com --holmes-model deepseek/deepseek-v4.1-flash --yes
 ```
+
+On this Mac, import the existing operator-held provider material through
+stdin; the filenames are the only values that belong in shell history:
+
+```text
+boetticher module observability secrets set openrouter-api-key < ~/.secrets/btcr-openrouter.key
+boetticher module observability alerts pushover apply --credentials-file ~/.secrets/btcr-pushover.key --yes
+```
+
+The Monitoring intent may cap the paid path explicitly. Defaults are the
+approved V1 limits: `daily_budget_usd: 2`, `investigation_budget_usd: 0.25`,
+`max_rounds: 6`, `max_queue: 100`, `investigation_deadline_seconds: 300`, and
+`retention_days: 30`. The incident service reserves the maximum per-call
+budget before invoking a model and fails closed when the daily reservation is
+exhausted.
 
 Apply creates only an absent exact guest, refuses foreign or mismatched
 identity, uploads the installed provider payload, and verifies the active
