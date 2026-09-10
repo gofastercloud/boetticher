@@ -79,10 +79,12 @@ replacement = '''  // 1. Reuse an existing Jellyfin admin session on reapply. Th
   let bootstrap = existingSession;
   if (!bootstrap) {
     const publicSettings = await fetch(`${base}/api/v1/settings/public`);
-    const publicBody = await readBody(publicSettings);
+    if (!publicSettings.ok) {
+      throw new Error(`Jellyseerr public settings probe failed: HTTP ${publicSettings.status}`);
+    }
     let publicState: { initialized?: boolean };
-    try { publicState = JSON.parse(publicBody) as { initialized?: boolean }; } catch {
-      throw new Error(`Jellyseerr public settings were not valid JSON: HTTP ${publicSettings.status}`);
+    try { publicState = await publicSettings.json() as { initialized?: boolean }; } catch {
+      throw new Error("Jellyseerr public settings were not valid JSON");
     }
     if (publicState.initialized !== false) {
       throw new Error(`Jellyseerr existing-admin authentication failed: HTTP ${publicSettings.status}`);
