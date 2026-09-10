@@ -98,6 +98,19 @@ func TestMediaCategoryPathsAreReconciledIdempotently(t *testing.T) {
 	}
 }
 
+func TestJellyfinAndJellyseerrStreamingFixesAreGenerated(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{"\"Authorization\": authHeader", "/api/v1/settings/network", "forceIpv4First: true"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("media streaming fix missing %q", required)
+		}
+	}
+}
+
 func TestJellyseerrReapplyUsesExistingAdminSession(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
 	if err != nil {

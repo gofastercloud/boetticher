@@ -101,7 +101,18 @@ needle = '''  const relogin = await withRetry(() =>
 replacement = '''  const relogin = existingSession ?? await withRetry(() =>
     fetch(`${base}/api/v1/auth/jellyfin`, {'''
 if needle not in s: raise SystemExit("Jellyseerr relogin anchor missing")
-jellyseerr.write_text(s.replace(needle, replacement, 1))
+s = s.replace(needle, replacement, 1)
+needle = '''  const authedHeaders = { "Content-Type": "application/json", Cookie: cookie };'''
+replacement = needle + '''
+  const networkRes = await withRetry(() =>
+    fetch(`${base}/api/v1/settings/network`, {
+      method: "POST", headers: authedHeaders, body: JSON.stringify({ forceIpv4First: true }),
+    }),
+  );
+  if (!networkRes.ok) throw new Error(`Jellyseerr network settings failed: HTTP ${networkRes.status}`);'''
+if needle not in s: raise SystemExit("Jellyseerr authenticated headers anchor missing")
+s = s.replace(needle, replacement, 1)
+jellyseerr.write_text(s)
 storage = root / "src/storage/layout.ts"
 s = storage.read_text()
 needle = '''const PRIMARY_DIRS = [
