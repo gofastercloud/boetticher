@@ -98,6 +98,19 @@ func TestJellyseerrReapplyUsesExistingAdminSession(t *testing.T) {
 	}
 }
 
+func TestCaddyPersistenceAndDNSPropagationAreBuiltIntoHeadlessAdapter(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{"config/caddy-data", "dst: \"/data\"", "propagation_delay 30s", "propagation_timeout -1"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Caddy persistence/propagation contract missing %q", required)
+		}
+	}
+}
+
 func TestApplyChecksAdapterBytesBeforeHealthyRuntimeNoOp(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "cli", "arrstack.go"))
 	if err != nil {

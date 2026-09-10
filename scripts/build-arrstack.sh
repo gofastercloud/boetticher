@@ -30,7 +30,9 @@ import json
 cli, caddy, compose, catalog, template, manifest = map(Path, sys.argv[1:])
 root = cli.parent.parent
 headless = Path("internal/arrstack/headless.ts").read_text()
+headless = headless.replace('import { lstatSync, readFileSync } from "node:fs";', 'import { lstatSync, mkdirSync, readFileSync } from "node:fs";')
 headless = headless.replace('"./upstream/src/', '"./')
+headless = headless.replace('  return runInstall(', '  mkdirSync(join(installDir, "config", "caddy-data"), { recursive: true });\n  return runInstall(', 1)
 (cli.parent / "headless.ts").write_text(headless)
 s = cli.read_text()
 needle = '    const installDir = opts.installDir ?? `${process.env.HOME}/arrstack`;'
@@ -165,6 +167,19 @@ qbit.write_text(s.replace(needle, replacement, 1))
 s = (root / "src/renderer/compose.ts").read_text()
 s = s.replace('  extraEnv: EnvEntry[];\n', '  extraEnv: EnvEntry[];\n  envFile?: string;\n', 1)
 s = s.replace('      extraEnv,\n      dataMounts,', '      extraEnv,\n      envFile: svc.id === "caddy" && opts.remoteMode === "cloudflare" ? `${opts.installDir}/caddy/caddy.env` : undefined,\n      dataMounts,', 1)
+(root / "src/renderer/compose.ts").write_text(s)
+s = (root / "src/renderer/compose.ts").read_text()
+s = s.replace('''      });
+    }
+
+    return {
+      id: svc.id,''', '''      });
+      // Caddy ACME state must survive reapply and certificate renewal.
+      dataMounts.push({ src: `${opts.installDir}/config/caddy-data`, dst: "/data" });
+    }
+
+    return {
+      id: svc.id,''', 1)
 (root / "src/renderer/compose.ts").write_text(s)
 s = template.read_text().replace('{{#if apiKeyEnv}}\n      - {{apiKeyEnv}}={{apiKey}}\n{{/if}}', '{{#if apiKeyEnv}}\n      - {{apiKeyEnv}}={{apiKey}}\n{{/if}}\n{{#if envFile}}\n    env_file:\n      - {{envFile}}\n{{/if}}', 1)
 template.write_text(s)
@@ -311,6 +326,8 @@ health_listener = '''
 '''
 caddy_template = root / "templates/Caddyfile.hbs"
 caddy_text = caddy_template.read_text()
+caddy_text = caddy_text.replace('dns cloudflare {env.CF_API_TOKEN}', 'dns cloudflare {env.CF_API_TOKEN}\\n\\t\\tpropagation_delay 30s\\n\\t\\tpropagation_timeout -1')
+caddy_text = caddy_text.replace('dns duckdns {env.DUCKDNS_TOKEN}', 'dns duckdns {env.DUCKDNS_TOKEN}\\n\\t\\tpropagation_delay 30s\\n\\t\\tpropagation_timeout -1')
 if ':9110 {' not in caddy_text:
     caddy_template.write_text(caddy_text + health_listener)
 s = catalog.read_text()
