@@ -85,6 +85,19 @@ func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
 	}
 }
 
+func TestMediaCategoryPathsAreReconciledIdempotently(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{"/api/v2/torrents/categories", "/api/v2/torrents/editCategory", "savePath: cat.savePath", "CATEGORIES"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("media category reconciliation missing %q", required)
+		}
+	}
+}
+
 func TestJellyseerrReapplyUsesExistingAdminSession(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
 	if err != nil {

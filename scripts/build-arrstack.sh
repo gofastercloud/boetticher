@@ -152,6 +152,22 @@ if needle not in s: raise SystemExit("qBittorrent config anchor missing")
 # listener through its supported preferences API as part of normal wiring too.
 qbit = root / "src/wiring/qbittorrent.ts"
 s = qbit.read_text()
+needle = '  // 3. Create categories\n  for (const cat of CATEGORIES) {'
+replacement = '''  // 3. Create or reconcile categories. Existing categories are updated
+  // in place so reapply cannot retain an old flat download path.
+  const categoriesRes = await fetch(`${base}/api/v2/torrents/categories`, { headers: { Cookie: cookieHeader } });
+  if (!categoriesRes.ok) throw new Error(`qBittorrent categories lookup failed: ${categoriesRes.status}`);
+  const existingCategories = (await categoriesRes.json()) as Record<string, { savePath?: string }>;
+  for (const cat of CATEGORIES) {
+    if (existingCategories[cat.name]?.savePath !== cat.savePath) {
+      const editRes = await fetch(`${base}/api/v2/torrents/editCategory`, {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookieHeader },
+        body: new URLSearchParams({ category: cat.name, savePath: cat.savePath }).toString(),
+      });
+      if (!editRes.ok && editRes.status !== 404) throw new Error(`qBittorrent editCategory "${cat.name}" failed: ${editRes.status}`);
+    }'''
+if needle not in s: raise SystemExit("qBittorrent category anchor missing")
+s = s.replace(needle, replacement, 1)
 needle = '  // 4. Apply TRaSH-recommended preferences\n  const prefs = {'
 replacement = '''  // 4. Apply TRaSH-recommended preferences and keep the listener equal to
   // the firewall-published VPN-forwarded port. UPnP and random selection must
