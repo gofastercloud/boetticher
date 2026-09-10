@@ -91,7 +91,7 @@ func TestJellyseerrReapplyUsesExistingAdminSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	for _, required := range []string{"/api/v1/auth/local", "existingSession", "NO_ADMIN_USER"} {
+	for _, required := range []string{"/api/v1/auth/jellyfin", "existingSession", "no_admin_user\\\\s*"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Jellyseerr reapply fix missing %q", required)
 		}

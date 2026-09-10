@@ -62,22 +62,32 @@ jellyseerr = root / "src/wiring/jellyseerr.ts"
 s = jellyseerr.read_text()
 needle = '''  // 1. Bootstrap: create the admin + store the Jellyfin connection.
   const bootstrap = await withRetry(() =>'''
-replacement = '''  // 1. Reuse an existing admin session on reapply. The bootstrap endpoint
-  // intentionally returns HTTP 500 (NO_ADMIN_USER) once an admin exists.
+replacement = '''  // 1. Reuse an existing Jellyfin admin session on reapply. The
+  // bootstrap endpoint returns HTTP 500 (NO_ADMIN_USER) once an admin exists.
   let existingSession: Response | undefined;
   try {
-    const local = await fetch(`${base}/api/v1/auth/local`, {
+    const relogin = await fetch(`${base}/api/v1/auth/jellyfin`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: jellyfinUser, password: jellyfinPass }),
+      body: JSON.stringify({ username: jellyfinUser, password: jellyfinPass, email: jellyfinUser, serverType: 2 }),
     });
-    if (local.ok) existingSession = local;
+    if (relogin.ok) existingSession = relogin;
   } catch { /* fall through to first-use bootstrap */ }
 
-  // First-use bootstrap: create the admin + store the Jellyfin connection.
-  const bootstrap = existingSession ?? await withRetry(() =>'''
+  // First-use bootstrap is permitted only when public settings explicitly
+  // report that no admin exists; other failures remain errors.
+  let bootstrap = existingSession;
+  if (!bootstrap) {
+    const publicSettings = await fetch(`${base}/api/v1/settings/public`);
+    const publicBody = await readBody(publicSettings);
+    if (!/no_admin_user\\s*[=:]\\s*true/i.test(publicBody)) {
+      throw new Error(`Jellyseerr existing-admin authentication failed: HTTP ${publicSettings.status}`);
+    }
+    bootstrap = await withRetry(() =>'''
 if needle not in s: raise SystemExit("Jellyseerr bootstrap anchor missing")
 s = s.replace(needle, replacement, 1)
+if "  if (!bootstrap.ok)" not in s: raise SystemExit("Jellyseerr bootstrap result anchor missing")
+s = s.replace("  );\n  if (!bootstrap.ok)", "  );\n  }\n  if (!bootstrap.ok)", 1)
 needle = '''  const relogin = await withRetry(() =>
     fetch(`${base}/api/v1/auth/jellyfin`, {'''
 replacement = '''  const relogin = existingSession ?? await withRetry(() =>
