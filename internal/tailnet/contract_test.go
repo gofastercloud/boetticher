@@ -31,6 +31,23 @@ func TestParseNativeRejectsMalformedStatusAndPreferences(t *testing.T) {
 	}
 }
 
+func TestParseNativeTreatsCoordinationDisconnectAsAttention(t *testing.T) {
+	status := []byte(`{"BackendState":"Running","Version":"1.102.3","TUN":true,"Self":{"Online":false,"Expired":false,"PrimaryRoutes":["10.10.0.0/16"],"AllowedIPs":[]}}`)
+	prefs := []byte(`{"AdvertiseRoutes":["10.10.0.0/16"],"NoSNAT":false,"RouteAll":false,"CorpDNS":false,"WantRunning":true,"ExitNodeID":"","ExitNodeIP":"","RunSSH":false}`)
+	report, err := ParseNative(status, prefs)
+	if err != nil || report.State != Attention {
+		t.Fatalf("coordination disconnect = %#v, err=%v; want attention without parse failure", report, err)
+	}
+}
+
+func TestParseNativeFailsUnsafePreferencesWhileCoordinationIsDisconnected(t *testing.T) {
+	status := []byte(`{"BackendState":"Running","Version":"1.102.3","TUN":true,"Self":{"Online":false,"Expired":false,"PrimaryRoutes":["10.10.0.0/16"],"AllowedIPs":[]}}`)
+	unsafe := []byte(`{"AdvertiseRoutes":["10.10.0.0/16"],"NoSNAT":true,"RouteAll":false,"CorpDNS":false,"WantRunning":true,"ExitNodeID":"","ExitNodeIP":"","RunSSH":false}`)
+	if report, err := ParseNative(status, unsafe); err != nil || report.State != Failed {
+		t.Fatalf("disconnected coordination with unsafe prefs = %#v, err=%v; want failed", report, err)
+	}
+}
+
 func TestGuestPolicyAllowsOnlyProxmoxManagementSSH(t *testing.T) {
 	policy := GuestPolicy()
 	want := `iifname "tailscale0" oifname "eth0" ip daddr 10.10.99.5 tcp dport 22 counter accept`

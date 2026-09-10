@@ -252,8 +252,10 @@ Controller StreamDeck service is removed during Controller bootstrap.
 The Host detail view also shows `FW`, `DHCP`, and `TAILNET` using the same coarse
 component states as Blinkt. `FW` consumes the native `module firewall status`
 result; the client-service slot consumes `module dhcp status`, and TAILNET
-consumes `module tailnet status`. Unconfigured is off, while a
-configured-but-unavailable service is failed.
+consumes `module tailnet status`. Unconfigured is off, while a configured
+service with failed local checks is failed. A disconnected Tailnet coordination
+service is attention when existing approved routes may continue; policy drift
+still reports failed.
 
 ## Installed paths and maintenance
 

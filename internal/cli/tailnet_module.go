@@ -426,7 +426,7 @@ func runTailnetStatus(a []string, out io.Writer) error {
 		}
 		return e
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
 	r, e := tailnet.ReadStatus(ctx, sc.Host)
 	if o.json {
