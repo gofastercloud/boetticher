@@ -85,6 +85,26 @@ func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
 	}
 }
 
+func TestMediaRuntimeRequiresGuestRenderNodeAndPropagatesVAAPIIdentity(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{"/dev/dri/renderD128", "hardware-transcoding HOLD", "ARRSTACK_GPU_VENDOR=intel", "ARRSTACK_GPU_RENDER_GID", "ARRSTACK_GPU_VIDEO_GID"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("GPU contract missing %q", required)
+		}
+	}
+	adapter, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(adapter), `vendor: process.env.ARRSTACK_GPU_VENDOR === "intel" ? "intel" : "none"`) {
+		t.Fatal("headless adapter does not fail closed to software transcoding")
+	}
+}
+
 func TestMediaCategoryPathsAreReconciledIdempotently(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-arrstack.sh"))
 	if err != nil {
