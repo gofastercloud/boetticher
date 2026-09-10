@@ -12,10 +12,13 @@ func testConfig(mode string) model.SiteConfig {
 
 func TestRegistryExcludesRetiredRuntimeModules(t *testing.T) {
 	registry := FirstPartyRegistry()
-	for _, name := range []string{"airvpn", "aiops", "logging", "monitoring", "gatus", "printer"} {
+	for _, name := range []string{"airvpn", "aiops", "logging", "gatus", "printer"} {
 		if _, ok := registry.Definition(name); ok {
 			t.Fatalf("retired runtime module %q remains registered", name)
 		}
+	}
+	if _, ok := registry.Definition("monitoring"); !ok {
+		t.Fatal("unified monitoring capability disappeared")
 	}
 	if _, ok := registry.Definition("tailnet-router"); !ok {
 		t.Fatal("Tailnet capability disappeared")

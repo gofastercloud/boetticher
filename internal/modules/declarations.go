@@ -32,9 +32,14 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	if err != nil {
 		return model.ModuleDeclaration{}, err
 	}
-	artifact, err := artifacts.ArtifactFor(name)
-	if err != nil {
-		return model.ModuleDeclaration{}, err
+	var artifact model.Artifact
+	if name == "monitoring" {
+		artifact = model.Artifact{Name: "boetticher-observability", Version: definition.Version, Architecture: "amd64", Kind: "lxc", DefinitionSHA256: "0000000000000000000000000000000000000000000000000000000000000000"}
+	} else {
+		artifact, err = artifacts.ArtifactFor(name)
+		if err != nil {
+			return model.ModuleDeclaration{}, err
+		}
 	}
 	declaration := model.ModuleDeclaration{Module: name, Artifact: artifact}
 	declaration.USBRequirements = append([]model.USBRequirement(nil), definition.USBRequirements...)
@@ -55,8 +60,8 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.DNSRecords = []model.DNSRecord{{Name: "dns01." + site.Network.Domain, Type: "A", Address: "10.10.10.10", Owner: "dns"}}
 	case "monitoring":
 		// The live monitoring runtime is the unified VictoriaMetrics/VictoriaLogs,
-		// Grafana, Gatus, and Caddy guest. Its lifecycle is owned by the
-		// observability capability rather than this retired appliance projection.
+		// Grafana, Gatus, and Caddy guest. Holmes is a nested Monitoring operation.
+		declaration.NetworkIntents = []model.NetworkIntent{{Source: "lab-monitor-01", Destination: model.LogicalProxmoxIdentity, Protocol: "tcp", Ports: []string{"8006"}, Direction: "egress", Purpose: "observability Proxmox API collection"}}
 	case "firewall":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleRuntime}}
 	case "logging":

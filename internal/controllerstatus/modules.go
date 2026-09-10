@@ -107,8 +107,10 @@ func (c ModuleChecker) checkVPN(ctx context.Context) CheckResult {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "Reason:") {
 			detail = strings.TrimSpace(strings.TrimPrefix(line, "Reason:"))
-			continue
 		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
 		switch {
 		case line == "VPN: OFF" && err == nil:
 			return CheckResult{State: Off, Detail: "VPN capability not configured"}

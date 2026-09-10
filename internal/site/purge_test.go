@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestPurgeIntentRoundTripAndClear(t *testing.T) {

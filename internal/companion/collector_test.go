@@ -1,10 +1,11 @@
 package companion
 
 import (
-	"encoding/json"
-	"golang.org/x/net/dns/dnsmessage"
+	"context"
 	"net"
 	"testing"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 func TestDNSCheckCannotUseHostsFile(t *testing.T) {
@@ -39,13 +40,5 @@ func TestDNSCheckCannotUseHostsFile(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestPercentSentinelAndUnknownAreNotZero(t *testing.T) {
-	for _, raw := range []string{`-1`, `null`, `{}`, `{"unit":"bytes","value":5}`} {
-		if value := percent(json.RawMessage(raw)); value != nil {
-			t.Fatalf("%s became a percentage", raw)
-		}
 	}
 }

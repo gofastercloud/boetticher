@@ -39,7 +39,7 @@ func TestPrepareObservabilityApplyExplicitHolmesModelPreservesExistingSettings(t
 	if model.Upstream != "openrouter" || model.Model != "openai/gpt-4.1-mini" || prepared.Modules.Observability.Monitoring.Holmes.Bifrost.ClientCredential != "holmes-client-token" {
 		t.Fatalf("explicit Bifrost route = %#v", prepared.Modules.Observability.Monitoring.Holmes.Bifrost)
 	}
-	if config.Modules.Observability != nil {
+	if config.Modules.Observability == nil || config.Modules.Observability.Monitoring.Holmes != nil || config.Modules.Observability.PublicDomain != "example.com" {
 		t.Fatal("explicit preparation mutated the input configuration")
 	}
 }

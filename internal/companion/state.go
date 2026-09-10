@@ -184,11 +184,7 @@ func (s *State) Snapshot() Snapshot {
 		}
 	}
 	out.LEDs = append([]Item(nil), out.Items...)
-	for i, module := range out.Modules {
-		if module.Status != Disabled {
-			out.LEDs[6+i] = module
-		}
-	}
+	out.LEDs = append(out.LEDs, out.Modules...)
 	return out
 }
 

@@ -83,6 +83,12 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-fw-01", VMID: model.ProxmoxVMID, Hostname: "lab-fw-01", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
+		"monitoring": {
+			Name: "monitoring", Description: "Unified VictoriaMetrics/VictoriaLogs, Grafana, Gatus, and nested Holmes observability runtime", Version: "1.0.0", Policy: DefaultOn,
+			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
+				{Name: "lab-monitor-01", VMID: model.MonitorVMID, Hostname: "lab-monitor-01", Address: "10.10.10.20", Role: "Unified observability", DNSAliases: []string{"monitor"}, URL: "https://monitor." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
 		"tailnet-router": {
 			Name: "tailnet-router", Description: "Tailscale subnet router for the TRANSIT security edge", Version: "1.0.0", Policy: DefaultOff,
 			Requires: []Capability{CapabilityGateway, CapabilityDNS}, Provides: []Capability{CapabilityTailnetAccess}, ReservedVMIDStart: 200, ReservedVMIDEnd: 209,

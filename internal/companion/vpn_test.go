@@ -2,7 +2,6 @@ package companion
 
 import (
 	"testing"
-	"time"
 )
 
 func TestVPNLEDsRemainBoundedWithoutRemoteTelemetry(t *testing.T) {
