@@ -33,6 +33,11 @@ headless = Path("internal/arrstack/headless.ts").read_text()
 headless = headless.replace('import { lstatSync, readFileSync } from "node:fs";', 'import { lstatSync, mkdirSync, readFileSync } from "node:fs";')
 headless = headless.replace('"./upstream/src/', '"./')
 headless = headless.replace('  return runInstall(', '  mkdirSync(join(installDir, "config", "caddy-data"), { recursive: true });\n  return runInstall(', 1)
+headless = headless.replace('    gpu: { vendor: "none" },', '''    gpu: {
+      vendor: process.env.ARRSTACK_GPU_VENDOR === "intel" ? "intel" : "none",
+      ...(process.env.ARRSTACK_GPU_RENDER_GID ? { render_gid: Number(process.env.ARRSTACK_GPU_RENDER_GID) } : {}),
+      ...(process.env.ARRSTACK_GPU_VIDEO_GID ? { video_gid: Number(process.env.ARRSTACK_GPU_VIDEO_GID) } : {}),
+    },''', 1)
 (cli.parent / "headless.ts").write_text(headless)
 s = cli.read_text()
 needle = '    const installDir = opts.installDir ?? `${process.env.HOME}/arrstack`;'

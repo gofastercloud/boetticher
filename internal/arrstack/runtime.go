@@ -523,6 +523,23 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	if !guest.Exists || !guest.Running {
 		return errors.New("arrstack VM must be running before runtime installation")
 	}
+	// The adapter's headless path enables Intel VA-API. Require the guest-visible
+	// render node before rendering Compose so a software fallback is never
+	// reported as hardware acceleration. Proxmox host PCI/iGPU passthrough is
+	// intentionally outside this lifecycle and remains an operator prerequisite.
+	gpu, err := guestExecOutput(ctx, host, "test -c /dev/dri/renderD128; stat -c '%g' /dev/dri/renderD128; getent group video | cut -d: -f3 || true")
+	if err != nil {
+		return errors.New("arrstack hardware-transcoding HOLD: guest /dev/dri/renderD128 is absent; configure Proxmox Intel iGPU passthrough and retry")
+	}
+	gpuLines := strings.Fields(gpu)
+	if len(gpuLines) < 1 {
+		return errors.New("arrstack hardware-transcoding HOLD: guest /dev/dri/renderD128 is absent; configure Proxmox Intel iGPU passthrough and retry")
+	}
+	renderGID := gpuLines[0]
+	videoGID := ""
+	if len(gpuLines) > 1 {
+		videoGID = gpuLines[1]
+	}
 	mediaPending := hasTag(guest.Config["tags"], GuestMediaPendingTag)
 	// The VM-owned marker, rather than caller history, authorizes first-use formatting.
 	if err := guestExecJSON(ctx, host, "command -v qemu-ga >/dev/null; "+mediaMountScript(mediaPending)); err != nil {
@@ -555,7 +572,12 @@ func installRuntime(ctx context.Context, host firewallmodule.HostClient, peerPor
 	if pullTimeout < 1 {
 		return errors.New("insufficient Controller deadline remains for the headless media image pull")
 	}
-	command := "ARRSTACK_MEDIA_MONITORING=" + strconv.FormatBool(monitoring) + " ARRSTACK_HEADLESS_PULL_TIMEOUT_MS=" + strconv.Itoa(pullTimeout*1000) + " ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
+	command := "ARRSTACK_GPU_VENDOR=intel ARRSTACK_GPU_RENDER_GID=" + shellQuote(renderGID) + " " + func() string {
+		if videoGID == "" {
+			return ""
+		}
+		return "ARRSTACK_GPU_VIDEO_GID=" + shellQuote(videoGID) + " "
+	}() + "ARRSTACK_MEDIA_MONITORING=" + strconv.FormatBool(monitoring) + " ARRSTACK_HEADLESS_PULL_TIMEOUT_MS=" + strconv.Itoa(pullTimeout*1000) + " ARRSTACK_PEER_PORT=" + strconv.Itoa(peerPort) + " ARRSTACK_APPLICATION_DOMAIN=" + shellQuote(config.ApplicationDomain) + " ARRSTACK_ALIAS_RADARR=" + shellQuote(config.Aliases.Radarr) + " ARRSTACK_ALIAS_SONARR=" + shellQuote(config.Aliases.Sonarr) + " ARRSTACK_ALIAS_BAZARR=" + shellQuote(config.Aliases.Bazarr) + " ARRSTACK_ALIAS_PROWLARR=" + shellQuote(config.Aliases.Prowlarr) + " ARRSTACK_ALIAS_TRAILARR=" + shellQuote(config.Aliases.Trailarr) + " ARRSTACK_STORAGE_ROOT=" + shellQuote(GuestMediaRoot) + " " + shellQuote(GuestAdapterPath) + " install --non-interactive --install-dir " + shellQuote(GuestInstallDir)
 	if len(cloudflareToken) > 0 {
 		if len(cloudflareToken) > 16<<10 {
 			return errors.New("Cloudflare token exceeds the bounded credential size")

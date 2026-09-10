@@ -34,6 +34,12 @@ export function buildHeadlessState(installDir: string, storageRoot: string): Sta
   for (const id of ["prowlarr", "sonarr", "radarr"]) if (!apiKeys[id]) apiKeys[id] = generateApiKey();
   const domain = process.env.ARRSTACK_APPLICATION_DOMAIN;
   if (typeof domain !== "string" || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) throw new Error("ARRSTACK_APPLICATION_DOMAIN must be a valid DNS domain");
+  const gpuVendor = process.env.ARRSTACK_GPU_VENDOR ?? "none";
+  if (gpuVendor !== "intel" && gpuVendor !== "none") throw new Error("ARRSTACK_GPU_VENDOR must be intel or none");
+  const renderGid = process.env.ARRSTACK_GPU_RENDER_GID ? Number(process.env.ARRSTACK_GPU_RENDER_GID) : undefined;
+  const videoGid = process.env.ARRSTACK_GPU_VIDEO_GID ? Number(process.env.ARRSTACK_GPU_VIDEO_GID) : undefined;
+  if (renderGid !== undefined && (!Number.isInteger(renderGid) || renderGid < 0)) throw new Error("ARRSTACK_GPU_RENDER_GID must be a non-negative integer");
+  if (videoGid !== undefined && (!Number.isInteger(videoGid) || videoGid < 0)) throw new Error("ARRSTACK_GPU_VIDEO_GID must be a non-negative integer");
   return {
     schema_version: 1,
     installer_version: VERSION,
@@ -42,7 +48,7 @@ export function buildHeadlessState(installDir: string, storageRoot: string): Sta
     extra_paths: [],
     admin: { username: existing?.admin.username ?? process.env.ARRSTACK_ADMIN_USER ?? os.userInfo().username },
     services_enabled: enabled,
-    gpu: { vendor: "none" },
+    gpu: { vendor: gpuVendor, ...(renderGid === undefined ? {} : { render_gid: renderGid }), ...(videoGid === undefined ? {} : { video_gid: videoGid }) },
     remote_access: { mode: "cloudflare", domain },
     local_dns: { enabled: false, tld: domain, install_dnsmasq: false },
     vpn: { enabled: false },
