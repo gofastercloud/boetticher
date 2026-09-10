@@ -158,8 +158,8 @@ returning fresh state remain NOT TESTED; fix only observed faults.
 
 The reference physical path now uses exact `nic1` ownership on `vmbr1`, with
 tagged VLAN 20 (SERVERS) and VLAN 40 (SANDBOX) only and untagged ingress
-rejected. Current lease evidence is Pi `10.10.20.106` on SERVERS and the
-MacBook `10.10.40.181` on SANDBOX; HOME remains on `vmbr0`. Remote Tailnet,
+rejected. Current lease evidence is site-specific and belongs in private
+acceptance records; HOME remains on `vmbr0`. Remote Tailnet,
 packet, physical USB, and the disposable protected VPN-client journey remain
 separate acceptance gates and are reported as `NOT TESTED` or `HOLD` until
 their exact journeys execute.

@@ -22,9 +22,9 @@ of Host apply.
 
 ## Start here
 
-The [Boetticher guide](https://gofastercloud.github.io/boetticher/) is the nice
-place to read: a short first-run walkthrough, a map of the lab, modules, and a
-generated command menu.
+The [Boetticher guide](https://lab.davebarton.cc/) is the nice place to read: a
+short first-run walkthrough, a map of the lab, modules, and a generated command
+menu. The [source remains on GitHub](https://github.com/gofastercloud/boetticher).
 
 ## Quickstart
 

@@ -16,7 +16,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
     </div>
   </div>
   <figure class="hero__art">
-    <img src="images/workbench-hero.webp" alt="Illustrated homelab workbench with a compact server, switch, and control panel">
+    <img src="{{ '/images/workbench-hero.webp' | relative_url }}" alt="Illustrated homelab workbench with a compact server, switch, and control panel">
   </figure>
 </section>
 
@@ -40,7 +40,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
       <h3>A little chemistry-show wink, not a costume party</h3>
       <p>The name is a nod to breaking out the good gear. The aim is wonderfully ordinary: a homelab that feels considered, useful, and fun to come back to.</p>
     </div>
-    <img src="images/boetticher-cover.jpg" alt="Boetticher illustrated project mark">
+    <img src="{{ '/images/boetticher-cover.jpg' | relative_url }}" alt="Boetticher illustrated project mark">
   </article>
 </section>
 
@@ -59,7 +59,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 </aside>
 
 <aside class="callout">
-  <p><strong>The Host boundary:</strong> Host apply owns the Proxmox OS baseline, dedicated storage, and virtual-only <code>vmbr1</code> shape. Modules and physical LAB networking are later work.</p>
+  <p><strong>The Host boundary:</strong> Host apply owns the Proxmox OS baseline and dedicated storage. A VLAN-aware <code>vmbr1</code> physical trunk is added only through the separately verified network journey.</p>
 </aside>
 
 ## A quick glossary
