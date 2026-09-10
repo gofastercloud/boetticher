@@ -332,8 +332,9 @@ mkdir -p "$(dirname "$output")"
 (cd "$root" && bun install --save-text-lockfile --frozen-lockfile)
   cp internal/arrstack/adapter-contract.test.ts "$root/src/boetticher-adapter-contract.test.ts"
   cp internal/arrstack/jellyfin-auth-contract.test.ts "$root/src/boetticher-jellyfin-auth-contract.test.ts"
+  cp internal/arrstack/jellyseerr-reapply-contract.test.ts "$root/src/boetticher-jellyseerr-reapply-contract.test.ts"
   cp internal/arrstack/storage-layout-contract.test.ts "$root/src/boetticher-storage-layout-contract.test.ts"
-(cd "$root" && bun test src/boetticher-adapter-contract.test.ts src/boetticher-jellyfin-auth-contract.test.ts src/boetticher-storage-layout-contract.test.ts && bun run typecheck && bun run build)
+  (cd "$root" && bun test src/boetticher-adapter-contract.test.ts src/boetticher-jellyfin-auth-contract.test.ts src/boetticher-jellyseerr-reapply-contract.test.ts src/boetticher-storage-layout-contract.test.ts && bun run typecheck && bun run build)
 if [ -n "${ARRSTACK_LOCK_OUTPUT:-}" ]; then lock=$(find "$root" -maxdepth 1 -name 'bun.lock*' -print -quit); [ -n "$lock" ] && cp "$lock" "$ARRSTACK_LOCK_OUTPUT"; fi
 cp "$root/dist/arrstack-${target#bun-linux-}" "$output"
 chmod 0755 "$output"
