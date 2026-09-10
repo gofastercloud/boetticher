@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-	image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe|images) ;;
+	image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-gatus|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-firewall image-tailnet-router image-airvpn image-printer image-network-probe"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-	  image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe) ;;
+	  image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-gatus|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
@@ -171,26 +171,12 @@ holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a
 holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
-arr_nginx_package_version=1.26.3-3+deb13u7
 step_cli_version=0.30.6
 step_cli_url=https://github.com/smallstep/cli/releases/download/v0.30.6/step_linux_0.30.6_amd64.tar.gz
 step_cli_sha256=e44a5dc5f880a694b24a0f2941a69a81b0bc6ee053170fdfde18453d4d5816de
 step_ca_version=0.30.2
 step_ca_url=https://github.com/smallstep/certificates/releases/download/v0.30.2/step-ca_linux_0.30.2_amd64.tar.gz
 step_ca_sha256=126615795bafe3f2d3f890e2d628fa6e2857315fb48d0671d34b23047cc37d73
-sonarr_version=4.0.19.2979
-sonarr_release_url=https://github.com/Sonarr/Sonarr/releases/download/v4.0.19.2979/Sonarr.main.4.0.19.2979.linux-x64.tar.gz
-sonarr_release_sha256=b691b3584c31c0b5514058dee81071c923f63d59a37d19e32f92fa13eaa153db
-radarr_version=6.3.0.10514
-radarr_release_url=https://github.com/Radarr/Radarr/releases/download/v6.3.0.10514/Radarr.master.6.3.0.10514.linux-core-x64.tar.gz
-radarr_release_sha256=41d6455c037ff267c5ad5a0f0de4502cebe8f89ec3d051da97851933d48a4047
-lidarr_version=3.1.4.5029
-lidarr_release_url=https://github.com/Lidarr/Lidarr/releases/download/v3.1.4.5029/Lidarr.develop.3.1.4.5029.linux-core-x64.tar.gz
-lidarr_release_sha256=39e011bb43ed612e3e009b9280836e47bc53f6ee1439192a9e89384fc38216b1
-prowlarr_version=2.5.2.5491
-prowlarr_release_url=https://github.com/Prowlarr/Prowlarr/releases/download/v2.5.2.5491/Prowlarr.master.2.5.2.5491.linux-core-x64.tar.gz
-prowlarr_release_sha256=22fe95742869d7af5e16d420c7889185579152ea8324be6c6e4e3cd011f4c37b
-arr_qbittorrent_package_version=5.1.0-2
 firewall_package_names='nftables conntrack kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent'
 case "${BOETTICHER_LOCAL_FAST:-0}" in
   0|1) ;;
@@ -268,8 +254,6 @@ artifact_for() {
 	if [ "$name" = boetticher-base ]; then
 		version=0.1.0
 	elif [ "$name" = boetticher-monitoring ]; then
-		version=1.0.1
-	elif [ "$name" = boetticher-arr ]; then
 		version=1.0.1
 	fi
 	printf '%s/%s/%s-%s-amd64.tar.zst' "$output_root" "$name" "$name" "$version"
@@ -695,47 +679,6 @@ build_printer() {
   package_lxc boetticher-printer
 }
 
-build_arr() {
-  printf '%s\n' 'boetticher build stage: arr'
-  rootfs=$(prepare_rootfs boetticher-arr)
-  install_packages "$rootfs" "nginx=$arr_nginx_package_version" "qbittorrent-nox=$arr_qbittorrent_package_version" ca-certificates libicu76 libsqlite3-0
-  chroot "$rootfs" groupadd --system --gid 2200 arr
-  # Fixed native applications, not a runtime installer or selectable catalog.
-  # Dependency layout checked against community-scripts/ProxmoxVE
-  # 9996ed71ba50500b7156cfcf2ef519415d9e0187; binaries remain official pinned releases.
-  while IFS='|' read -r app binary uid version url digest; do
-    archive="$cache_root/downloads/$binary.$version.tar.gz"
-    download_cached "$archive" "$url" "$digest" sha256sum
-    app_root="$work_root/$app-$version"
-    rm -rf "$app_root"
-    mkdir -p "$app_root"
-    tar -xzf "$archive" -C "$app_root" --strip-components=1
-    install -d -m 0755 "$rootfs/opt/$app"
-    cp -a "$app_root/." "$rootfs/opt/$app/"
-    chroot "$rootfs" useradd --system --uid "$uid" --gid 2200 --home-dir "/var/lib/arr/$app" --create-home --shell /usr/sbin/nologin "$app"
-    chroot "$rootfs" install -d -o "$app" -g arr -m 0750 "/var/lib/arr/$app"
-    chroot "$rootfs" chown -R root:root "/opt/$app"
-    chroot "$rootfs" chmod -R u+rwX,go+rX,go-w "/opt/$app"
-    install -D -m 0644 "images/arr/runtime/$app.service" "$rootfs/etc/systemd/system/$app.service"
-  done <<EOF
-sonarr|Sonarr|2200|$sonarr_version|$sonarr_release_url|$sonarr_release_sha256
-radarr|Radarr|2201|$radarr_version|$radarr_release_url|$radarr_release_sha256
-lidarr|Lidarr|2202|$lidarr_version|$lidarr_release_url|$lidarr_release_sha256
-prowlarr|Prowlarr|2204|$prowlarr_version|$prowlarr_release_url|$prowlarr_release_sha256
-EOF
-  # UID 2203 remains reserved for retained Readarr data.
-  chroot "$rootfs" useradd --system --uid 2205 --gid 2200 --home-dir /var/lib/arr/qbittorrent --create-home --shell /usr/sbin/nologin qbittorrent
-  chroot "$rootfs" install -d -o qbittorrent -g arr -m 0750 /var/lib/arr/qbittorrent
-  install -D -m 0644 images/arr/runtime/qbittorrent.service "$rootfs/etc/systemd/system/qbittorrent.service"
-  install -D -m 0644 images/arr/runtime/boetticher-arr-peer-firewall.service "$rootfs/etc/systemd/system/boetticher-arr-peer-firewall.service"
-  install -D -m 0755 images/arr/runtime/configure.py "$rootfs/usr/local/libexec/boetticher-arr-configure"
-  rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
-  chroot "$rootfs" apt-get clean
-  rm -rf "$rootfs/var/lib/apt/lists/"*
-  write_artifact_identity "$rootfs" arr
-  package_lxc boetticher-arr
-}
-
 build_aiops() {
   printf '%s\n' 'boetticher build stage: aiops'
   rootfs=$(prepare_rootfs boetticher-aiops)
@@ -1087,11 +1030,6 @@ build_printer_target() {
   build_printer
 }
 
-build_arr_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_arr
-}
-
 build_aiops_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_aiops
@@ -1132,7 +1070,6 @@ case "$target" in
   image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
   image-bifrost) run_timed_image_target "$target" build_bifrost_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
-  image-arr) run_timed_image_target "$target" build_arr_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
   image-network-probe) run_timed_image_target "$target" build_network_probe_target ;;

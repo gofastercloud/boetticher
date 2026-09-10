@@ -6,9 +6,20 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/clientservices"
+	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 	"github.com/gofastercloud/boetticher/internal/firewalltest"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
+
+func TestComposeClientApplianceUsesRetainedVPNProfile(t *testing.T) {
+	enabled := true
+	config := controllerhost.LabConfig{Network: &controllerhost.NetworkConfig{ProtectedRanges: &controllerhost.ProtectedRanges{Infra: "10.10.10.224/28", Servers: "10.10.20.224/28", Trusted: "10.10.30.224/28", Sandbox: "10.10.40.224/28"}}, Modules: clientservices.Modules{VPN: &clientservices.VPNConfig{Enabled: &enabled, Location: "europe"}}}
+	composition, err := composeClientAppliance(clientServiceContext{Config: config, Site: model.NewSite("lab", "controller-local", model.GatewayModeManaged), VPNProfile: &firewallmodule.VPNProfile{PrivateKey: "private", Address: "10.64.12.3/32", PeerPublicKey: "peer", PresharedKey: "shared", EndpointHost: "vpn.example", EndpointPort: 1637, MTU: 1320, PersistentKeepalive: 25}}, config.Modules)
+	if err != nil || len(composition.Network) == 0 {
+		t.Fatalf("retained VPN profile was not composed: %v", err)
+	}
+}
 
 func TestTailnetLeaseConflictTable(t *testing.T) {
 	reservation := clientservices.Reservation{Name: "lab-tailnet-01", MAC: "02:00:00:00:05:10", Address: "10.10.5.10"}

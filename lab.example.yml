@@ -1,0 +1,89 @@
+api_version: boetticher/v3
+platform_version: 0.1.0
+schema_version: 3
+storage_profile: single-disk
+gateway:
+  mode: managed
+  management_address: 192.0.2.28
+  management_network: 192.0.2.0/24
+  management_gateway: 192.0.2.1
+  controller_address: 192.0.2.6
+  upstream:
+    mode: dhcp
+    mac: 02:00:00:00:01:01
+modules: {}
+physical_network:
+  mode: virtual-only
+tested_versions:
+  gateway: debian-13-genericcloud-amd64-20260327-2429
+  pulse: "6.4.1"
+network:
+  domain: lab.home.arpa
+  zones:
+    - name: TRANSIT
+      type: transit
+      vlan: 5
+      network: 10.10.5.0/24
+      gateway: 10.10.5.1
+      address_mode: none
+      dns_addresses: []
+      ntp_addresses: []
+    - name: INFRA
+      type: infrastructure
+      vlan: 10
+      network: 10.10.10.0/24
+      gateway: 10.10.10.1
+      address_mode: static
+      dns_addresses: [10.10.10.10]
+      ntp_addresses: [10.10.10.10]
+    - name: SERVERS
+      type: servers
+      vlan: 20
+      network: 10.10.20.0/24
+      gateway: 10.10.20.1
+      address_mode: reservations-only
+      dns_addresses: [10.10.10.10]
+      ntp_addresses: [10.10.10.10]
+    - name: TRUSTED
+      type: trusted
+      vlan: 30
+      network: 10.10.30.0/24
+      gateway: 10.10.30.1
+      address_mode: dynamic-reservations
+      dns_addresses: [10.10.10.10]
+      ntp_addresses: [10.10.10.10]
+    - name: SANDBOX
+      type: sandbox
+      vlan: 40
+      network: 10.10.40.0/24
+      gateway: 10.10.40.1
+      address_mode: dynamic
+      dns_addresses: [10.10.40.1]
+      ntp_addresses: [10.10.40.1]
+    - name: MGMT
+      type: management
+      vlan: 99
+      network: 10.10.99.0/24
+      gateway: 10.10.99.1
+      address_mode: static
+      dns_addresses: [10.10.10.10]
+      ntp_addresses: [10.10.10.10]
+secret_metadata:
+  installation_id: generated-by-boetticher-init
+  age_recipient: generated-by-boetticher-init
+  root_age_recipient: generated-by-boetticher-init-root
+ownership:
+  platform_guest_id_min: 100
+  platform_guest_id_max: 199
+  module_guest_id_min: 200
+  module_guest_id_max: 499
+  user_guest_id_min: 500
+  user_guest_id_max: 899
+  user_workloads_managed: false
+pki:
+  root_common_name: boetticher Root CA
+  root_fingerprint: generated-by-boetticher-init
+  root_expiry: generated-by-boetticher-init
+  issuing_common_name: boetticher Issuing CA
+  issuing_fingerprint: generated-by-boetticher-init
+  issuing_expiry: generated-by-boetticher-init

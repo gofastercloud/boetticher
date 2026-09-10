@@ -122,6 +122,31 @@ func TestClientRejectsAuthenticationFailureWithoutLeakingPassword(t *testing.T) 
 	}
 }
 
+func TestClientReloadInterfaceUsesBoundedDownAndUpMethods(t *testing.T) {
+	var methods []string
+	client := testClient(func(r *http.Request) (*http.Response, error) {
+		_, params, err := requestParts(r)
+		if err != nil {
+			return nil, err
+		}
+		object, method := stringParam(params[1]), stringParam(params[2])
+		methods = append(methods, object+"."+method)
+		if method == "login" {
+			return response(`{"jsonrpc":"2.0","id":1,"result":[0,{"ubus_rpc_session":"session-1"}]}`), nil
+		}
+		if object != "network.interface.airvpn" || (method != "down" && method != "up") {
+			return nil, &unexpectedMethodError{method: method}
+		}
+		return response(`{"jsonrpc":"2.0","id":2,"result":[0]}`), nil
+	})
+	if err := client.ReloadInterface(context.Background(), "airvpn"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(methods, ",") != "session.login,network.interface.airvpn.down,network.interface.airvpn.up" {
+		t.Fatalf("interface reload methods = %v", methods)
+	}
+}
+
 func TestClientRejectsMalformedProviderResponse(t *testing.T) {
 	client := testClient(func(*http.Request) (*http.Response, error) { return response(`not-json`), nil })
 	if err := client.Authenticate(context.Background()); err == nil || !strings.Contains(err.Error(), "malformed") {

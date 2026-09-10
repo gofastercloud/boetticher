@@ -32,14 +32,18 @@ boetticher module tailnet status
 boetticher module tailnet apply --auth-key-file /secure/path/key --yes
 boetticher module vpn status
 boetticher module monitoring status
-boetticher module statuspage add-check
-boetticher module printer status
+boetticher module statuspage status
 ```
 
 DHCP-derived DNS and client-facing NTP are supporting behaviour of the peer
 `dhcp` and `dns` capabilities, not standalone capabilities. VPN dispatch,
 provider reconciliation, fail-closed policy, and Controller-daemon observation
-are implemented; remote and physical acceptance remain separate gates.
+are implemented; remote and physical acceptance remain separate gates. VPN
+provider reboot and teardown inspect the enrolled Host's complete VM inventory
+and each running guest NIC before stopping protection; malformed or unavailable
+inventory refuses the mutation, while stopped guests do not block it. This is
+source and local-runtime behavior; it does not claim deployment or packet
+acceptance.
 
 ## Phase 4D Tailnet capability
 
@@ -61,6 +65,75 @@ machine approval attention is recoverable by rerunning apply with a current
 operator-approved key. Phase 4D local runtime is qualified; remote and physical
 acceptance remain separate gates.
 
+## Media application capability
+
+The media application lifecycle uses one fixed amd64 QEMU VM, `lab-media-01`
+(VMID 290, `10.10.20.230`, SERVERS VLAN 20), with a 32 GiB root disk and a
+configurable persistent media disk on `boetticher-data` (the apply default is
+256 GiB). The typed `lab.yml` intent includes:
+
+```yaml
+modules:
+  media:
+    enabled: true
+    media_gib: 500 # reference installation override; choose explicitly for other sites
+    application_domain: media.example.com
+    aliases:
+      radarr: radarr
+      sonarr: sonarr
+      bazarr: bazarr
+      prowlarr: prowlarr
+      trailarr: trailarr
+  vpn:
+    clients: [lab-media-01]
+    forwards:
+      - name: media-qbittorrent
+        reservation: lab-media-01
+        protocols: [tcp, udp]
+        port: 35796
+```
+
+The peer forward uses TCP and UDP port `35796` on both the external and guest
+side. Before applying, the operator must complete or confirm the matching
+AirVPN forwarded-port setup and supply the assigned port in this intent. The
+supported operator journey is:
+
+```text
+boetticher module media plan
+boetticher module media apply --cloudflare-token-file /secure/path/token --yes
+boetticher module media status
+boetticher module media test --yes
+boetticher module media teardown --plan
+boetticher module media teardown --yes
+```
+
+The token path must be an operator-owned private regular file. It is staged only
+through the authenticated Host and guest agent, then removed; it is not printed,
+stored in intent, or included in status. The peer port comes from the existing
+`modules.vpn.forwards` entry `media-qbittorrent` and preserves its TCP/UDP
+number. The deployed data disk and retained legacy application data are
+preserved across reapply and teardown. Applying requires the current
+protected-service state and a healthy VPN handshake before the VM or application
+starts. A complete protected-guest
+inventory is required before provider reboot, VPN teardown, or application
+teardown can stop protection; stopped guests are explicitly ignored. These
+checks are source and local-runtime safeguards and make no deployment or
+packet-acceptance claim.
+
+The VM firewall admits HTTPS only from TRUSTED (`10.10.30.0/24`) and Tailnet
+SNAT (`10.10.5.10`); the VPN appliance owns peer-forward provenance. Caddy
+rejects unknown service names, Docker forwarding is fail-closed, and IPv6 is
+disabled. The Cloudflare token must be scoped to DNS Write plus Zone Read for
+the configured application domain. The five configured service aliases plus
+`qbittorrent`, `jellyfin`, and `jellyseerr` are published under one wildcard
+certificate for that domain;
+unknown hosts return 404. `status` reports guest application health and VPN
+health separately.
+Local runtime checks are evidence for the installed guest only; remote ingress,
+peer packet journeys, physical VLAN isolation, and live public acceptance remain
+`NOT TESTED` until executed. Teardown stops the VM and removes aliases and the
+peer forward while retaining media, its reservation, and VPN client protection.
+
 ## 4E network closeout state
 
 The fixed Firewall, DHCP/DNS, VPN, and Tailnet capability boundary now feeds
@@ -72,11 +145,10 @@ unconfigured VPN.
 
 Native observations and regressions are bounded: VPN failure is not `OFF`, and
 healthy DHCP plus failed DNS is not `healthy`. Keep the Blinkt mapping fixed at
-eight pixels: `CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES`.
-DHCP/NTP detail remains in StreamDeck host detail and CLI status. Keep the
-existing StreamDeck home `FW`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH` area;
-use its existing detail navigation for DHCP/NTP and DNS. Add no display stack,
-hardware, or framework.
+eight pixels: `CTL HOST NETWORK VPN TAILNET SPEEDTEST CTRL-UPDATES HOST-UPDATES`.
+The StreamDeck home shows the Host summary, speedtest `NET`, guest pages,
+`NETWORK`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH`; its detail views expose
+Firewall, DNS, and DHCP/NTP state. Add no display stack, hardware, or framework.
 
 Keep cleanup narrow: delete only proven obsolete reachable network callers and
 docs, preserve security tests, and add regressions for changed behaviour. NET
@@ -85,9 +157,9 @@ client enforcement. Physical navigation, USB reconnect, and overlay expiry
 returning fresh state remain NOT TESTED; fix only observed faults.
 
 The reference physical path now uses exact `nic1` ownership on `vmbr1`, with
-tagged VLAN 20 (SERVERS) and VLAN 40 (SANDBOX) only and untagged ingress
-rejected. Current lease evidence is Pi `10.10.20.106` on SERVERS and the
-MacBook `10.10.40.181` on SANDBOX; HOME remains on `vmbr0`. Remote Tailnet,
+tagged VLANs 5, 10, 20, 30, 40, and 99 and untagged ingress rejected. Current
+client access uses SERVERS and SANDBOX; lease evidence is site-specific and belongs in private
+acceptance records; HOME remains on `vmbr0`. Remote Tailnet,
 packet, physical USB, and the disposable protected VPN-client journey remain
 separate acceptance gates and are reported as `NOT TESTED` or `HOLD` until
 their exact journeys execute.
@@ -98,14 +170,22 @@ the existing independent Controller/Host management path, with no backup
 platform or Host teardown.
 
 Application networking keeps ordinary existing calls with narrow ingress,
-egress, and identity names; do not add a generic schema. Use owned-domain
-HTTPS with DNS-01 automated renewal, the first Stage 5 dashboard, and an
-application backup before Stage 6. Stage 5 covers monitoring, logging, and
-statuspage work; add no CA or proxy platform now.
+egress, and identity names; do not add a generic schema. Stage 5 uses the
+public Caddy DNS-01 frontend and native journal upload with system trust. The
+Host-owned `vmbr1.99` path is `10.10.99.5/24` with LAB routes via `10.10.99.1`.
+Stage 5 uses one intentionally integrated `observability` capability. Monitoring,
+logging, and status page are query/status facets of that runtime, not separate
+deployable Modules. AIOps is a separate optional consumer over observability.
 
-Defer new network modules, an aggregate coordinator, CA/SSO/proxy platforms,
-observability implementation, and switch automation. The existing management
-route remains the boundary.
+The managed firewall keeps inter-zone forwarding disabled for this access. Its
+owned rules allow TCP/22 from TRUSTED and the identity-bound Tailnet router to
+MGMT, plus TCP/22 from the resolved Controller SERVERS reservation to the Host
+at `10.10.99.5`. After the Host path is applied, re-enroll through the verified
+internal address to make it the active Controller connection; the original
+HOME address and strict imported SSH trust remain the explicit recovery path.
+
+Defer new network modules, an aggregate coordinator, SSO platforms, and
+switch automation. The existing management route remains the boundary.
 
 ## Phase 4A firewall capability
 
@@ -163,13 +243,93 @@ status facts in the existing `DHCP/NTP` and `Tailnet` slots; unconfigured is off
 configured-but-unavailable is failed, and no status database or scheduler is
 introduced.
 
+## Phase 5 observability capabilities
+
+The installed Controller owns one atomic observability runtime through the
+same single-Host path:
+
+```text
+boetticher module observability plan|apply|status|test|teardown|secrets
+boetticher module logging query|status
+boetticher module monitoring status
+boetticher module statuspage status
+boetticher module aiops ask QUESTION
+boetticher module observability alerts pushover apply|status|test|remove
+```
+
+`module observability` creates and reconciles the exact unprivileged
+`lab-monitor-01` LXC (VMID 120, VLAN 10) with retained metrics, logs, and
+observability state volumes. It owns VictoriaMetrics, VictoriaLogs, Grafana,
+Gatus, and the optional explicitly configured Bifrost/Holmes route. Monitoring,
+logging, and status page remain read-only facets; they have no independent
+lifecycle or runtime ownership. AIOps is an optional consumer over this runtime,
+and `module aiops ask` is an explicit model operation.
+Teardown stops the whole owned guest and retains its data for a later apply.
+Apply provisions the public Caddy frontend and native collection paths. Live
+Controller/Host acceptance of that path remains `NOT TESTED` in this phase.
+Journal upload uses system trust and no client certificate; metrics use
+authenticated HTTPS paths through the fixed internal Caddy address. Ingest
+accepts only POST `/upload` from the three resolved collection sources and
+does not trust forwarded headers. Metrics paths are fixed per target and use
+Basic Auth; arbitrary upstream paths are denied.
+
+When Holmes is enabled under AIOps intent, the same LXC runs the pinned Holmes
+0.40 runner on demand. Holmes can use only the local Prometheus-compatible
+VictoriaMetrics endpoint and VictoriaLogs endpoint. Bifrost is the sole model
+route at `127.0.0.1:4000/v1`; its separate `holmes-client-token` is the only
+credential Holmes receives, and upstream provider keys remain Bifrost-only.
+`module aiops ask QUESTION` requires normal operator approval before a model
+request that may incur charges. The runner is unprivileged and bounded, uses
+pinned localhost routes, and does not save transcripts. Kernel-level LXC
+egress containment remains `NOT TESTED`.
+
+Pushover is an optional alert contact. `module observability alerts pushover
+apply` records the enabled state, title, and priority and may import a bounded
+`--credentials-file` containing `user:API`; its credential remains
+in the Controller secret store and activation is applied with the atomic
+observability lifecycle. `status` never prints keys. `test` accepts a local
+`user:API` file, requires approval unless `--yes` is supplied, validates the
+account, and sends one clearly labelled normal-priority message without retry.
+Disabled or unconfigured Pushover remains inert.
+
+For a fresh apply, provide the operator secrets before creating the guest;
+the command reports every missing name without starting a partial runtime:
+
+```text
+boetticher module observability secrets set grafana-admin-password
+boetticher module observability secrets set cloudflare-dns-token
+boetticher module observability apply --public-domain example.com --yes
+```
+
+The Gatus status page uses HTTPS without a password prompt inside the existing
+network access boundary. Grafana sign-in and private metrics authentication
+remain enabled; no status-page password is required for a fresh deployment.
+
+To opt into Holmes/Bifrost, also set `holmes-client-token` and
+`openrouter-api-key`, then apply with the explicit provider model:
+
+```text
+boetticher module observability secrets set holmes-client-token
+boetticher module observability secrets set openrouter-api-key
+boetticher module observability apply --public-domain example.com --holmes-model openai/gpt-4.1-mini --yes
+```
+
+Apply creates only an absent exact guest, refuses foreign or mismatched
+identity, uploads the installed provider payload, and verifies the active
+provider units and local endpoints. Repeating a healthy apply is a no-op.
+`--yes` approves mutation, while an interactive affirmative answer is required
+otherwise. Source, package, and offline checks are available locally; live
+Controller/Host rollout and live acceptance remain `NOT TESTED` in this phase.
+Gatus currently checks the shared provider health endpoints; broader lab
+outcome checks remain deferred.
+
 ## Capability, provider, runtime
 
 Keep these concepts separate:
 
 | Concept | Meaning | Examples |
 | --- | --- | --- |
-| Capability | What the operator manages | firewall, DHCP, DNS, VPN, monitoring, status page, printer |
+| Capability | What the operator manages | firewall, DHCP, DNS, VPN, monitoring, status page |
 | Provider | Software or appliance implementing a capability | gateway appliance, DNS resolver, monitoring service, status-page server |
 | Runtime | Where the provider executes | a gateway VM, a monitoring VM/LXC, or the Controller |
 

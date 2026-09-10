@@ -27,6 +27,7 @@ table inet boetticher_tailnet {
   meta nfproto ipv6 counter drop
   iifname "tailscale0" oifname "eth0" ip daddr { %s } counter accept
   iifname "tailscale0" oifname "eth0" ip daddr %s tcp dport 22 counter accept
+  iifname "tailscale0" oifname "eth0" ip daddr 10.10.10.20 tcp dport 443 counter accept
   iifname "tailscale0" oifname "eth0" ip daddr 10.10.5.1 tcp dport 53 counter accept
   iifname "tailscale0" oifname "eth0" ip daddr 10.10.5.1 udp dport { 53, 123 } counter accept
   iifname "eth0" oifname "tailscale0" ct state established,related counter accept

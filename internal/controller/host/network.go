@@ -452,7 +452,7 @@ func bridgeState(links []ipLink, addresses []ipAddress, routes []ipRoute, member
 		state.Detail = "vmbr1 is absent"
 	} else if !state.Up {
 		state.Detail = "vmbr1 is not up"
-	} else if len(state.HostAddresses) > 0 {
+	} else if len(state.HostAddresses) > 0 && !linkLocalOnly {
 		state.Detail = "vmbr1 has an unexpected host address"
 	} else if state.Gateway != "" {
 		state.Detail = "vmbr1 has an unexpected gateway route"
@@ -492,6 +492,7 @@ func compatibleBridgeConfig(config string) bool {
 		}
 		switch line {
 		case "auto vmbr1", "iface vmbr1 inet manual", "iface vmbr1 inet6 manual", "bridge-ports none", "bridge-stp off", "bridge-fd 0", "bridge-vlan-aware yes", "bridge-vids 2-4094", "bridge-vids 5 10 20 30 40 99":
+		case "auto vmbr1.99", "iface vmbr1.99 inet static", "address 10.10.99.5/24", "vlan-raw-device vmbr1", "up ip route replace 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99", "up ip route replace 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99", "up ip route replace 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99", "up ip route replace 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99", "up ip route replace 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99":
 		default:
 			return false
 		}
@@ -607,8 +608,8 @@ if ! ifup --syntax-check vmbr1; then install -m 644 "$backup" "$file"; exit 82; 
 			"if awk 'BEGIN { p=0; n=0; bad=0 } $1 == \"iface\" { p=($2 == \"" + port + "\") } p && $1 == \"bridge-vids\" { if ($2 == \"20\" && $3 == \"40\" && NF == 3) n++; else if (!($2 == \"5\" && $3 == \"10\" && $4 == \"20\" && $5 == \"30\" && $6 == \"40\" && $7 == \"99\" && NF == 7)) bad=1 } END { exit bad || n > 1 }' \"$file\"; then :; else exit 83; fi\n" +
 			"if awk 'BEGIN { p=0; n=0 } $1 == \"iface\" { p=($2 == \"" + port + "\") } p && $1 == \"bridge-vids\" && $2 == \"20\" && $3 == \"40\" && NF == 3 { n++ } END { exit n == 1 ? 0 : 1 }' \"$file\"; then tmp=$(mktemp /etc/network/interfaces.boetticher.XXXXXX); trap 'rm -f \"$tmp\"' EXIT; awk 'BEGIN { p=0 } $1 == \"iface\" { p=($2 == \"" + port + "\") } p && $1 == \"bridge-vids\" && $2 == \"20\" && $3 == \"40\" && NF == 3 { print \"    bridge-vids 5 10 20 30 40 99\"; next } { print }' \"$file\" >\"$tmp\"; chmod 644 \"$tmp\"; mv -f \"$tmp\" \"$file\"; ifreload -a; fi\n"
 	}
-	if plan.Config.PhysicalTrunk != "" {
-		command += "mgmt=" + managementConfigPath + "\ntest ! -L \"$mgmt\"\ntmp=$(mktemp \"$mgmt.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\nprintf %s " + shellLiteral(managementConfig) + " >\"$tmp\"\nchmod 644 \"$tmp\"; mkdir -p /etc/network/interfaces.d; mv -f \"$tmp\" \"$mgmt\"\nifup --syntax-check vmbr1.99\n"
+	if plan.State == "adoptable" {
+		command += "mgmt=" + managementConfigPath + "\nmkdir -p /etc/network/interfaces.d\ntest ! -L \"$mgmt\"\ntmp=$(mktemp \"$mgmt.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\nprintf %s " + shellLiteral(managementConfig) + " >\"$tmp\"\nchmod 644 \"$tmp\"; mv -f \"$tmp\" \"$mgmt\"\nifup --syntax-check vmbr1.99\n"
 	}
 	for _, file := range []struct{ path, content, mode string }{{bridgeSysctlPath, bridgeSysctl, "644"}, {bridgeHookPath, bridgeHook, "755"}} {
 		command += "tmp=$(mktemp " + file.path + ".XXXXXX)\ntrap 'rm -f \"$tmp\"' EXIT\nprintf %s " + shellLiteral(file.content) + " >\"$tmp\"\nchmod " + file.mode + " \"$tmp\"; mv -f \"$tmp\" " + file.path + "\n"

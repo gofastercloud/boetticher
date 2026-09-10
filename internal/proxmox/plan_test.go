@@ -184,6 +184,7 @@ func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
 				return response([]byte(`{"data":[
   {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},
   {"iface":"vmbr1","type":"bridge","bridge_ports":"enxa0cec8a2b210","bridge_vlan_aware":true},
+  {"iface":"vmbr1.99","type":"vlan","method":"static","address":"10.10.99.5/24","active":true,"autostart":true},
   {"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true},
   {"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee","active":false}
 ]}`))
@@ -204,6 +205,15 @@ func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
 			}
 			return response([]byte(`{"data":null}`))
 		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/proxmox/network" {
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("iface") != "vmbr1.99" || r.Form.Get("type") != "vlan" || r.Form.Get("vlan-id") != "99" || r.Form.Get("vlan-raw-device") != "vmbr1" || r.Form.Get("cidr") != "10.10.99.5/24" {
+				t.Fatalf("unexpected management VLAN form: %v", r.Form)
+			}
+			return response([]byte(`{"data":null}`))
+		}
 		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/proxmox/network" {
 			networkReloads++
 			return response([]byte(`{"data":null}`))
@@ -217,6 +227,47 @@ func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
 	}
 	if networkReloads != 1 {
 		t.Fatalf("network reloads = %d, want 1", networkReloads)
+	}
+}
+
+func TestAttachTrunkRefusesConflictingManagementVLAN(t *testing.T) {
+	puts := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/proxmox/network" {
+			return response([]byte(`{"data":[{"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},{"iface":"vmbr1","type":"bridge","bridge_ports":"none","bridge_vlan_aware":true},{"iface":"vmbr1.99","type":"vlan","method":"static","address":"192.0.2.99/24"},{"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee"}]}`))
+		}
+		if r.Method == http.MethodPut || r.Method == http.MethodPost {
+			puts++
+		}
+		t.Fatalf("unexpected mutation request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := AttachTrunk(context.Background(), client, "proxmox", "enxa0cec8a2b210", "192.0.2.73"); err == nil || !strings.Contains(err.Error(), "conflicting management") {
+		t.Fatalf("expected management conflict, got %v", err)
+	}
+	if puts != 0 {
+		t.Fatalf("conflict caused %d mutations", puts)
+	}
+}
+
+func TestAttachTrunkAlreadyExactIsNoOp(t *testing.T) {
+	reads, writes := 0, 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/proxmox/network" {
+			reads++
+			return response([]byte(`{"data":[{"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},{"iface":"vmbr1","type":"bridge","bridge_ports":"enxa0cec8a2b210","bridge_vlan_aware":true},{"iface":"vmbr1.99","type":"vlan","method":"static","address":"10.10.99.5/24","vlan-id":99,"vlan-raw-device":"vmbr1","active":true,"autostart":true},{"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee"}]}`))
+		}
+		writes++
+		t.Fatalf("exact repeat attempted mutation: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := AttachTrunk(context.Background(), client, "proxmox", "enxa0cec8a2b210", "192.0.2.73"); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 || writes != 0 {
+		t.Fatalf("reads=%d writes=%d, want one read and no writes", reads, writes)
 	}
 }
 
@@ -254,32 +305,6 @@ func TestComposedPlanUsesResolvedCapabilityOrder(t *testing.T) {
 			t.Fatalf("deployment order %q before %q was not respected: %#v", pair[0], pair[1], order)
 		}
 	}
-}
-
-func TestArrPlanUsesDeclarationOwnedDHCPIdentity(t *testing.T) {
-	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	config.StorageProfile = "dedicated-data-disk"
-	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
-	enabled := true
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}
-	site, _, err := modules.Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := PlanFromSite(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, guest := range plan.Guests {
-		if guest.Name == "lab-arr-01" {
-			if guest.MAC != model.ArrGuestMAC || lxcNetworkParam(guest) != "name=eth0,bridge=vmbr1,tag=20,firewall=1,hwaddr="+model.ArrGuestMAC+",ip=dhcp" {
-				t.Fatalf("arr guest network identity = %#v", guest)
-			}
-			return
-		}
-	}
-	t.Fatal("arr guest is missing")
 }
 
 func TestAirVPNBifrostPlanUsesStableMACFilterIdentity(t *testing.T) {

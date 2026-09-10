@@ -1,0 +1,67 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: Boetticher observability
+    folder: Boetticher
+    interval: 1m
+    rules:
+      - uid: boetticher-host-unreachable
+        title: Boetticher managed host unreachable
+        condition: C
+        noDataState: Alerting
+        execErrState: Error
+        for: 5m
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model: {expr: 'up{boetticher_host=~"controller|proxmox-host|lab-monitor-01"}', format: time_series, refId: A}
+          - refId: B
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [], datasource: {type: __expr__, uid: '__expr__'}, expression: A, reducer: last, refId: B, type: reduce}
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [{evaluator: {params: [1], type: lt}, operator: {type: and}, query: {params: [B, 5m, now]}, reducer: {params: [], type: last}, type: query}], datasource: {type: __expr__, uid: '__expr__'}, expression: B, refId: C, type: threshold}
+      - uid: boetticher-disk-pressure
+        title: Boetticher managed disk pressure
+        condition: C
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: victoriametrics
+            model: {expr: 'node_filesystem_avail_bytes{boetticher_host=~"controller|proxmox-host|lab-monitor-01",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{boetticher_host=~"controller|proxmox-host|lab-monitor-01",fstype!~"tmpfs|overlay"}', format: time_series, refId: A}
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [], datasource: {type: __expr__, uid: '__expr__'}, expression: A, reducer: last, refId: B, type: reduce}
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [{evaluator: {params: [0.1], type: lt}, operator: {type: and}, query: {params: [B, 10m, now]}, reducer: {params: [], type: last}, type: query}], datasource: {type: __expr__, uid: '__expr__'}, expression: B, refId: C, type: threshold}
+      - uid: boetticher-missing-collection
+        title: Boetticher collection target missing
+        condition: C
+        noDataState: Alerting
+        execErrState: Error
+        for: 5m
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: victoriametrics
+            model: {expr: 'count(up{boetticher_host=~"controller|proxmox-host|lab-monitor-01"})', format: time_series, refId: A}
+          - refId: B
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [], datasource: {type: __expr__, uid: '__expr__'}, expression: A, reducer: last, refId: B, type: reduce}
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: '__expr__'
+            model: {conditions: [{evaluator: {params: [3], type: lt}, operator: {type: and}, query: {params: [B, 5m, now]}, reducer: {params: [], type: last}, type: query}], datasource: {type: __expr__, uid: '__expr__'}, expression: B, refId: C, type: threshold}
+deleteContactPoints:
+  - orgId: 1
+    uid: boetticher-pushover

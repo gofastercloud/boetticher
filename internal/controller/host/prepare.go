@@ -43,7 +43,7 @@ func ResolveProxmoxRuntime() (string, error) {
 }
 
 func CheckBaseline(ctx context.Context, transport Transport) (bool, error) {
-	result, err := transport.Run(ctx, "set -eu; test -f /etc/apt/sources.list.d/boetticher-pve-no-subscription.sources; test -f /etc/systemd/logind.conf.d/90-boetticher-headless.conf; dpkg-query -W -f='${Status}' rsync 2>/dev/null | grep -qx 'install ok installed'; for command in arping bash bzip2 dig diff dhclient file find gawk gzip make patch perl python3 tar unzip wget which xz zstd; do command -v \"$command\" >/dev/null; done; test -x /usr/local/libexec/boetticher-host-speedtest; test -x /usr/local/libexec/boetticher-firewall-test-host; test \"$(/usr/local/libexec/boetticher-firewall-test-host --version)\" = "+firewalltest.HelperVersion)
+	result, err := transport.Run(ctx, "set -eu; test -f /etc/apt/sources.list.d/boetticher-pve-no-subscription.sources; test -f /etc/systemd/logind.conf.d/90-boetticher-headless.conf; dpkg-query -W -f='${Status}' rsync 2>/dev/null | grep -qx 'install ok installed'; for command in arping bash bzip2 dig diff dhclient file find gawk gzip make mmdebstrap patch perl python3 tar unzip virt-customize wget which xz zstd; do command -v \"$command\" >/dev/null; done; test -x /usr/local/libexec/boetticher-host-speedtest; test -x /usr/local/libexec/boetticher-firewall-test-host; test \"$(/usr/local/libexec/boetticher-firewall-test-host --version)\" = "+firewalltest.HelperVersion)
 	if err != nil {
 		return false, nil
 	}

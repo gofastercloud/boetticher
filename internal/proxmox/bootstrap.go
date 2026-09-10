@@ -398,8 +398,16 @@ const managementInterfaceConfig = `auto vmbr1.99
 iface vmbr1.99 inet static
     address 10.10.99.5/24
     vlan-raw-device vmbr1
-    up ip route replace 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99
-    down ip route del 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99 || true
+    up ip route replace 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99
+    up ip route replace 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99
+    up ip route replace 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99
+    up ip route replace 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99
+    up ip route replace 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99
+    down ip route del 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99 || true
+    down ip route del 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99 || true
+    down ip route del 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99 || true
+    down ip route del 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99 || true
+    down ip route del 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99 || true
 `
 
 const networkInterfacesSourceDirectory = "source-directory /etc/network/interfaces.d"
@@ -471,12 +479,14 @@ func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, 
 	if !strings.Contains(string(mgmtAddress), "inet 10.10.99.5/24") {
 		return errors.New("HOLD: Proxmox vmbr1.99 does not have 10.10.99.5/24")
 	}
-	internalRoute, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 route show 10.10.0.0/16"))
-	if err != nil {
-		return fmt.Errorf("read Proxmox internal management route: %w", err)
-	}
-	if !strings.Contains(string(internalRoute), "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99") {
-		return errors.New("HOLD: Proxmox internal route does not use 10.10.99.1 via vmbr1.99")
+	for _, route := range []string{"10.10.5.0/24", "10.10.10.0/24", "10.10.20.0/24", "10.10.30.0/24", "10.10.40.0/24"} {
+		internalRoute, routeErr := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 route show "+route))
+		if routeErr != nil {
+			return fmt.Errorf("read Proxmox internal management route %s: %w", route, routeErr)
+		}
+		if !strings.Contains(string(internalRoute), route+" via 10.10.99.1 dev vmbr1.99") {
+			return fmt.Errorf("HOLD: Proxmox internal route %s does not use 10.10.99.1 via vmbr1.99", route)
+		}
 	}
 	vlanState, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -d link show dev vmbr1"))
 	if err != nil {
@@ -949,7 +959,6 @@ var retainedModuleServices = map[string][]string{
 	"airvpn":         {"boetticher-airvpn.service"},
 	"bifrost":        {"bifrost", "nginx"},
 	"printer":        {"octoprint", "nginx"},
-	"arr":            {"sonarr", "radarr", "lidarr", "readarr", "prowlarr", "qbittorrent", "boetticher-arr-peer-firewall", "nginx"},
 	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
 	"gatus":          {"gatus", "nginx"},
 }
@@ -980,11 +989,6 @@ func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address
 	serviceCommands := make([]string, 0, len(services))
 	for _, service := range services {
 		command := "systemctl disable --now " + shellQuote(service) + "; if systemctl is-active --quiet " + shellQuote(service) + "; then echo retained service remains active: " + shellQuote(service) + " >&2; exit 1; fi; if systemctl is-enabled --quiet " + shellQuote(service) + "; then echo retained service remains enabled: " + shellQuote(service) + " >&2; exit 1; fi"
-		if module == "arr" {
-			// ARR 1.0.0 and 1.0.1 have different bounded service sets. Stop
-			// every known installed service, including retired Readarr.
-			command = "if [ \"$(systemctl show --property=LoadState --value " + shellQuote(service) + ")\" != not-found ]; then " + command + "; fi"
-		}
 		serviceCommands = append(serviceCommands, command)
 	}
 	guestCommand := "set -eu; systemctl daemon-reload; " + strings.Join(serviceCommands, "; ")
@@ -1984,7 +1988,7 @@ func scopedProvisionerACLPaths(node string) []string {
 	// updating a storage definition, so the collection path must be granted in
 	// addition to the bounded content paths used for artifact operations.
 	paths := []string{"/nodes/" + node, "/sdn", "/storage", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
-	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, model.ArrVMID, 200, 210, 240, 250} {
+	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, 200, 210, 240, 250} {
 		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
 	}
 	for vmid := 910; vmid <= 919; vmid++ {

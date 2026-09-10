@@ -114,17 +114,17 @@ func ParseNative(status, prefs []byte) (Report, error) {
 		r.NeedsAuth = true
 		return r, nil
 	}
-	if !*s.Self.Online {
-		// Tailscale can continue forwarding an already-approved subnet route
-		// while its control-plane connection is unavailable. This is degraded
-		// control-plane health, not proof that the local router has stopped.
-		return NewReport(true, Attention, "Tailnet coordination service is disconnected; existing approved routes may continue"), nil
-	}
 	if !(s.Version == Version || strings.HasPrefix(s.Version, Version+"-")) {
 		return NewReport(true, Attention, fmt.Sprintf("Tailscale %s is required; reconcile the router version", Version)), nil
 	}
 	if !exactPreferences(prefs) || (len(s.ExitNodeStatus) > 0 && string(s.ExitNodeStatus) != "null") {
 		return NewReport(true, Failed, "Tailnet route, SNAT, DNS or exit-node preferences do not match intent"), nil
+	}
+	if !*s.Self.Online {
+		// Tailscale can continue forwarding an already-approved subnet route
+		// while its control-plane connection is unavailable. This is degraded
+		// control-plane health, not proof that the local router has stopped.
+		return NewReport(true, Attention, "Tailnet coordination service is disconnected; existing approved routes may continue"), nil
 	}
 	if len(s.Health) > 0 {
 		// Native diagnostics can contain URLs or identities. Do not project them.

@@ -98,7 +98,7 @@ func (r *stalePulseMonitoringTokenRunner) Run(_ context.Context, _ string, _ str
 }
 
 func TestManagementNetworkConfigIsFixedAndPreservesHOME(t *testing.T) {
-	if !strings.Contains(managementInterfaceConfig, "vmbr1.99") || !strings.Contains(managementInterfaceConfig, "10.10.99.5/24") || !strings.Contains(managementInterfaceConfig, "10.10.0.0/16 via 10.10.99.1") {
+	if !strings.Contains(managementInterfaceConfig, "vmbr1.99") || !strings.Contains(managementInterfaceConfig, "10.10.99.5/24") || !strings.Contains(managementInterfaceConfig, "10.10.20.0/24 via 10.10.99.1") || strings.Contains(managementInterfaceConfig, "10.10.0.0/16") {
 		t.Fatal("management interface configuration is incomplete")
 	}
 	if strings.Contains(managementInterfaceConfig, "gateway") || strings.Contains(managementInterfaceConfig, "vmbr0") {
@@ -399,12 +399,16 @@ func TestSSHRunnerRejectsWeakHostKeyVerificationModes(t *testing.T) {
 
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
-		"sudo -n /bin/cat /etc/network/interfaces":        []byte("auto vmbr0\niface vmbr0 inet static\n"),
-		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0":  []byte(`[{"addr":"192.0.2.10/24"}]`),
-		"sudo -n /usr/sbin/ip -4 -j route show default":   []byte(`[{"dst":"default","gateway":"192.0.2.1"}]`),
-		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99":  []byte("inet 10.10.99.5/24"),
-		"sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16": []byte("10.10.0.0/16 via 10.10.99.1 dev vmbr1.99"),
-		"sudo -n /usr/sbin/ip -d link show dev vmbr1":     []byte("vlan_filtering 1"),
+		"sudo -n /bin/cat /etc/network/interfaces":         []byte("auto vmbr0\niface vmbr0 inet static\n"),
+		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0":   []byte(`[{"addr":"192.0.2.10/24"}]`),
+		"sudo -n /usr/sbin/ip -4 -j route show default":    []byte(`[{"dst":"default","gateway":"192.0.2.1"}]`),
+		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99":   []byte("inet 10.10.99.5/24"),
+		"sudo -n /usr/sbin/ip -4 route show 10.10.5.0/24":  []byte("10.10.5.0/24 via 10.10.99.1 dev vmbr1.99"),
+		"sudo -n /usr/sbin/ip -4 route show 10.10.10.0/24": []byte("10.10.10.0/24 via 10.10.99.1 dev vmbr1.99"),
+		"sudo -n /usr/sbin/ip -4 route show 10.10.20.0/24": []byte("10.10.20.0/24 via 10.10.99.1 dev vmbr1.99"),
+		"sudo -n /usr/sbin/ip -4 route show 10.10.30.0/24": []byte("10.10.30.0/24 via 10.10.99.1 dev vmbr1.99"),
+		"sudo -n /usr/sbin/ip -4 route show 10.10.40.0/24": []byte("10.10.40.0/24 via 10.10.99.1 dev vmbr1.99"),
+		"sudo -n /usr/sbin/ip -d link show dev vmbr1":      []byte("vlan_filtering 1"),
 	}}
 	if err := ConfigureManagementNetwork(context.Background(), runner, "192.0.2.10", "labadmin"); err != nil {
 		t.Fatal(err)
@@ -416,7 +420,11 @@ func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing
 		"sudo -n /usr/sbin/ip -4 -j route show default",
 		"sudo -n /usr/sbin/ifreload -a",
 		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99",
-		"sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16",
+		"sudo -n /usr/sbin/ip -4 route show 10.10.5.0/24",
+		"sudo -n /usr/sbin/ip -4 route show 10.10.10.0/24",
+		"sudo -n /usr/sbin/ip -4 route show 10.10.20.0/24",
+		"sudo -n /usr/sbin/ip -4 route show 10.10.30.0/24",
+		"sudo -n /usr/sbin/ip -4 route show 10.10.40.0/24",
 		"sudo -n /usr/sbin/ip -d link show dev vmbr1",
 	} {
 		if !containsString(runner.commands, required) {
@@ -1073,7 +1081,6 @@ func TestInactivateRetainedModuleUsesBoundedGuestServiceContract(t *testing.T) {
 	}{
 		{kind: KindQEMU, module: "tailnet-router", want: "/usr/sbin/qm guest exec 200 -- /bin/sh -c", services: []string{"tailscaled"}},
 		{kind: KindLXC, module: "airvpn", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"boetticher-airvpn.service"}},
-		{kind: KindLXC, module: "arr", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"sonarr", "radarr", "lidarr", "readarr", "prowlarr", "qbittorrent", "boetticher-arr-peer-firewall", "nginx", "LoadState", "not-found"}},
 	} {
 		t.Run(string(guest.kind)+"/"+guest.module, func(t *testing.T) {
 			runner := &fakeRunner{output: []byte("{\"exitcode\":0,\"exited\":1}")}

@@ -27,9 +27,10 @@ const (
 )
 
 type Config struct {
-	Listen    string     `json:"listen"`
-	Upstreams []Upstream `json:"upstreams"`
-	Models    []Model    `json:"models"`
+	Listen           string     `json:"listen"`
+	ClientCredential string     `json:"client_credential,omitempty"`
+	Upstreams        []Upstream `json:"upstreams"`
+	Models           []Model    `json:"models"`
 }
 
 type Upstream struct {
@@ -53,8 +54,9 @@ type ModelCapabilities struct {
 }
 
 type Router struct {
-	models map[string]route
-	client *http.Client
+	models      map[string]route
+	client      *http.Client
+	clientToken string
 }
 
 type route struct {
@@ -97,6 +99,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.Upstreams) == 0 || len(c.Upstreams) > 16 {
 		return errors.New("Bifrost requires 1-16 configured upstreams")
+	}
+	if c.ClientCredential != "" && !safeCredentialName(c.ClientCredential) {
+		return errors.New("Bifrost client credential name is invalid")
 	}
 	if len(c.Models) == 0 || len(c.Models) > MaxModels {
 		return errors.New("Bifrost requires 1-32 configured model aliases")
@@ -165,6 +170,17 @@ func NewRouter(config Config, credentialDir string) (*Router, error) {
 		}
 		keys[upstream.Name] = key
 	}
+	clientToken := ""
+	if config.ClientCredential != "" {
+		if !safeCredentialName(config.ClientCredential) {
+			return nil, errors.New("Bifrost client credential name is invalid")
+		}
+		var err error
+		clientToken, err = readCredential(filepath.Join(credentialDir, config.ClientCredential))
+		if err != nil {
+			return nil, fmt.Errorf("load Bifrost client credential: %w", err)
+		}
+	}
 	for _, model := range config.Models {
 		upstream := upstreams[model.Upstream]
 		base := strings.TrimRight(upstream.BaseURL, "/")
@@ -179,7 +195,7 @@ func NewRouter(config Config, credentialDir string) (*Router, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	return &Router{
-		models: models,
+		models: models, clientToken: clientToken,
 		client: &http.Client{Transport: transport, Timeout: 120 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}, nil
 }
@@ -194,14 +210,33 @@ func (r *Router) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"status":"ok"}`))
 	case request.URL.Path == "/v1/models" && request.Method == http.MethodGet:
+		if !r.authorized(request) {
+			writeError(writer, http.StatusUnauthorized, "Bifrost client authorization is required")
+			return
+		}
 		r.handleModels(writer)
 	case strings.HasPrefix(request.URL.Path, "/internal/model-capabilities/") && request.Method == http.MethodGet:
+		if !r.authorized(request) {
+			writeError(writer, http.StatusUnauthorized, "Bifrost client authorization is required")
+			return
+		}
 		r.handleCapabilities(writer, request.Context(), strings.TrimPrefix(request.URL.Path, "/internal/model-capabilities/"))
 	case request.URL.Path == "/v1/chat/completions" && request.Method == http.MethodPost:
+		if !r.authorized(request) {
+			writeError(writer, http.StatusUnauthorized, "Bifrost client authorization is required")
+			return
+		}
 		r.handleChat(writer, request)
 	default:
 		writeError(writer, http.StatusNotFound, "route is not supported")
 	}
+}
+
+func (r *Router) authorized(request *http.Request) bool {
+	if r.clientToken == "" {
+		return true
+	}
+	return request.Header.Get("Authorization") == "Bearer "+r.clientToken
 }
 
 func (r *Router) handleCapabilities(writer http.ResponseWriter, ctx context.Context, alias string) {

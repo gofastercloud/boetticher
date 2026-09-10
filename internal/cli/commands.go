@@ -21,12 +21,18 @@ type helpSpec struct {
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]"},
 	{Usage: "boetticher host create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|teardown|reboot ..."},
+	{Usage: "boetticher host register-system|list-systems|system-status|unregister-system ..."},
 	{Usage: "boetticher module <capability> <action> [flags]"},
 	{Usage: "boetticher module firewall plan|apply|status|reboot|test|teardown [flags]"},
 	{Usage: "boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [flags]"},
 	{Usage: "boetticher module dhcp plan|apply|status|teardown|test|add-reservation|remove-reservation|list-reservations|list-leases [flags]"},
-	{Usage: "boetticher module vpn plan|apply|status|teardown|add-client|remove-client [flags]"},
+	{Usage: "boetticher module observability plan|apply|status|test|teardown|secrets [--yes] [--public-domain DOMAIN] [--holmes-model MODEL]"},
+	{Usage: "boetticher module observability alerts pushover apply|status|test|remove [flags]"},
+	{Usage: "boetticher module logging query|status [flags]"},
+	{Usage: "boetticher module aiops ask QUESTION [--yes] [--json]"},
+	{Usage: "boetticher module vpn plan|apply|status|teardown|add-client|remove-client [--location SELECTOR] [flags]"},
 	{Usage: "boetticher module tailnet plan|apply|status|test|teardown [flags]"},
+	{Usage: "boetticher module media plan|apply|status|test|teardown [--plan|--yes] [--cloudflare-token-file FILE]"},
 }
 
 var advancedCommandSpecs = []commandSpec{
@@ -39,6 +45,16 @@ var advancedCommandSpecs = []commandSpec{
 // paths explicit makes every help request useful without making command
 // dispatch depend on a second parser or on a recursive help hint.
 var helpSpecs = map[string]helpSpec{
+	"host register-system":                 {Usage: "boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--check] [--plan|--yes]", Purpose: "Register an existing VM or LXC and reconcile its bounded SERVERS network policy.", Arguments: "NAME identifies one existing guest; VMID, address, and port are required.", Options: "--check enables one bounded TCP monitoring check; --plan previews without mutation; --yes approves save and provider reconciliation.", Safety: "The guest is never created, deleted, started, stopped, or reconfigured. The exact vmbr1 VLAN 20 identity must be proven first.", Examples: "boetticher host register-system existing-system --vmid 501 --address 10.10.20.61 --port 8080 --check --yes", Related: "host system-status, host unregister-system"},
+	"host list-systems":                    {Usage: "boetticher host list-systems", Purpose: "List saved operator-managed system registrations.", Arguments: "No positional arguments.", Options: "No options.", Safety: "Read-only; it does not contact or change guests.", Examples: "boetticher host list-systems", Related: "host register-system, host system-status"},
+	"host system-status":                   {Usage: "boetticher host system-status NAME", Purpose: "Observe one registered guest identity and its saved network policy.", Arguments: "NAME is a registered system.", Options: "No options.", Safety: "Read-only; saved intent is not reported healthy without current guest evidence.", Examples: "boetticher host system-status existing-system", Related: "host register-system"},
+	"host unregister-system":               {Usage: "boetticher host unregister-system NAME --plan|--yes", Purpose: "Remove one registration's owned DHCP, DNS, firewall, and optional monitoring intent.", Arguments: "NAME is a registered system.", Options: "--plan previews; --yes approves removal and provider reconciliation.", Safety: "The guest is never modified or deleted. Removal remains possible when it is absent.", Examples: "boetticher host unregister-system existing-system --yes", Related: "host system-status"},
+	"module logging":                       {Usage: "boetticher module logging query|status [flags]", Purpose: "Read a bounded VictoriaLogs view from the shared observability runtime.", Arguments: "query accepts filters only as flags; status accepts no positional arguments.", Options: "query supports --host, --unit, --level, --since up to 168h, and --limit 1-500 (default 100).", Safety: "Read-only; values are fixed quoted LogsQL literals, the owned lab-monitor-01 guest is verified before execution, and no arbitrary query language is accepted.", Examples: "boetticher module logging query --host lab-dns-01 --unit blocky.service --since 1h; boetticher module logging status", Related: "module observability"},
+	"module monitoring":                    {Usage: "boetticher module monitoring status", Purpose: "Inspect metrics and Grafana in the shared observability runtime.", Arguments: "No positional arguments.", Options: "No lifecycle options.", Safety: "Read-only; module observability owns the LXC, providers, secrets, and teardown.", Examples: "boetticher module monitoring status", Related: "module observability"},
+	"module statuspage":                    {Usage: "boetticher module statuspage status", Purpose: "Inspect Gatus in the shared observability runtime.", Arguments: "No positional arguments.", Options: "No lifecycle options.", Safety: "Read-only; module observability owns the LXC, providers, secrets, and teardown.", Examples: "boetticher module statuspage status", Related: "module observability"},
+	"module observability":                 {Usage: "boetticher module observability plan|apply|status|test|teardown|secrets [--yes] [--public-domain DOMAIN] [--holmes-model MODEL]", Purpose: "Own the atomic shared monitoring runtime, provider payload, credentials, and lifecycle.", Arguments: "The shared lab-monitor-01 runtime carries metrics, logs, Grafana, Gatus, and optional explicitly configured Holmes/Bifrost.", Options: "--yes approves lifecycle changes; --plan previews teardown; --public-domain sets the Caddy DNS name on apply or validates it on plan; --holmes-model explicitly enables Holmes/Bifrost for the chosen provider model.", Safety: "All required secrets must already be present before guest creation. No model route is enabled or credential is generated implicitly.", Examples: "boetticher module observability plan --public-domain example.com; boetticher module observability apply --public-domain example.com --yes; boetticher module observability apply --public-domain example.com --holmes-model openai/gpt-4.1-mini --yes", Related: "module monitoring"},
+	"module aiops":                         {Usage: "boetticher module aiops ask QUESTION [--yes] [--json]", Purpose: "Ask the installed read-only Holmes investigation engine one question.", Arguments: "QUESTION is one bounded operator question.", Options: "--yes approves a request that may incur model charges; --json emits a machine-readable answer.", Safety: "The ask is sent through loopback Bifrost using the separate Holmes client credential.", Examples: "boetticher module aiops ask 'Why did DNS latency rise?'", Related: "module observability"},
+	"module observability alerts pushover": {Usage: "boetticher module observability alerts pushover apply|status|test|remove [flags]", Purpose: "Configure or explicitly test the optional Pushover alert contact.", Arguments: "apply changes intent and can import a bounded user:API credential file; test reads a user:API credential file without saving it; status never displays keys.", Options: "apply accepts --credentials-file, --enabled, --title, and priority -2..1 with --yes; test requires --credentials-file and --yes to send without prompting; remove requires --yes.", Safety: "Disabled or unconfigured Pushover is inert. Configuration activation waits for module observability apply; test sends one clearly labelled normal-priority notification and never retries.", Examples: "boetticher module observability alerts pushover apply --credentials-file ~/.secrets/btcr-pushover.key --yes; boetticher module observability alerts pushover status; boetticher module observability alerts pushover test --credentials-file ~/.secrets/btcr-pushover.key", Related: "module observability"},
 	"controller": {
 		Usage: "boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]", Purpose: "Bootstrap, inspect, or explicitly reboot the local Controller.", Arguments: "bootstrap configures locally; status reads local readiness; reboot requires --yes and never contacts Proxmox.", Options: "--operator selects the existing local operator account; bootstrap requires --confirm-key-login; reboot requires --yes.", Safety: "Bootstrap and status are local. Controller reboot is explicit and does not reboot the Host.", Examples: "boetticher controller bootstrap --operator pi --confirm-key-login; boetticher controller status; boetticher controller reboot --yes", Related: "host",
 	},
@@ -151,7 +167,7 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect or explicitly change the physical VLAN trunk, while staying virtual-only by default.", Arguments: "INTERFACE is required for attach and detach and must match the observed hardware.", Options: "--live queries Proxmox; --confirm approves a live trunk change; connection options select the certificate path.", Safety: "A physical trunk change can cut off management. Virtual-only sites leave spare NICs alone until you choose one.", Examples: "boetticher network trunk status --site ./my-boetticher --live", Related: "enroll, firewall, status --details",
 	},
 	"hardware": {
-		Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect USB hardware and bind a module to a stable physical port.", Arguments: "status can filter MODULE REQUIREMENT; bind needs MODULE REQUIREMENT PORT; unbind needs MODULE REQUIREMENT.", Options: "--live reads parent USB identities from Proxmox; --confirm saves the binding and invokes deploy; connection options select the certificate path.", Safety: "Bindings use a physical port and known device identity, never a changing device path, VMID, or your workload.", Examples: "boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher", Related: "module, deploy, status --details",
+		Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect USB hardware and bind a module to a stable physical port.", Arguments: "status can filter MODULE REQUIREMENT; bind needs MODULE REQUIREMENT PORT; unbind needs MODULE REQUIREMENT.", Options: "--live reads parent USB identities from Proxmox; --confirm saves the binding and invokes deploy; connection options select the certificate path.", Safety: "Bindings use a physical port and known device identity, never a changing device path, VMID, or your workload.", Examples: "boetticher hardware usb bind MODULE REQUIREMENT 1-2.4 --confirm --site ./my-boetticher", Related: "module, deploy, status --details",
 	},
 	"pki": {
 		Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]", Purpose: "Create, export, or revoke browser and device client certificates.", Arguments: "NAME is a short client name; certificate-chain export has no client name.", Options: "--output selects an export path; --age-identity selects the independent recovery identity; --site selects local settings.", Safety: "Private keys are never printed to stdout. Certificate actions update local generated config only.", Examples: "boetticher pki client create operator --site ./my-boetticher", Related: "access, deploy, status --details",
@@ -178,13 +194,13 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [flags]", Purpose: "Manage local A/CNAME names and authenticated encrypted upstream DNS on the shared firewall appliance.", Arguments: "Names may be short local names; results display canonical lab.home.arpa names.", Options: "apply, teardown, test, and resource changes accept --yes; test also accepts --plan or --cleanup-only --yes; plan and list operations are read-only.", Safety: "Uses verified appliance management with Quad9 DoT and no plaintext fallback or private site credentials.", Examples: "boetticher module dns plan; boetticher module dns apply --yes; boetticher module dns add-record app --type A --value 10.10.20.61 --yes", Related: "module dhcp, module firewall",
 	},
 	"module vpn": {
-		Usage: "boetticher module vpn plan|apply|status|teardown|add-client|remove-client [flags]", Purpose: "Manage one retained AirVPN WireGuard connection and VPN-only egress for declared protected client reservations.", Arguments: "Clients reference existing DHCP reservations in the permanent protected address class.", Options: "apply accepts --yes and initial provisioning accepts --api-key-stdin --yes; add-client and remove-client accept --yes; teardown accepts --plan or --yes; status accepts --details.", Safety: "Plan and status are observational. Account API credentials are read once from stdin, never stored in lab.yml or arguments; ordinary reapply uses retained root-only tunnel material without account access. Teardown retains client intent, protected ranges, and reusable account material, leaving protected clients blocked while disconnected.", Examples: "boetticher module vpn plan; boetticher module vpn apply --api-key-stdin --yes; boetticher module vpn add-client vpn-test-trusted --yes; boetticher module vpn remove-client vpn-test-trusted --yes; boetticher module vpn status --details; boetticher module vpn teardown --plan", Related: "module firewall, module dhcp",
+		Usage: "boetticher module vpn plan|apply|status|teardown|add-client|remove-client [--location SELECTOR] [flags]", Purpose: "Manage one retained AirVPN WireGuard connection and VPN-only egress for declared protected client reservations.", Arguments: "Clients reference existing DHCP reservations in the permanent protected address class.", Options: "apply accepts --yes, --location SELECTOR, and initial provisioning or explicit selector refresh accepts --api-key-stdin --yes; add-client and remove-client accept --yes; teardown accepts --plan or --yes; status accepts --details.", Safety: "Plan and status are observational. Account API credentials are read once from stdin, never stored in lab.yml or arguments; ordinary reapply uses retained root-only tunnel material without account access and refuses a selector mismatch. Named refreshes require healthy public provider metadata. Provider reboot and teardown inspect the enrolled Host inventory and each running QEMU/LXC NIC before stopping protection; malformed or unavailable inventory refuses the mutation. Stopped guests do not block the operation. Teardown retains client intent, protected ranges, and reusable account material, leaving protected clients blocked while disconnected. This is source and local-runtime behavior, not deployment or packet acceptance proof.", Examples: "boetticher module vpn plan; boetticher module vpn apply --api-key-stdin --yes; boetticher module vpn apply --location Sydney --api-key-stdin --yes; boetticher module vpn add-client vpn-test-trusted --yes; boetticher module vpn remove-client vpn-test-trusted --yes; boetticher module vpn status --details; boetticher module vpn teardown --plan", Related: "module firewall, module dhcp",
 	},
 	"module vpn plan": {
 		Usage: "boetticher module vpn plan", Purpose: "Preview the exact VPN connection, source-routing, and protected-client policy changes.", Arguments: "No positional arguments.", Options: "No options.", Safety: "Read-only. It never contacts the AirVPN account API, writes retained tunnel material, or changes the provider.", Examples: "boetticher module vpn plan", Related: "module vpn apply, module vpn status",
 	},
 	"module vpn apply": {
-		Usage: "boetticher module vpn apply [--yes] [--api-key-stdin]", Purpose: "Apply or reapply one Europe-selected AirVPN WireGuard connection and fail-closed protected-client egress policy.", Arguments: "No positional arguments.", Options: "--yes approves desired and provider changes; --api-key-stdin is required with --yes only for first provisioning or explicit profile refresh.", Safety: "Uses the installed Controller configuration, authenticated Host/provider transports, permanent IPv4/IPv6 safety guard, and exact retained device identity. It never falls back to ordinary WAN for protected clients.", Examples: "boetticher module vpn apply --api-key-stdin --yes; boetticher module vpn apply --yes", Related: "module vpn status, module vpn teardown",
+		Usage: "boetticher module vpn apply [--yes] [--api-key-stdin] [--location SELECTOR]", Purpose: "Apply or reapply one named AirVPN WireGuard connection and fail-closed protected-client egress policy.", Arguments: "No positional arguments.", Options: "--yes approves desired and provider changes; --location selects a named server, country, or region and defaults to europe; --api-key-stdin is required with --yes for first provisioning or an explicit profile refresh.", Safety: "Uses the installed Controller configuration, authenticated Host/provider transports, permanent IPv4/IPv6 safety guard, and exact retained device identity. It never falls back to ordinary WAN for protected clients.", Examples: "boetticher module vpn apply --api-key-stdin --yes; boetticher module vpn apply --location Sydney --api-key-stdin --yes; boetticher module vpn apply --yes", Related: "module vpn status, module vpn teardown",
 	},
 	"module vpn status": {
 		Usage: "boetticher module vpn status [--details]", Purpose: "Observe VPN connection and protected-client enforcement separately.", Arguments: "No positional arguments.", Options: "--details includes location and selected-client counts.", Safety: "Read-only. A missing or unusable connection is reported as blocked/unavailable and never repairs the killswitch.", Examples: "boetticher module vpn status --details", Related: "module vpn apply, module vpn teardown",
@@ -197,6 +213,9 @@ var helpSpecs = map[string]helpSpec{
 	},
 	"module vpn remove-client": {
 		Usage: "boetticher module vpn remove-client RESERVATION [--yes]", Purpose: "Remove one declared VPN-only client while preserving protected ranges and the reusable connection.", Arguments: "RESERVATION must be a current VPN client with no dependent forward.", Options: "--yes approves the desired and provider change.", Safety: "Removing client permission never grants ordinary-WAN fallback; the address-class guard remains in force.", Examples: "boetticher module vpn remove-client vpn-test-trusted --yes", Related: "module vpn add-client, module dhcp remove-reservation",
+	},
+	"module media": {
+		Usage: "boetticher module media plan|apply|status|test|teardown [--plan|--yes] [--cloudflare-token-file FILE]", Purpose: "Manage the fixed amd64 media VM and its protected application lifecycle.", Arguments: "No positional arguments.", Options: "--plan previews apply or teardown; --yes approves mutation or the bounded test; --cloudflare-token-file supplies the operator-owned private token file for first install.", Safety: "Apply requires enabled DNS, DHCP, healthy VPN/provider state, and a complete protected-guest inventory; it never claims deployment or packet acceptance. Test reports only installed guest runtime evidence. Teardown retains media and client protection.", Examples: "boetticher module media plan; boetticher module media apply --cloudflare-token-file /secure/path/token --yes; boetticher module media test --yes; boetticher module media teardown --yes", Related: "module vpn, module observability",
 	},
 	"module tailnet":                 {Usage: "boetticher module tailnet plan|apply|status|test|teardown [flags]", Purpose: "Manage the fixed Tailnet subnet router in the TRANSIT zone.", Arguments: "The capability owns one unprivileged VMID 200 guest with an exact TUN device, stable TRANSIT address, and 10.10.0.0/16 route.", Options: "apply accepts --auth-key-file and --yes; test and teardown accept --plan or --yes.", Safety: "Auth keys are bootstrap-only and never saved or logged. Route approval and native preferences are checked before status can report healthy.", Examples: "boetticher module tailnet plan; boetticher module tailnet apply --auth-key-file /path/key --yes; boetticher module tailnet status", Related: "module firewall, module dns, module dhcp"},
 	"module dhcp plan":               {Usage: "boetticher module dhcp plan", Purpose: "Preview DHCP scopes, reservations, NTP options, and owned provider changes.", Arguments: "No positional arguments.", Options: "No options.", Safety: "Read-only; it does not write lab.yml or provider state.", Examples: "boetticher module dhcp plan", Related: "module dhcp apply"},
@@ -218,7 +237,7 @@ var helpSpecs = map[string]helpSpec{
 	"module dns remove-record":       {Usage: "boetticher module dns remove-record NAME [--yes]", Purpose: "Remove one desired local record by canonical name.", Arguments: "NAME is the record identifier.", Options: "--yes approves the desired and provider change.", Safety: "Removes only the named desired record and preserves DHCP reservations.", Examples: "boetticher module dns remove-record app --yes", Related: "module dns list-records"},
 	"module dns list-records":        {Usage: "boetticher module dns list-records", Purpose: "List saved local A and CNAME intent with canonical names.", Arguments: "No positional arguments.", Options: "No options.", Safety: "Read-only; it does not query or alter provider state.", Examples: "boetticher module dns list-records", Related: "module dns add-record"},
 	"module": {
-		Usage: "boetticher module <capability> <action> [flags]", Purpose: "Manage a bounded Host capability through its ordinary operator intent.", Arguments: "The capability is the operator-managed concern, such as firewall, dhcp, dns, monitoring, or printer. NTP and DHCP-derived DNS are supporting behaviour of client services, not standalone capabilities.", Options: "Capabilities define only their implemented bounded flags; provider, appliance, daemon, and peripheral names are not public namespaces.", Safety: "Client services share the existing firewall appliance, verified management, lab.yml intent, and mutation lock.", Examples: "boetticher module firewall plan; boetticher module dns apply --yes; boetticher module dhcp apply --yes; boetticher module firewall status", Related: "host status, module firewall",
+		Usage: "boetticher module <capability> <action> [flags]", Purpose: "Manage a bounded Host capability through its ordinary operator intent.", Arguments: "The capability is the operator-managed concern, such as firewall, dhcp, dns, monitoring, or observability. NTP and DHCP-derived DNS are supporting behaviour of client services, not standalone capabilities.", Options: "Capabilities define only their implemented bounded flags; provider, appliance, daemon, and peripheral names are not public namespaces.", Safety: "Client services share the existing firewall appliance, verified management, lab.yml intent, and mutation lock.", Examples: "boetticher module firewall plan; boetticher module dns apply --yes; boetticher module dhcp apply --yes; boetticher module firewall status", Related: "host status, module firewall",
 	},
 	"config": {
 		Usage: "boetticher config validate|show|schema [--site DIR]", Purpose: "Check, display, or find the site configuration schema.", Arguments: "validate, show, and schema select the read-only operation.", Options: "--site selects your private site directory; schema does not need a site directory.", Safety: "Read-only. Unknown fields, invalid settings, and attempts to disable mandatory modules stop before the lab changes.", Examples: "boetticher config validate --site ./my-boetticher; boetticher config schema", Related: "module list, plan, deploy --dry-run",
@@ -226,34 +245,41 @@ var helpSpecs = map[string]helpSpec{
 }
 
 var nestedHelpSpecs = map[string]helpSpec{
-	"aiops status":         helpSpecs["aiops"],
-	"companion add":        helpSpecs["companion add"],
-	"companion setup":      helpSpecs["companion setup"],
-	"companion status":     helpSpecs["companion status"],
-	"companion migrate":    helpSpecs["companion migrate"],
-	"controller reboot":    helpSpecs["controller reboot"],
-	"hardware usb list":    helpSpecs["hardware"],
-	"hardware usb status":  helpSpecs["hardware"],
-	"hardware usb bind":    helpSpecs["hardware"],
-	"hardware usb unbind":  helpSpecs["hardware"],
-	"pki client create":    helpSpecs["pki"],
-	"pki client export":    helpSpecs["pki"],
-	"pki client revoke":    helpSpecs["pki"],
-	"pki trust export":     helpSpecs["pki trust"],
-	"firewall status":      helpSpecs["firewall"],
-	"firewall show":        helpSpecs["firewall"],
-	"firewall diff":        helpSpecs["firewall"],
-	"firewall counters":    helpSpecs["firewall"],
-	"firewall logs":        helpSpecs["firewall"],
-	"firewall verify":      helpSpecs["firewall"],
-	"firewall rule add":    helpSpecs["firewall rule add"],
-	"firewall rule list":   helpSpecs["firewall rule list"],
-	"firewall rule remove": helpSpecs["firewall rule remove"],
-	"module dhcp":          helpSpecs["module dhcp"],
-	"module dns":           helpSpecs["module dns"],
-	"config validate":      helpSpecs["config"],
-	"config show":          helpSpecs["config"],
-	"config schema":        helpSpecs["config"],
+	"aiops status":                         helpSpecs["aiops"],
+	"companion add":                        helpSpecs["companion add"],
+	"companion setup":                      helpSpecs["companion setup"],
+	"companion status":                     helpSpecs["companion status"],
+	"companion migrate":                    helpSpecs["companion migrate"],
+	"controller reboot":                    helpSpecs["controller reboot"],
+	"hardware usb list":                    helpSpecs["hardware"],
+	"hardware usb status":                  helpSpecs["hardware"],
+	"hardware usb bind":                    helpSpecs["hardware"],
+	"hardware usb unbind":                  helpSpecs["hardware"],
+	"pki client create":                    helpSpecs["pki"],
+	"pki client export":                    helpSpecs["pki"],
+	"pki client revoke":                    helpSpecs["pki"],
+	"pki trust export":                     helpSpecs["pki trust"],
+	"firewall status":                      helpSpecs["firewall"],
+	"firewall show":                        helpSpecs["firewall"],
+	"firewall diff":                        helpSpecs["firewall"],
+	"firewall counters":                    helpSpecs["firewall"],
+	"firewall logs":                        helpSpecs["firewall"],
+	"firewall verify":                      helpSpecs["firewall"],
+	"firewall rule add":                    helpSpecs["firewall rule add"],
+	"firewall rule list":                   helpSpecs["firewall rule list"],
+	"firewall rule remove":                 helpSpecs["firewall rule remove"],
+	"module dhcp":                          helpSpecs["module dhcp"],
+	"module dns":                           helpSpecs["module dns"],
+	"module logging":                       helpSpecs["module logging"],
+	"module logging query":                 helpSpecs["module logging"],
+	"module monitoring":                    helpSpecs["module monitoring"],
+	"module statuspage":                    helpSpecs["module statuspage"],
+	"module observability":                 helpSpecs["module observability"],
+	"module observability alerts pushover": helpSpecs["module observability alerts pushover"],
+	"module aiops":                         helpSpecs["module aiops"],
+	"config validate":                      helpSpecs["config"],
+	"config show":                          helpSpecs["config"],
+	"config schema":                        helpSpecs["config"],
 }
 
 // CommandReferenceMarkdown renders the browseable command menu from the same

@@ -44,3 +44,18 @@ peer ` + fmt.Sprint(now))
 		t.Fatalf("runtime status=%+v err=%v", status, err)
 	}
 }
+
+func TestVPNClientMTURouteVerifierUsesNativeLABRouteShape(t *testing.T) {
+	line := "10.10.20.230 dev br-lab.20 proto static scope link mtu 1320"
+	if !hasVPNClientMTURoute(line, "10.10.20.230", "br-lab.20", "1320") {
+		t.Fatal("native LAB MTU route was rejected")
+	}
+	for _, invalid := range []struct{ device, mtu string }{{"airvpn", "1320"}, {"br-lab.20", "1280"}} {
+		if hasVPNClientMTURoute(line, "10.10.20.230", invalid.device, invalid.mtu) {
+			t.Fatalf("invalid route accepted: device=%s mtu=%s", invalid.device, invalid.mtu)
+		}
+	}
+	if hasVPNClientMTURoute("10.10.20.230/24 dev br-lab.20 proto static scope link mtu 1320", "10.10.20.230", "br-lab.20", "1320") {
+		t.Fatal("non-host route prefix was accepted")
+	}
+}

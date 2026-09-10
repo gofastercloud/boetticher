@@ -63,11 +63,9 @@ type ModulesConfig struct {
 	Logging       *ToggleModuleConfig        `yaml:"logging,omitempty" json:"logging,omitempty"`
 	TailnetRouter *TailnetRouterConfig       `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	Bifrost       *BifrostModuleConfig       `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
-	Printer       *NetworkToggleModuleConfig `yaml:"printer,omitempty" json:"printer,omitempty"`
 	AIOps         *AIOpsModuleConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 	Gatus         *NetworkToggleModuleConfig `yaml:"gatus,omitempty" json:"gatus,omitempty"`
 	AirVPN        *AirVPNModuleConfig        `yaml:"airvpn,omitempty" json:"airvpn,omitempty"`
-	Arr           *ArrModuleConfig           `yaml:"arr,omitempty" json:"arr,omitempty"`
 }
 
 // CompanionConfig is the fixed capability contract for an external Pi. New
@@ -195,13 +193,6 @@ type NetworkToggleModuleConfig struct {
 	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
 }
 
-// ArrModuleConfig is fixed to AirVPN egress because the *arr services are
-// intentionally never allowed to use the direct WAN path.
-type ArrModuleConfig struct {
-	Enabled *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=airvpn"`
-}
-
 // BifrostModuleConfig configures the provider-neutral Bifrost AI endpoint and
 // its friendly model aliases.
 type BifrostModuleConfig struct {
@@ -284,9 +275,6 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.Bifrost != nil {
 		result["bifrost"] = ModuleConfig{Enabled: cloneBool(m.Bifrost.Enabled), Network: m.Bifrost.Network, Upstreams: cloneBifrostUpstreams(m.Bifrost.Upstreams), Models: cloneBifrostModels(m.Bifrost.Models)}
 	}
-	if m.Printer != nil {
-		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled), Network: m.Printer.Network}
-	}
 	if m.AIOps != nil {
 		result["aiops"] = ModuleConfig{Enabled: cloneBool(m.AIOps.Enabled), Network: m.AIOps.Network, ModelAlias: m.AIOps.ModelAlias}
 	}
@@ -295,13 +283,6 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	}
 	if m.AirVPN != nil {
 		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers, QBittorrentPort: m.AirVPN.QBittorrentPort}
-	}
-	if m.Arr != nil {
-		network := m.Arr.Network
-		if network == "" && m.Arr.Enabled != nil && *m.Arr.Enabled {
-			network = ModuleNetworkAirVPN
-		}
-		result["arr"] = ModuleConfig{Enabled: cloneBool(m.Arr.Enabled), Network: network}
 	}
 	return result
 }
@@ -326,9 +307,6 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	if config, ok := input["bifrost"]; ok {
 		result.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
 	}
-	if config, ok := input["printer"]; ok {
-		result.Printer = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
-	}
 	if config, ok := input["aiops"]; ok {
 		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, ModelAlias: config.ModelAlias}
 	}
@@ -337,9 +315,6 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["airvpn"]; ok {
 		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers, QBittorrentPort: config.QBittorrentPort}
-	}
-	if config, ok := input["arr"]; ok {
-		result.Arr = &ArrModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	return result
 }
@@ -376,8 +351,6 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			models = m.Bifrost.Models
 		}
 		m.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(upstreams), Models: cloneBifrostModels(models)}
-	case "printer":
-		m.Printer = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "aiops":
 		alias := config.ModelAlias
 		if alias == "" && m.AIOps != nil {
@@ -396,15 +369,6 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			}
 		}
 		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers, QBittorrentPort: port}
-	case "arr":
-		network := config.Network
-		if network == "" && m.Arr != nil {
-			network = m.Arr.Network
-		}
-		if network == "" && config.Enabled != nil && *config.Enabled {
-			network = ModuleNetworkAirVPN
-		}
-		m.Arr = &ArrModuleConfig{Enabled: cloneBool(config.Enabled), Network: network}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}

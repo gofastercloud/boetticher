@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,13 @@ import (
 	"strings"
 	"testing"
 )
+
+type countingRoundTripper struct{ calls int }
+
+func (r *countingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	r.calls++
+	return nil, errors.New("unexpected upstream request")
+}
 
 func TestRouterPreservesOpenAIRequestContractAndRewritesOnlyModel(t *testing.T) {
 	credentials := t.TempDir()
@@ -76,6 +84,43 @@ func TestRouterRejectsUndeclaredModelsAndUnsupportedRoutes(t *testing.T) {
 				t.Fatalf("status = %d, want %d", response.Code, test.want)
 			}
 		})
+	}
+}
+
+func TestRouterRequiresHolmesClientCredentialWithoutTouchingUpstream(t *testing.T) {
+	credentials := t.TempDir()
+	for name, value := range map[string]string{"key": "upstream-key", "holmes-client-token": "local-token"} {
+		if err := os.WriteFile(filepath.Join(credentials, name), []byte(value), 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	router, err := NewRouter(Config{ClientCredential: "holmes-client-token", Upstreams: []Upstream{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Credential: "key"}}, Models: []Model{{Alias: "operations", Upstream: "openrouter", Model: "openai/model"}}}, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &countingRoundTripper{}
+	router.client.Transport = transport
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "http://router/v1/models", nil),
+		httptest.NewRequest(http.MethodPost, "http://router/v1/chat/completions", strings.NewReader(`{"model":"operations","messages":[]}`)),
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthorized request status = %d, want 401", response.Code)
+		}
+	}
+	wrong := httptest.NewRequest(http.MethodGet, "http://router/v1/models", nil)
+	wrong.Header.Set("Authorization", "Bearer wrong")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, wrong)
+	if response.Code != http.StatusUnauthorized || transport.calls != 0 {
+		t.Fatalf("wrong client credential status=%d upstream_calls=%d", response.Code, transport.calls)
+	}
+	health := httptest.NewRecorder()
+	router.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "http://router/health", nil))
+	if health.Code != http.StatusOK {
+		t.Fatalf("health status = %d, want 200", health.Code)
 	}
 }
 

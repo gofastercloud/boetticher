@@ -111,14 +111,6 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
-		"arr": {
-			Name: "arr", Description: "AirVPN-routed Sonarr, Radarr, Lidarr, Prowlarr, and qBittorrent media services", Version: "1.0.1", Policy: DefaultOff, NetworkCapable: true,
-			AllowedNetworkModes: []model.ModuleNetworkMode{model.ModuleNetworkAirVPN}, DefaultNetworkMode: model.ModuleNetworkAirVPN,
-			DependsOn: []string{"airvpn"}, Requires: []Capability{CapabilityAirVPNTransit, CapabilityDNS, CapabilityNTP}, ReservedVMIDStart: 270, ReservedVMIDEnd: 279,
-			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-arr-01", VMID: model.ArrVMID, Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, Role: "Sonarr, Radarr, Lidarr, Prowlarr, and qBittorrent media services", DNSAliases: []string{"sonarr", "radarr", "lidarr", "prowlarr", "qbittorrent"}, URL: "https://sonarr." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			},
-		},
 		"bifrost": {
 			Name: "bifrost", Description: "mTLS-protected Bifrost AI API router", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Configuration: []model.ModuleConfigField{
@@ -137,14 +129,6 @@ func FirstPartyRegistry() Registry {
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-bifrost-01", VMID: 210, Hostname: "lab-bifrost-01", Address: "10.10.20.60", Role: "Bifrost AI API router", DNSAliases: []string{"bifrost", "ai"}, URL: "https://bifrost." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
-		},
-		"printer": {
-			Name: "printer", Description: "OctoPrint management for one USB-connected Ender-3 V3 SE", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
-			Requires: []Capability{CapabilityDNS}, ReservedVMIDStart: 230, ReservedVMIDEnd: 239,
-			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-printer-01", VMID: model.PrinterVMID, Hostname: "lab-printer-01", Address: "10.10.20.80", Role: "OctoPrint for Ender-3 V3 SE", DNSAliases: []string{"octoprint", "printer"}, URL: "https://octoprint." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			},
-			USBRequirements: []model.USBRequirement{{Name: "serial", Guest: "lab-printer-01", DeviceType: "serial", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1a86", ProductID: "7523"}}}},
 		},
 		"aiops": {
 			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
@@ -472,9 +456,6 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		if !modelToken(airvpn.Servers) {
 			return nil, fmt.Errorf("modules.airvpn.servers: selector contains unsafe characters")
 		}
-	}
-	if arr, ok := configs["arr"]; ok && arr.Enabled != nil && *arr.Enabled && arr.Network != model.ModuleNetworkAirVPN {
-		return nil, fmt.Errorf("modules.arr.network: arr requires AirVPN egress; set network: airvpn")
 	}
 	for name, moduleConfig := range configs {
 		if name == "bifrost" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {

@@ -7,6 +7,18 @@ description: The Boetticher Controller, Host, and Module boundary.
 
 # Your lab, demystified
 
+## Reference topology
+
+The [logical reference-lab topology](images/network-topology.svg) separates
+deployed logical services from observability/media rollout work. The
+[physical wiring reference](images/physical-network.svg) shows the
+operator-specified switch-port map, equipment, and cable colours. Each has an
+editable source: [logical draw.io](images/network-topology.drawio) and
+[physical draw.io](images/physical-network.drawio). These are concise IPv4 and
+wiring views, not firewall-rule inventories, IPv6-isolation proof, complete
+live-link audits, or deployment acceptance records. Status and current-address
+labels are dated 9 September 2026.
+
 Boetticher currently manages one Proxmox Host from one Controller. The Host is
 the product object below the Controller; storage and networking are Host
 configuration, not separate lifecycle objects.
@@ -97,11 +109,10 @@ IPv6 forwarding and security policy are reserved for explicit future
 firewall/network Module work rather than inferred from the internal vmbr1
 regression.
 
-The accepted reference physical clients are the Controller Pi
-`dc:a6:32:e9:dd:82` with the permanent SERVERS reservation
-`10.10.20.10` (`lab-companion.lab.home.arpa`) and the observed SANDBOX MacBook
-lease `10.10.40.181`. These are evidence of the current installation binding,
-not reusable fixture identities.
+The reference topology includes a Controller on SERVERS and a client on
+SANDBOX. Addresses, hostnames, MACs, and leases belong in private acceptance
+records; public documentation deliberately leaves those site-specific values
+out.
 
 For the read-only `host status` health check, `vmbr1` is healthy when the link is
 up, VLAN-aware, correctly configured, and has no Host L3 address or gateway.
@@ -156,7 +167,7 @@ They are separate concepts:
 
 | Concept | Example |
 | --- | --- |
-| Capability | `firewall`, `dhcp`, `dns`, `vpn`, `monitoring`, `statuspage`, `printer` |
+| Capability | `firewall`, `dhcp`, `dns`, `vpn`, `monitoring`, `statuspage` |
 | Provider | gateway appliance, DNS resolver, monitoring service, status-page server |
 | Runtime | gateway VM, monitoring VM/LXC, or the Controller |
 

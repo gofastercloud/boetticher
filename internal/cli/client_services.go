@@ -332,6 +332,12 @@ func clientServiceChangeCount(ctx context.Context, provider *openwrt.Client, ser
 	return changes + len(itemChanges), nil
 }
 
+type clientServicesDriftError struct{ packageName string }
+
+func (e *clientServicesDriftError) Error() string {
+	return fmt.Sprintf("provider %s configuration is not at the desired state", e.packageName)
+}
+
 func verifyClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState, capability string, ignoredDHCPSections ...map[string]struct{}) error {
 	ignored := map[string]struct{}{}
 	if len(ignoredDHCPSections) > 0 {
@@ -379,7 +385,7 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 				remaining = append(remaining, change)
 			}
 			if len(remaining) > 0 {
-				return fmt.Errorf("provider %s configuration is not at the desired state", item.packageName)
+				return &clientServicesDriftError{packageName: item.packageName}
 			}
 		}
 	}
@@ -405,6 +411,26 @@ func verifyClientServices(ctx context.Context, provider *openwrt.Client, state f
 		return errors.New("provider native time service is unavailable")
 	}
 	return nil
+}
+
+func benignDHCPAdditions(ctx context.Context, provider *openwrt.Client, desired []firewallmodule.Section) (bool, error) {
+	observed, err := provider.UCIGet(ctx, "dhcp")
+	if err != nil {
+		return false, err
+	}
+	mutations, err := firewallmodule.DiffOwned(observed, desired)
+	if err != nil {
+		return false, err
+	}
+	if len(mutations) == 0 {
+		return false, nil
+	}
+	for _, mutation := range mutations {
+		if mutation.Kind != firewallmodule.MutationCreate || !(strings.HasPrefix(mutation.Section.Name, "boetticher_record_") || strings.HasPrefix(mutation.Section.Name, "boetticher_observability_record_") || strings.HasPrefix(mutation.Section.Name, "boetticher_host_")) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func verifyDisabledClientServices(ctx context.Context, provider *openwrt.Client, state firewallmodule.ServiceState) error {
@@ -561,6 +587,11 @@ func runClientServiceStatus(ctx context.Context, capability string, serviceConte
 		return err
 	}
 	if err := verifyClientServices(ctx, provider, state, capability); err != nil {
+		pending, pendingErr := benignDHCPAdditions(ctx, provider, state.DHCP)
+		if strings.Contains(err.Error(), "not at the desired state") && pendingErr == nil && pending {
+			fmt.Fprintf(out, "%s: CHECKING\nReason: additive reservation or DNS record intent is pending provider reconciliation\n", strings.ToUpper(capability))
+			return nil
+		}
 		fmt.Fprintf(out, "%s: FAIL\nReason: %s\n", strings.ToUpper(capability), err)
 		return err
 	}
@@ -606,6 +637,16 @@ func runClientServiceApply(ctx context.Context, capability string, serviceContex
 	if err != nil {
 		return err
 	}
+	infrastructureChanged := false
+	if proposed.DNS != nil {
+		infrastructure, infrastructureErr := firewallmodule.InfrastructureDNSRecords(serviceContext.Site)
+		if infrastructureErr != nil {
+			return infrastructureErr
+		}
+		desiredInfrastructure := infrastructureRecordsForModules(infrastructure)
+		infrastructureChanged = !reflect.DeepEqual(proposed.DNS.Infrastructure, desiredInfrastructure)
+		proposed.DNS.Infrastructure = desiredInfrastructure
+	}
 	state, err := firewallmodule.ServiceStateFromModules(serviceContext.Site, proposed)
 	if err != nil {
 		return err
@@ -614,7 +655,7 @@ func runClientServiceApply(ctx context.Context, capability string, serviceContex
 	if err != nil {
 		return err
 	}
-	if changes == 0 && !configChanged {
+	if changes == 0 && !configChanged && !infrastructureChanged {
 		if err := verifyClientServices(ctx, provider, state, capability); err != nil {
 			return err
 		}
@@ -649,6 +690,14 @@ func runClientServiceApply(ctx context.Context, capability string, serviceContex
 	fmt.Fprintf(out, "%s: PASS\nConfiguration: saved\nService: ready\n", strings.ToUpper(capability))
 	_ = errOut
 	return nil
+}
+
+func infrastructureRecordsForModules(records []model.DNSRecord) []clientservices.DNSRecord {
+	result := make([]clientservices.DNSRecord, 0, len(records))
+	for _, record := range records {
+		result = append(result, clientservices.DNSRecord{Name: record.Name, Type: record.Type, Value: record.Address})
+	}
+	return result
 }
 
 func runClientServiceTeardown(ctx context.Context, capability string, serviceContext clientServiceContext, provider *openwrt.Client, options clientServiceOptions, input io.Reader, out io.Writer) error {
@@ -1232,7 +1281,7 @@ func reverseName(value string) string {
 
 func displayLeaseValue(value string) string {
 	if value == "" {
-		return "-"
+		return "<not supplied>"
 	}
 	return value
 }
@@ -1283,8 +1332,11 @@ func runDHCPListReservations(args []string, out io.Writer) error {
 }
 
 func runDHCPListLeases(args []string, out io.Writer) error {
-	if len(args) != 0 {
-		return errors.New("usage: boetticher module dhcp list-leases")
+	fs := flag.NewFlagSet("module dhcp list-leases", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	details := fs.Bool("details", false, "include client identifiers")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		return errors.New("usage: boetticher module dhcp list-leases [--details]")
 	}
 	serviceContext, err := loadClientServiceContext()
 	if err != nil {
@@ -1311,11 +1363,22 @@ func runDHCPListLeases(args []string, out io.Writer) error {
 		return nil
 	}
 	for _, lease := range leases {
-		expires := "never"
+		state := "infinite"
+		expires := "infinite"
 		if lease.Expiry > 0 {
 			expires = time.Unix(lease.Expiry, 0).UTC().Format(time.RFC3339)
+			state = "active"
+			if lease.Expiry <= time.Now().Unix() {
+				state = "expired"
+			}
+		} else if lease.Expiry < 0 {
+			state, expires = "unknown", "unknown"
 		}
-		fmt.Fprintf(out, "address=%s mac=%s hostname=%s expires=%s client_id=%s\n", lease.Address, lease.MAC, displayLeaseValue(lease.Hostname), expires, displayLeaseValue(lease.ClientID))
+		fmt.Fprintf(out, "address=%s mac=%s hostname=%s state=%s expires=%s", lease.Address, lease.MAC, displayLeaseValue(lease.Hostname), state, expires)
+		if *details {
+			fmt.Fprintf(out, " client_id=%s", displayLeaseValue(lease.ClientID))
+		}
+		fmt.Fprintln(out)
 	}
 	return nil
 }
@@ -1355,6 +1418,11 @@ func runDHCPAddReservation(args []string, input io.Reader, out io.Writer) error 
 		return errors.New("reservation address must be a canonical IPv4 address")
 	}
 	reservation := clientservices.Reservation{Name: strings.ToLower(strings.TrimSpace(name)), Zone: strings.ToUpper(strings.TrimSpace(*zone)), MAC: canonicalMAC, Address: parsedAddress.To4().String()}
+	for _, system := range serviceContext.Config.Modules.Systems {
+		if strings.EqualFold(system.Name, reservation.Name) || strings.EqualFold(system.MAC, reservation.MAC) || system.Address == reservation.Address {
+			return fmt.Errorf("reservation conflicts with registered system %s", system.Name)
+		}
+	}
 	identical := false
 	for _, existing := range serviceContext.Config.Modules.DHCP.Reservations {
 		if strings.EqualFold(existing.Name, reservation.Name) {
@@ -1406,6 +1474,11 @@ func runDHCPRemoveReservation(args []string, input io.Reader, out io.Writer) err
 	}
 	if index < 0 {
 		return fmt.Errorf("no DHCP reservation named %s", name)
+	}
+	for _, system := range serviceContext.Config.Modules.Systems {
+		if strings.EqualFold(system.Name, name) {
+			return fmt.Errorf("DHCP reservation %s is owned by registered system; unregister the system first", name)
+		}
 	}
 	if serviceContext.Config.Modules.Tailnet != nil && serviceContext.Config.Modules.Tailnet.Enabled {
 		for _, reservation := range serviceContext.Config.Modules.DHCP.Reservations {

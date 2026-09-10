@@ -13,6 +13,101 @@ func testSite() model.Site {
 	return model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 }
 
+func TestValidateObservabilityContracts(t *testing.T) {
+	bad := Modules{Observability: &ObservabilityConfig{Logging: LoggingConfig{RetentionDays: -1}}}
+	if err := Validate(bad, testSite()); err == nil || !strings.Contains(err.Error(), "logging.retention_days") {
+		t.Fatalf("expected logging retention rejection, got %v", err)
+	}
+	enabled := true
+	bad = Modules{AIOps: &AIOpsConfig{Enabled: &enabled, Holmes: &HolmesConfig{Enabled: &enabled, ModelAlias: "not a label"}}}
+	if err := Validate(bad, testSite()); err == nil || !strings.Contains(err.Error(), "holmes.model_alias") {
+		t.Fatalf("expected Holmes alias rejection, got %v", err)
+	}
+	good := Modules{Observability: &ObservabilityConfig{Enabled: &enabled, Logging: LoggingConfig{RetentionDays: 7}, Monitoring: MonitoringConfig{RetentionDays: 30}}}
+	if err := Validate(good, testSite()); err != nil {
+		t.Fatalf("valid observability intent rejected: %v", err)
+	}
+	good.Observability.PublicDomain = "example.com"
+	if err := Validate(good, testSite()); err != nil {
+		t.Fatalf("valid public observability domain rejected: %v", err)
+	}
+	good.Observability.PublicDomain = "lab.home.arpa/unsafe"
+	if err := Validate(good, testSite()); err == nil || !strings.Contains(err.Error(), "public_domain") {
+		t.Fatalf("invalid public observability domain accepted: %v", err)
+	}
+	good.Observability.PublicDomain = "example.com"
+	good.Observability.Alerts.Pushover = &PushoverConfig{Enabled: &enabled, Title: "Boetticher alerts", Priority: 0}
+	if err := Validate(good, testSite()); err != nil {
+		t.Fatalf("valid Pushover intent rejected: %v", err)
+	}
+	for _, priority := range []int{2, 3, -3} {
+		good.Observability.Alerts.Pushover.Priority = priority
+		if err := Validate(good, testSite()); err == nil || !strings.Contains(err.Error(), "pushover.priority") {
+			t.Fatalf("invalid Pushover priority %d accepted: %v", priority, err)
+		}
+	}
+}
+
+func TestPushoverIntentRoundTripsWithoutSecrets(t *testing.T) {
+	enabled := true
+	modules := Modules{Observability: &ObservabilityConfig{Alerts: AlertsConfig{Pushover: &PushoverConfig{Enabled: &enabled, Title: "Boetticher alerts", Priority: 0}}}}
+	data, err := yaml.Marshal(modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "token") || strings.Contains(string(data), "user") {
+		t.Fatalf("Pushover intent rendered secret fields: %s", data)
+	}
+	var roundTrip Modules
+	if err := yaml.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Observability == nil || roundTrip.Observability.Alerts.Pushover == nil || roundTrip.Observability.Alerts.Pushover.Title != "Boetticher alerts" {
+		t.Fatalf("Pushover intent did not round-trip: %#v", roundTrip)
+	}
+}
+
+func TestObservabilityCollectionBindingsRoundTripAndClone(t *testing.T) {
+	enabled := true
+	modules := Modules{Observability: &ObservabilityConfig{
+		Enabled: &enabled,
+		Collection: ObservabilityCollectionBindings{
+			Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20",
+		},
+	}}
+	data, err := yaml.Marshal(modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Modules
+	if err := yaml.Unmarshal(data, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Observability == nil || roundTrip.Observability.Collection != modules.Observability.Collection {
+		t.Fatalf("collection bindings did not round-trip: %#v", roundTrip)
+	}
+	clone := modules.Clone()
+	clone.Observability.Collection.Controller = "10.10.20.11"
+	if modules.Observability.Collection.Controller != "10.10.20.10" {
+		t.Fatal("Clone aliases collection bindings")
+	}
+}
+
+func TestObservabilityCollectionBindingsRejectNonCanonicalAndDuplicateAddresses(t *testing.T) {
+	for _, bindings := range []ObservabilityCollectionBindings{
+		{Controller: "10.10.20.010", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20"},
+		{Controller: "10.10.20.10", ProxmoxHost: "10.10.20.10", Runtime: "10.10.10.20"},
+		{Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5"},
+	} {
+		if err := Validate(Modules{Observability: &ObservabilityConfig{Collection: bindings}}, testSite()); err == nil {
+			t.Fatalf("invalid collection bindings accepted: %#v", bindings)
+		}
+	}
+	if err := Validate(Modules{Observability: &ObservabilityConfig{}}, testSite()); err != nil {
+		t.Fatalf("unset collection bindings should be allowed before first apply: %v", err)
+	}
+}
+
 func TestModulesRoundTripPreservesTailnetAndVPNIntent(t *testing.T) {
 	enabled := true
 	modules := Modules{
@@ -55,6 +150,53 @@ func TestNormalizeMaterializesReferenceDefaultsOnlyInMemory(t *testing.T) {
 	}
 	if err := Validate(normalized, testSite()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestArrstackRequiresProtectedIntentAndAllowsConfiguredPeerPort(t *testing.T) {
+	enabled := true
+	modules := Modules{
+		Media: &MediaConfig{Enabled: true, ApplicationDomain: "media.example.net", Aliases: MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"}},
+		DNS:   &DNSConfig{Enabled: &enabled},
+		DHCP:  &DHCPConfig{Enabled: &enabled, Reservations: []Reservation{{Name: "lab-media-01", Zone: "SERVERS", MAC: "02:00:00:00:20:e6", Address: "10.10.20.230"}}},
+		VPN:   &VPNConfig{Enabled: &enabled, Location: "europe", Clients: []string{"lab-media-01"}, Forwards: []VPNForward{{Name: "media-qbittorrent", Reservation: "lab-media-01", Protocols: []string{"tcp", "udp"}, Port: 40000}}},
+	}
+	if err := Validate(modules, testSite()); err != nil {
+		t.Fatalf("valid arrstack intent rejected: %v", err)
+	}
+	stopped := false
+	modules.VPN.Enabled = &stopped
+	if err := Validate(modules, testSite()); err != nil {
+		t.Fatalf("arrstack intent with a retained stopped VPN was rejected: %v", err)
+	}
+	modules.VPN.Enabled = &enabled
+	modules.VPN.Clients = nil
+	if err := Validate(modules, testSite()); err == nil {
+		t.Fatal("arrstack without VPN client intent accepted")
+	}
+}
+
+func TestMediaAcceptsGenericDomainAndNamedAliases(t *testing.T) {
+	enabled := true
+	m := Modules{Media: &MediaConfig{Enabled: true, ApplicationDomain: "media.example.net", Aliases: MediaAliases{Radarr: "movies", Sonarr: "shows", Bazarr: "subs", Prowlarr: "index", Trailarr: "trails"}}, DNS: &DNSConfig{Enabled: &enabled}, DHCP: &DHCPConfig{Enabled: &enabled}, VPN: &VPNConfig{Enabled: &enabled, Location: "europe", Clients: []string{"lab-media-01"}, Forwards: []VPNForward{{Name: "media-qbittorrent", Reservation: "lab-media-01", Protocols: []string{"tcp", "udp"}, Port: 35796}}}}
+	m.DHCP.Reservations = []Reservation{{Name: "lab-media-01", Zone: "SERVERS", MAC: "02:00:00:00:20:e6", Address: "10.10.20.230"}}
+	if err := Validate(m, testSite()); err != nil {
+		t.Fatalf("generic media reference rejected: %v", err)
+	}
+	m.Media.Aliases.Sonarr = m.Media.Aliases.Radarr
+	if err := Validate(m, testSite()); err == nil {
+		t.Fatal("duplicate media aliases accepted")
+	}
+	m.Media.Aliases.Sonarr = "bad alias"
+	if err := Validate(m, testSite()); err == nil {
+		t.Fatal("malformed media alias accepted")
+	}
+}
+
+func TestLegacyMediaNormalizeDoesNotInventProductionDomainOrAliases(t *testing.T) {
+	normalized := (Modules{Arrstack: &ArrstackConfig{Enabled: true}}).Normalize()
+	if normalized.Media == nil || normalized.Media.ApplicationDomain != "" || normalized.Media.Aliases != (MediaAliases{}) {
+		t.Fatalf("legacy media normalization invented production values: %#v", normalized.Media)
 	}
 }
 

@@ -41,6 +41,8 @@ func runHost(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runHostTeardown(args[1:], input, out)
 	case "reboot":
 		return runHostReboot(args[1:], out)
+	case "register-system", "list-systems", "system-status", "unregister-system":
+		return runSystems(args, input, out, errOut)
 	default:
 		return fmt.Errorf("unknown host command %q", args[0])
 	}
@@ -244,8 +246,7 @@ func runHostStatus(args []string, out io.Writer) error {
 	} else {
 		fmt.Fprintf(out, "FAIL  Internal network   %s\n", networkPlan.Detail)
 	}
-	fmt.Fprintln(out, "      Physical LAB       Not configured")
-	fmt.Fprintln(out, "      Modules            None deployed")
+	fmt.Fprintf(out, "      Physical LAB       %s\n", physicalLABStatus(networkPlan, networkErr))
 	if *details {
 		renderHostDetails(out, inventory)
 	}
@@ -255,6 +256,19 @@ func runHostStatus(args []string, out io.Writer) error {
 	}
 	fmt.Fprintln(out, "\nHost readiness: PASS")
 	return nil
+}
+
+func physicalLABStatus(plan controllerhost.NetworkPlan, err error) string {
+	if err != nil {
+		return "Unknown: " + err.Error()
+	}
+	if plan.Config.PhysicalTrunk == "" {
+		return "Virtual bridge path"
+	}
+	if plan.State == "exact" {
+		return plan.Config.PhysicalTrunk + " attached"
+	}
+	return plan.Config.PhysicalTrunk + " not ready (" + plan.State + ")"
 }
 
 func renderHostDetails(out io.Writer, inventory controllerhost.Inventory) {

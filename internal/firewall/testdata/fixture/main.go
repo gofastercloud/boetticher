@@ -16,7 +16,6 @@ func main() {
 	c := model.ConfigFromSite(model.NewDefaultSite("packet-fixture", "age1example"))
 	enabled := true
 	c.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}
-	c.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
 	c.Modules.Logging = &model.ToggleModuleConfig{Enabled: &enabled}
 	s, _, err := modules.Compose(c)
 	if err != nil {

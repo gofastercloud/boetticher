@@ -58,8 +58,29 @@ func TestParseTailnetResultAllowsValidNonzeroCommandStatesButNeverHealthy(t *tes
 		t.Fatalf("attention Tailnet status = %#v", got)
 	}
 	healthy := []byte(`{"configured":true,"state":"healthy","detail":"router healthy","observed_at":"2026-09-08T00:59:30Z"}`)
-	if got := parseTailnetResult(healthy, errors.New("status exited 1"), now); got.State != Failed {
+	if got := parseTailnetResult(healthy, errors.New("status exited 1"), now); got.State != Failed || got.Detail != "Tailnet healthy status was not returned by a successful command" {
 		t.Fatalf("failed healthy Tailnet status = %#v", got)
+	}
+}
+
+func TestParseTailnetResultPreservesSemanticFailureDetail(t *testing.T) {
+	now := time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)
+	output := []byte(`{"configured":true,"state":"failed","detail":"Tailnet is disconnected from its coordination service","observed_at":"2026-09-08T00:59:30Z"}`)
+	got := parseTailnetResult(output, errors.New("status exited 1"), now)
+	if got.State != Failed || got.Healthy || got.Detail != "Tailnet is disconnected from its coordination service" {
+		t.Fatalf("failure result = %#v", got)
+	}
+}
+
+func TestTailnetTransitionDetailFiltersUntrustedErrorText(t *testing.T) {
+	if got := tailnetTransitionDetail("Tailnet is disconnected from its coordination service"); got != "Tailnet is disconnected from its coordination service" {
+		t.Fatalf("coordination detail = %q", got)
+	}
+	if got := tailnetTransitionDetail("inspect Host guest inventory: stderr contains secret"); got != "status check failed" {
+		t.Fatalf("untrusted detail = %q", got)
+	}
+	if got := tailnetTransitionDetail("Tailnet status evidence is missing\nraw output"); got != "status check failed" {
+		t.Fatalf("multiline detail = %q", got)
 	}
 }
 
@@ -127,6 +148,84 @@ func TestModuleCheckerTreatsUnconfiguredCapabilitiesAsOff(t *testing.T) {
 	}
 	if result.DHCPNTP.Configured || result.DHCPNTP.State != Off || result.Tailnet.Configured || result.Tailnet.State != Off || !strings.Contains(result.DHCPNTP.Detail, "not configured") || !strings.Contains(result.Tailnet.Detail, "not configured") {
 		t.Fatalf("unconfigured capabilities were not off: %#v", result)
+	}
+}
+
+func TestModuleCheckerStartsIndependentChecksTogether(t *testing.T) {
+	release := make(chan struct{})
+	vpnStarted := make(chan struct{}, 1)
+	tailnetStarted := make(chan struct{}, 1)
+	checker := ModuleChecker{
+		CommandPath: "/usr/local/bin/boetticher",
+		RunCommand: func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+			switch strings.Join(args, " ") {
+			case "module firewall status", "module dhcp status", "module dns status":
+				select {
+				case <-release:
+					return []byte("capability: PASS\n"), nil
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			case "module vpn status":
+				vpnStarted <- struct{}{}
+				return []byte("VPN: CONNECTED\n"), nil
+			case "module tailnet status --json":
+				tailnetStarted <- struct{}{}
+				return []byte(`{"configured":true,"state":"healthy","detail":"router healthy","observed_at":"` + time.Now().UTC().Format(time.RFC3339Nano) + `"}`), nil
+			}
+			return nil, errors.New("unexpected command")
+		},
+	}
+	done := make(chan ModuleStatus, 1)
+	go func() { done <- checker.Check(context.Background()) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-vpnStarted:
+		case <-tailnetStarted:
+		case <-time.After(time.Second):
+			t.Fatal("independent VPN/Tailnet checks were starved")
+		}
+	}
+	close(release)
+	select {
+	case result := <-done:
+		if result.VPN.State != Healthy || result.Tailnet.State != Healthy {
+			t.Fatalf("independent healthy checks = vpn:%#v tailnet:%#v", result.VPN, result.Tailnet)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("module checks did not finish after release")
+	}
+}
+
+func TestModuleCheckerGivesSlowChecksFullRefreshBudget(t *testing.T) {
+	deadlineSeen := make(chan time.Duration, 1)
+	checker := ModuleChecker{
+		CommandPath: "/usr/local/bin/boetticher",
+		RunCommand: func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+			if strings.Join(args, " ") == "module firewall status" {
+				deadline, ok := ctx.Deadline()
+				if !ok {
+					deadlineSeen <- -1
+					return nil, errors.New("missing deadline")
+				}
+				deadlineSeen <- time.Until(deadline)
+				time.Sleep(50 * time.Millisecond)
+				return []byte("Firewall: PASS\n"), nil
+			}
+			return []byte("capability: not configured\n"), errors.New("not configured")
+		},
+	}
+	result := checker.Check(context.Background())
+	select {
+	case budget := <-deadlineSeen:
+		if budget < 15*time.Second || budget > moduleCheckTimeout {
+			t.Fatalf("slow check budget = %s, want the full %s refresh budget", budget, moduleCheckTimeout)
+		}
+	default:
+		t.Fatal("slow firewall check did not run")
+	}
+	if result.Firewall.State != Healthy || !result.Firewall.Healthy {
+		t.Fatalf("slow healthy firewall result = %#v", result.Firewall)
 	}
 }
 

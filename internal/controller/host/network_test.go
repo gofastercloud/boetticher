@@ -70,7 +70,7 @@ func TestLabYAMLStrictRoundTripPreservesVPNAndProtectedRanges(t *testing.T) {
 	}
 }
 
-const compatibleBridge = "auto vmbr1\niface vmbr1 inet manual\n bridge-ports none\n bridge-stp off\n bridge-fd 0\n bridge-vlan-aware yes\n bridge-vids 2-4094\niface vmbr1 inet6 manual\n"
+const compatibleBridge = "auto vmbr1\niface vmbr1 inet manual\n bridge-ports none\n bridge-stp off\n bridge-fd 0\n bridge-vlan-aware yes\n bridge-vids 2-4094\niface vmbr1 inet6 manual\nauto vmbr1.99\niface vmbr1.99 inet static\n address 10.10.99.5/24\n vlan-raw-device vmbr1\n up ip route replace 10.10.5.0/24 via 10.10.99.1 dev vmbr1.99\n up ip route replace 10.10.10.0/24 via 10.10.99.1 dev vmbr1.99\n up ip route replace 10.10.20.0/24 via 10.10.99.1 dev vmbr1.99\n up ip route replace 10.10.30.0/24 via 10.10.99.1 dev vmbr1.99\n up ip route replace 10.10.40.0/24 via 10.10.99.1 dev vmbr1.99\n"
 
 func TestBridgeRejectsConfiguredAddressEvenWithoutRuntimeAddress(t *testing.T) {
 	state := bridgeState([]ipLink{{IfName: "vmbr1", OperState: "UP"}}, nil, nil, "", "vlan_filtering 1", compatibleBridge+" address fe80::123/64\n")
@@ -84,7 +84,14 @@ func TestBridgeLinkLocalAdoption(t *testing.T) {
 	if err := json.Unmarshal([]byte(`[{"ifname":"vmbr1","addr_info":[{"family":"inet6","local":"fe80::123","scope":"link"}]}]`), &addresses); err != nil {
 		t.Fatal(err)
 	}
-	state := bridgeState([]ipLink{{IfName: "vmbr1", OperState: "UP"}}, addresses, nil, "", "vlan_filtering 1", compatibleBridge)
+	addresses = append(addresses, ipAddress{IfName: "vmbr1.99", AddrInfo: []struct {
+		Family    string `json:"family"`
+		Local     string `json:"local"`
+		Scope     string `json:"scope"`
+		PrefixLen int    `json:"prefixlen"`
+	}{{Family: "inet", Local: "10.10.99.5", PrefixLen: 24}}})
+	routes := []ipRoute{{Dst: "10.10.5.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}, {Dst: "10.10.10.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}, {Dst: "10.10.20.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}, {Dst: "10.10.30.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}, {Dst: "10.10.40.0/24", Gateway: "10.10.99.1", Dev: "vmbr1.99"}}
+	state := bridgeState([]ipLink{{IfName: "vmbr1", OperState: "UP"}}, addresses, routes, "", "vlan_filtering 1", compatibleBridge)
 	if state.Detail != "vmbr1 is compatible with explicit adoption and host-IPv6 suppression" {
 		t.Fatalf("link-local classified as %q", state.Detail)
 	}
@@ -240,8 +247,8 @@ func TestNetworkDiscoveryRequiresPersistentAndLiveSuppression(t *testing.T) {
 			}
 			responses := map[string]string{
 				"ip -json link":            linkResponse,
-				"ip -json address":         `[{"ifname":"vmbr0","addr_info":[{"family":"inet","local":"192.168.4.5"}]},{"ifname":"vmbr1","addr_info":[` + tc.addr + `]}]`,
-				"ip -json route":           `[{"dst":"default","gateway":"192.168.4.1","dev":"vmbr0"}]`,
+				"ip -json address":         `[{"ifname":"vmbr0","addr_info":[{"family":"inet","local":"192.168.4.5"}]},{"ifname":"vmbr1","addr_info":[` + tc.addr + `]},{"ifname":"vmbr1.99","addr_info":[{"family":"inet","local":"10.10.99.5","prefixlen":24}]}]`,
+				"ip -json route":           `[{"dst":"default","gateway":"192.168.4.1","dev":"vmbr0"},{"dst":"10.10.5.0/24","gateway":"10.10.99.1","dev":"vmbr1.99"},{"dst":"10.10.10.0/24","gateway":"10.10.99.1","dev":"vmbr1.99"},{"dst":"10.10.20.0/24","gateway":"10.10.99.1","dev":"vmbr1.99"},{"dst":"10.10.30.0/24","gateway":"10.10.99.1","dev":"vmbr1.99"},{"dst":"10.10.40.0/24","gateway":"10.10.99.1","dev":"vmbr1.99"}]`,
 				"ip route get 192.168.4.6": "192.168.4.6 dev vmbr0 src 192.168.4.5",
 				"bridge link":              "", "ip -d link show vmbr1 2>/dev/null || true": "vlan_filtering 1",
 				`set -eu; names=$(ifquery --list); if printf '%s\n' "$names" | grep -qx vmbr1; then ifquery --raw vmbr1; fi`: func() string {
@@ -286,10 +293,11 @@ func TestAdoptionCommandAndBootHook(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	original := "auto vmbr0\niface vmbr0 inet static\n address 192.168.4.5/24\n" + compatibleBridge
+	original := "auto vmbr0\niface vmbr0 inet static\n address 192.168.4.5/24\n" + strings.Split(compatibleBridge, "auto vmbr1.99")[0]
 	write("etc/network/interfaces", original, 0644)
 	write("etc/network/ifupdown2/ifupdown2.conf", "addon_scripts_support=1\n", 0644)
 	write("proc/sys/net/ipv6/conf/vmbr1/disable_ipv6", "0\n", 0644)
+	write("bin/ifup", "#!/bin/sh\nexit 0\n", 0755)
 	write("bin/sysctl", "#!/bin/sh\n[ \"$*\" = '-q -w net.ipv6.conf.vmbr1.disable_ipv6=1' ] || exit 98\nprintf '1\\n' > "+shellLiteral(filepath.Join(dir, "proc/sys/net/ipv6/conf/vmbr1/disable_ipv6"))+"\n", 0755)
 	command, err := NetworkConfigurationCommand(NetworkPlan{State: "adoptable"}, true)
 	if err != nil {
@@ -309,8 +317,10 @@ func TestAdoptionCommandAndBootHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "etc/network/interfaces"))
-	if string(data) != original {
-		t.Fatal("adoption changed interface configuration")
+	management, _ := os.ReadFile(filepath.Join(dir, "etc/network/interfaces.d/boetticher-management"))
+	combined := string(data) + string(management)
+	if !strings.Contains(combined, "iface vmbr1.99 inet static") || !strings.Contains(combined, "via 10.10.99.1 dev vmbr1.99") || !strings.Contains(string(data), "address 192.168.4.5/24") || strings.Contains(command, "default via") {
+		t.Fatal("adoption did not add the owned internal management VLAN configuration")
 	}
 	if err := run(networkOwnershipCommand(), ""); err != nil {
 		t.Fatal(err)

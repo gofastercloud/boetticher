@@ -15,10 +15,15 @@ import (
 )
 
 type ProxmoxConfig struct {
-	Address    string `yaml:"address"`
-	User       string `yaml:"user"`
-	Node       string `yaml:"node,omitempty"`
-	Repository string `yaml:"repository"`
+	// Address is the retained HOME/bootstrap binding used for recovery.
+	Address string `yaml:"address"`
+	// ConnectionAddress is the active Controller-to-Host path after the
+	// internal management VLAN is ready. It is separate so HOME recovery and
+	// the imported host identity remain available.
+	ConnectionAddress string `yaml:"connection_address,omitempty"`
+	User              string `yaml:"user"`
+	Node              string `yaml:"node,omitempty"`
+	Repository        string `yaml:"repository"`
 }
 
 type StorageConfig struct {
@@ -58,6 +63,15 @@ func ValidateConfig(config LabConfig) error {
 	}
 	if net.ParseIP(config.Proxmox.Address) == nil || net.ParseIP(config.Proxmox.Address).To4() == nil {
 		return errors.New("lab configuration requires an IPv4 Proxmox address")
+	}
+	if config.Proxmox.ConnectionAddress != "" {
+		parsed := net.ParseIP(config.Proxmox.ConnectionAddress)
+		if parsed == nil || parsed.To4() == nil || parsed.To4().String() != config.Proxmox.ConnectionAddress {
+			return errors.New("lab configuration requires a canonical IPv4 Proxmox connection address")
+		}
+		if config.Proxmox.ConnectionAddress != model.ProxmoxManagementAddress {
+			return fmt.Errorf("lab configuration only supports Proxmox connection address %s", model.ProxmoxManagementAddress)
+		}
 	}
 	if config.Proxmox.User != "root" {
 		return errors.New("lab configuration requires Proxmox user root")
@@ -124,9 +138,26 @@ func TransportFor(config LabConfig) (Transport, error) {
 	if err := ValidateConfig(config); err != nil {
 		return Transport{}, err
 	}
+	address := config.Proxmox.Address
+	if config.Proxmox.ConnectionAddress != "" {
+		address = config.Proxmox.ConnectionAddress
+	}
+	return Transport{Address: address, User: config.Proxmox.User, Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}, nil
+}
+
+// HomeTransportFor is the explicit recovery path. Normal operations use the
+// active internal connection returned by TransportFor; callers must opt into
+// HOME rather than silently retrying a potentially mutating SSH command.
+func HomeTransportFor(config LabConfig) (Transport, error) {
+	if err := ValidateConfig(config); err != nil {
+		return Transport{}, err
+	}
 	return Transport{Address: config.Proxmox.Address, User: config.Proxmox.User, Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}, nil
 }
 
 func ConfigSummary(config LabConfig) string {
+	if config.Proxmox.ConnectionAddress != "" && config.Proxmox.ConnectionAddress != config.Proxmox.Address {
+		return strings.TrimSpace(fmt.Sprintf("%s@%s (HOME fallback %s; node %s)", config.Proxmox.User, config.Proxmox.ConnectionAddress, config.Proxmox.Address, config.Proxmox.Node))
+	}
 	return strings.TrimSpace(fmt.Sprintf("%s@%s (node %s)", config.Proxmox.User, config.Proxmox.Address, config.Proxmox.Node))
 }

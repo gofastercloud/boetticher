@@ -63,7 +63,10 @@ ordinary HOME/WAN NAT; TRANSIT may not. TRUSTED may initiate toward SERVERS,
 SERVERS/INFRA cannot initiate toward TRUSTED, SANDBOX cannot initiate toward
 other LAB zones, and MGMT has broad reference-lab access to other LAB zones.
 Provider management is permitted only from the HOME management path; LAB
-clients do not receive access to `/ubus`.
+clients do not receive access to `/ubus`. Host SSH is a separate explicit
+allowance: TRUSTED and the identity-bound Tailnet router may reach MGMT TCP/22,
+and the resolved Controller SERVERS reservation may reach the Host at
+`10.10.99.5` on TCP/22.
 
 ## Lifecycle safety
 

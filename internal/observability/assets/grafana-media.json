@@ -1,0 +1,21 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {"type":"timeseries","title":"Media CPU usage","gridPos":{"h":8,"w":12,"x":0,"y":0},"targets":[{"expr":"avg by (boetticher_host) (1 - rate(node_cpu_seconds_total{boetticher_host=\"lab-media-01\",mode=\"idle\"}[5m]))","legendFormat":"{{boetticher_host}}","refId":"A"}]},
+    {"type":"timeseries","title":"Media memory used","gridPos":{"h":8,"w":12,"x":12,"y":0},"targets":[{"expr":"1 - (node_memory_MemAvailable_bytes{boetticher_host=\"lab-media-01\"} / node_memory_MemTotal_bytes{boetticher_host=\"lab-media-01\"})","legendFormat":"{{boetticher_host}}","refId":"A"}]},
+    {"type":"timeseries","title":"Media filesystem available","gridPos":{"h":8,"w":12,"x":0,"y":8},"targets":[{"expr":"node_filesystem_avail_bytes{boetticher_host=\"lab-media-01\",fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{boetticher_host=\"lab-media-01\",fstype!~\"tmpfs|overlay\"}","legendFormat":"{{mountpoint}}","refId":"A"}]},
+    {"type":"timeseries","title":"Media network traffic","gridPos":{"h":8,"w":12,"x":12,"y":8},"targets":[{"expr":"rate(node_network_receive_bytes_total{boetticher_host=\"lab-media-01\",device!~\"lo\"}[5m])","legendFormat":"{{device}} receive","refId":"A"},{"expr":"rate(node_network_transmit_bytes_total{boetticher_host=\"lab-media-01\",device!~\"lo\"}[5m])","legendFormat":"{{device}} transmit","refId":"B"}]},
+    {"type":"stat","title":"Media service success","gridPos":{"h":7,"w":8,"x":0,"y":16},"targets":[{"expr":"min(gatus_results_endpoint_success{group=\"boetticher-media\"})","legendFormat":"success","refId":"A"}]},
+    {"type":"timeseries","title":"Media service latency","gridPos":{"h":7,"w":8,"x":8,"y":16},"targets":[{"expr":"gatus_results_duration_seconds{group=\"boetticher-media\"}","legendFormat":"{{name}}","refId":"A"}]},
+    {"type":"timeseries","title":"Media service results","gridPos":{"h":7,"w":8,"x":16,"y":16},"targets":[{"expr":"sum by (name,success) (rate(gatus_results_total{group=\"boetticher-media\"}[5m]))","legendFormat":"{{name}} success={{success}}","refId":"A"}]}
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["boetticher","media"],
+  "templating": {"list": []},
+  "time": {"from":"now-6h","to":"now"},
+  "title":"Media Runtime",
+  "uid":"boetticher-media-runtime",
+  "version":1
+}

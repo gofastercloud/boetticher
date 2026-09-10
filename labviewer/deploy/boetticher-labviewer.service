@@ -1,0 +1,27 @@
+[Unit]
+Description=Boetticher Lab Viewer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=boetticher-labviewer
+Group=boetticher-labviewer
+ExecStart=/usr/local/libexec/boetticher-labviewer --lab /etc/boetticher/lab.yml --listen 127.0.0.1:8090 --homepage-config /var/lib/boetticher/homepage/config
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/boetticher/lab.yml
+ReadWritePaths=/var/lib/boetticher/homepage/config
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

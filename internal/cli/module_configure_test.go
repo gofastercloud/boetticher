@@ -25,134 +25,13 @@ func writeConfigureSite(t *testing.T, dir string, config model.SiteConfig) {
 	}
 }
 
-func TestConfigureJSONDryRunIsRedactedAndDoesNotMutate(t *testing.T) {
-	dir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
-	disabled := false
-	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &disabled}
-	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
-	writeConfigureSite(t, dir, config)
-	original, err := os.ReadFile(filepath.Join(dir, "site.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--dry-run", "--json"}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	var report moduleConfigureReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
-		t.Fatalf("configure JSON is invalid: %v: %s", err, output.String())
-	}
-	if report.Status != "DRY_RUN" || !report.ProposedEnabled || len(report.Changes) == 0 {
-		t.Fatalf("unexpected configure report: %#v", report)
-	}
-	current, err := os.ReadFile(filepath.Join(dir, "site.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(original, current) {
-		t.Fatal("dry-run changed site.yml")
-	}
-}
-
-func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
-	disabled := false
-	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &disabled}
-	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
-	writeConfigureSite(t, dir, config)
-	var output bytes.Buffer
-	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json", "--confirm"}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	var report moduleConfigureReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.Status != "APPLIED" {
-		t.Fatalf("unexpected apply report: %v %#v", err, report)
-	}
-	loaded, err := site.LoadConfig(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Modules.Printer == nil || loaded.Modules.Printer.Enabled == nil || !*loaded.Modules.Printer.Enabled {
-		t.Fatal("configure did not persist desired printer enablement")
-	}
-	output.Reset()
-	if err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json", "--confirm"}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), `"status":"NO_CHANGES"`) {
-		t.Fatalf("configure rerun was not idempotent: %s", output.String())
-	}
-}
-
-func TestConfigureBifrostWithARRKeepsOwnedReservationUnique(t *testing.T) {
-	dir := t.TempDir()
-	identityPath, recipient := writeTestAgeIdentity(t)
-	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
-	enabled := true
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	writeConfigureSite(t, dir, config)
-	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := site.StoreEncryptedDocument(dir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"placeholder": "present"}); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	err := RunWithInput([]string{
-		"module", "bifrost", "configure", "--site", dir, "--age-identity", identityPath,
-		"--non-interactive", "--enabled", "true", "--set", "network=direct",
-		"--set", `upstreams=[{"name":"openrouter","base_url":"https://openrouter.ai/api/v1","api_key_secret":"openrouter_api_key"}]`,
-		"--set", `models=[{"alias":"operations-investigator","upstream":"openrouter","model":"openai/gpt-5-mini"}]`,
-		"--secret", "openrouter_api_key", "--confirm",
-	}, strings.NewReader("test-openrouter-key\n"), &output, &output)
-	if err != nil {
-		t.Fatalf("configure Bifrost alongside ARR: %v\n%s", err, output.String())
-	}
-	loaded, err := site.LoadConfig(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resolved, _, err := modules.Compose(loaded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(resolved.DHCPReservations) != 1 || resolved.DHCPReservations[0].Address != model.ArrGuestAddress {
-		t.Fatalf("ARR reservation was duplicated or missing: %#v", resolved.DHCPReservations)
-	}
-}
-
-func TestConfigureNonInteractiveHoldsForMissingUSB(t *testing.T) {
-	dir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
-	writeConfigureSite(t, dir, config)
-	var output bytes.Buffer
-	err := Run([]string{"module", "printer", "configure", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
-	if err == nil || !strings.Contains(err.Error(), "required USB printer/serial is not configured") {
-		t.Fatalf("missing USB was not held: %v; output=%s", err, output.String())
-	}
-	if strings.Contains(output.String(), "super-secret") {
-		t.Fatal("secret value appeared in configure output")
-	}
-	var report moduleConfigureReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
-		t.Fatalf("HOLD JSON is invalid: %v: %s", err, output.String())
-	}
-	if report.Status != "HOLD" {
-		t.Fatalf("unexpected HOLD report: %#v", report)
-	}
-}
-
 func TestConfigureAIOpsNonInteractiveHoldsForMissingAlias(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigureSite(t, dir, model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged)))
 	var output bytes.Buffer
 	err := Run([]string{"module", "aiops", "configure", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
-	if err == nil || !strings.Contains(err.Error(), "required module configuration model_alias") {
-		t.Fatalf("missing AIOps alias was not held: %v; output=%s", err, output.String())
+	if err == nil || !strings.Contains(err.Error(), "lifecycle is owned by module observability") {
+		t.Fatalf("AIOps configure escaped the observability lifecycle boundary: %v; output=%s", err, output.String())
 	}
 }
 
@@ -205,7 +84,7 @@ func TestConfigureRejectsObjectListAboveSchemaMaximum(t *testing.T) {
 	}
 }
 
-func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
+func TestConfigureAIOpsIsRejectedOutsideObservabilityLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	identityPath, recipient := writeTestAgeIdentity(t)
 	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
@@ -221,18 +100,9 @@ func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := Run([]string{"module", "aiops", "configure", "--site", dir, "--enabled", "true", "--set", "model_alias=operations", "--json", "--age-identity", identityPath}, &output, &output); err != nil {
-		t.Fatal(err)
-	}
-	var report moduleConfigureReport
-	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
-		t.Fatalf("AIOps configure JSON is invalid: %v: %s", err, output.String())
-	}
-	if report.Status != "PLAN_ONLY" || len(report.Dependencies) != 2 || report.Dependencies[0] != "logging" || report.Dependencies[1] != "bifrost" {
-		t.Fatalf("unexpected AIOps configure report: %#v", report)
-	}
-	if strings.Contains(output.String(), "present") {
-		t.Fatal("secret value leaked from AIOps configure output")
+	err := Run([]string{"module", "aiops", "configure", "--site", dir, "--enabled", "true", "--set", "model_alias=operations", "--json", "--age-identity", identityPath}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "lifecycle is owned by module observability") {
+		t.Fatalf("AIOps configure escaped lifecycle boundary: %v", err)
 	}
 }
 
@@ -241,8 +111,9 @@ func TestConfigureConfirmationRefusalLeavesConfigurationUnchanged(t *testing.T) 
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	writeConfigureSite(t, dir, config)
 	var output bytes.Buffer
-	if err := RunWithInput([]string{"module", "monitoring", "configure", "--site", dir}, strings.NewReader("n\nn\n"), &output, &output); err != nil {
-		t.Fatal(err)
+	err := RunWithInput([]string{"module", "monitoring", "configure", "--site", dir}, strings.NewReader("n\nn\n"), &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "lifecycle is owned by module observability") {
+		t.Fatalf("monitoring configure escaped lifecycle boundary: %v", err)
 	}
 	loaded, err := site.LoadConfig(dir)
 	if err != nil {
@@ -250,9 +121,6 @@ func TestConfigureConfirmationRefusalLeavesConfigurationUnchanged(t *testing.T) 
 	}
 	if loaded.Modules.Monitoring != nil && loaded.Modules.Monitoring.Enabled != nil && !*loaded.Modules.Monitoring.Enabled {
 		t.Fatal("confirmation refusal persisted disablement")
-	}
-	if !strings.Contains(output.String(), "Configuration not changed") {
-		t.Fatalf("refusal was not reported: %s", output.String())
 	}
 }
 

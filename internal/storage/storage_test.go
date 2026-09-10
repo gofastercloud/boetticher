@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
 type recordingInitializeRunner struct {
@@ -35,35 +34,6 @@ func TestDedicatedPlanUsesFixedLayout(t *testing.T) {
 	if plan.GuestStorage != GuestStorageID || plan.BackupStorage != BackupStorageID || plan.BackupMount != BackupMount {
 		t.Fatalf("unexpected Proxmox storage projection: %#v", plan)
 	}
-}
-
-func TestArrDownloadsUseDedicatedDataStorageAndRequireIt(t *testing.T) {
-	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	enabled := true
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	site, _, err := modules.Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := PlanFromSite(site); err == nil || !strings.Contains(err.Error(), "arr volume downloads requires dedicated") {
-		t.Fatalf("single-disk ARR download storage was accepted: %v", err)
-	}
-	site.StorageProfile = "dedicated-data-disk"
-	site.StorageDevice = "/dev/disk/by-id/ata-example-data"
-	plan, err := PlanFromSite(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, volume := range plan.Volumes {
-		if volume.Module == "arr" && volume.Name == "downloads" {
-			if volume.Storage != GuestStorageID || volume.Placement != model.StorageRequireDataDisk || volume.Backup {
-				t.Fatalf("ARR download volume storage = %#v", volume)
-			}
-			return
-		}
-	}
-	t.Fatal("ARR download volume is missing from dedicated storage plan")
 }
 
 func TestInitializationCommandIsStableAndGuarded(t *testing.T) {

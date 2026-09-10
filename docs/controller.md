@@ -20,6 +20,18 @@ sudo access unchanged. Test a new public-key SSH session before running the
 installer; `--confirm-key-login` records that acknowledgement before password
 authentication is disabled.
 
+### Dual-homed Controller DNS
+
+When the Controller has a LAB connection, accept that connection's DHCP DNS
+and prefer it for resolving private service names. On NetworkManager, identify
+the active connection by its LAB NIC MAC and reservation, rather than assuming
+an interface name. Set that connection's `ipv4.ignore-auto-dns` to `no` and use
+a lower positive `ipv4.dns-priority` than HOME (the reference setup uses `50`).
+Reapply the connection and verify the resolver order. Keep HOME DNS as fallback
+and retain HOME's default route; the LAB connection remains `never-default`.
+These are Controller-local connection settings, separate from the DNS records
+owned by `/etc/boetticher/lab.yml`.
+
 ## Install from a local payload
 
 The maintainer payload contains a prebuilt ARM64 `boetticher` binary, its
@@ -52,6 +64,51 @@ curl -fsSL "$RELEASE_BASE/install.sh" | \
 `RELEASE_BASE` must be a real, published HTTPS release location. Until one is
 published, use `--from-dir`; the installer does not silently fall back to local
 files after a failed download or checksum check.
+
+### Keeping old releases tidy
+
+The installer keeps versioned releases under `/opt/boetticher/releases` so the
+`current` release can be swapped safely. It does not guess when an old release
+is safe to remove. Run the cleanup helper to get a read-only report first:
+
+```sh
+sudo sh /opt/boetticher/current/controller/proxmox/libexec/cleanup-controller-storage.sh
+```
+
+Review the list, then choose an age and retention count and approve explicitly:
+
+```sh
+sudo sh /opt/boetticher/current/controller/proxmox/libexec/cleanup-controller-storage.sh \
+  --keep-releases 2 --max-age-days 30 --yes
+```
+
+The helper refuses symlinked or non-root-owned releases and never removes
+`current`, `rollback`, unknown names, or recent releases. Temporary controller
+downloads can be reported with `--cache-root`; no live deletion happens without
+`--yes`. On a Mac, point `--cache-root` at the task-local controller cache.
+
+### Keeping the Mac workspace tidy
+
+The local builder leaves generated output under `generated/`. Keep
+`generated/artifacts`, provenance, and evidence: those are the useful receipts
+for active work. The separate local helper only considers directly named stale
+trees (`artifacts-stale-*`, `boetticher-build-*`, and
+`boetticher-download-*`). It reports first and keeps the newest two trees:
+
+```sh
+make local-cleanup
+```
+
+To approve removal after reviewing the report, choose the age and root
+explicitly:
+
+```sh
+sh scripts/cleanup-local-storage.sh --root generated --keep 2 --max-age-days 30 --yes
+```
+
+It refuses symlinks, unexpected names, and paths not owned by the current Mac
+user. This does not remove the existing `generated/artifacts` tree or anything
+outside the selected root.
 
 ## Bootstrap and status
 
@@ -195,8 +252,10 @@ Controller StreamDeck service is removed during Controller bootstrap.
 The Host detail view also shows `FW`, `DHCP`, and `TAILNET` using the same coarse
 component states as Blinkt. `FW` consumes the native `module firewall status`
 result; the client-service slot consumes `module dhcp status`, and TAILNET
-consumes `module tailnet status`. Unconfigured is off, while a
-configured-but-unavailable service is failed.
+consumes `module tailnet status`. Unconfigured is off, while a configured
+service with failed local checks is failed. A disconnected Tailnet coordination
+service is attention when existing approved routes may continue; policy drift
+still reports failed.
 
 ## Installed paths and maintenance
 

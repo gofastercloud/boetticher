@@ -13,10 +13,11 @@ import (
 // sections. route_allowed_ips stays disabled so the provider cannot install a
 // main-table default; explicit source rules select table 51820 instead.
 func vpnSections(site model.Site, modules clientservices.Modules, profile VPNProfile) ([]Section, []Section) {
-	clients := make([]string, 0, len(modules.VPN.Clients))
+	type clientRoute struct{ address, zone string }
+	clients := make([]clientRoute, 0, len(modules.VPN.Clients))
 	for _, name := range modules.VPN.Clients {
 		if reservation, ok := clientservices.ResolveReservation(modules, name); ok {
-			clients = append(clients, reservation.Address)
+			clients = append(clients, clientRoute{address: reservation.Address, zone: strings.ToLower(reservation.Zone)})
 		}
 	}
 	network := []Section{
@@ -38,7 +39,8 @@ func vpnSections(site model.Site, modules clientservices.Modules, profile VPNPro
 			"interface": "boetticher_iface_" + name, "target": strings.Split(zone.Network, "/")[0], "netmask": "255.255.255.0", "table": "51820",
 		}, Lists: map[string][]string{}})
 	}
-	for index, address := range clients {
+	for index, client := range clients {
+		address := client.address
 		network = append(network,
 			Section{Name: fmt.Sprintf("boetticher_vpn_rule_%d", index), Type: "rule", Options: map[string]string{
 				"src": address + "/32", "lookup": "51820", "priority": strconv.Itoa(10000 + index),
@@ -47,10 +49,13 @@ func vpnSections(site model.Site, modules clientservices.Modules, profile VPNPro
 				"src": address + "/32", "action": "unreachable", "priority": strconv.Itoa(10100 + index),
 			}, Lists: map[string][]string{}},
 		)
+		network = append(network, Section{Name: nativeVPNClientMTUSectionName(address), Type: "route", Options: map[string]string{
+			"interface": "boetticher_iface_" + client.zone, "target": address, "netmask": "255.255.255.255", "mtu": strconv.Itoa(profile.MTU),
+		}, Lists: map[string][]string{}})
 	}
 
 	firewall := []Section{
-		{Name: "boetticher_zone_vpn", Type: "zone", Options: map[string]string{"name": "vpn", "input": "DROP", "output": "ACCEPT", "forward": "DROP", "family": "ipv4", "masq": "1"}, Lists: map[string][]string{"network": {"airvpn"}}},
+		{Name: "boetticher_zone_vpn", Type: "zone", Options: map[string]string{"name": "vpn", "input": "DROP", "output": "ACCEPT", "forward": "DROP", "family": "ipv4", "masq": "1", "mtu_fix": "1"}, Lists: map[string][]string{"network": {"airvpn"}}},
 	}
 	for _, zone := range site.Network.Zones {
 		name := strings.ToLower(zone.Name)
@@ -73,10 +78,18 @@ func vpnSections(site model.Site, modules clientservices.Modules, profile VPNPro
 		if zoneName == "" {
 			continue
 		}
-		firewall = append(firewall, Section{Name: "boetticher_vpn_forward_" + forward.Name, Type: "redirect", Options: map[string]string{
+		firewall = append(firewall, Section{Name: nativeVPNForwardSectionName(forward.Name), Type: "redirect", Options: map[string]string{
 			"name": "Boetticher VPN " + forward.Name, "src": "vpn", "dest": zoneName, "dest_ip": reservation.Address,
 			"src_dport": strconv.Itoa(forward.Port), "dest_port": strconv.Itoa(forward.Port), "target": "DNAT", "family": "ipv4", "reflection": "0",
 		}, Lists: map[string][]string{"proto": append([]string(nil), forward.Protocols...)}})
 	}
 	return network, firewall
+}
+
+func nativeVPNClientMTUSectionName(address string) string {
+	return "boetticher_vpn_client_mtu_" + nativeRecordSuffix(address)
+}
+
+func nativeVPNForwardSectionName(name string) string {
+	return "boetticher_vpn_forward_" + nativeRecordSuffix(name)
 }

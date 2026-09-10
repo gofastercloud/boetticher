@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 )
 
@@ -98,6 +99,80 @@ func VPNRuntimeStatusViaHost(ctx context.Context, host HostClient) (VPNRuntimeSt
 		return VPNRuntimeStatus{}, fmt.Errorf("provider VPN runtime is unavailable (%d)", *output.ExitCode)
 	}
 	return parseVPNRuntimeStatus(output.Data)
+}
+
+// VPNEndpointViaHost reads only the active public WireGuard endpoint. It is
+// used to prevent a stale already-up interface from satisfying profile state.
+func VPNEndpointViaHost(ctx context.Context, host HostClient) (string, error) {
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/sh -c 'set -eu; /usr/bin/wg show airvpn endpoints'")
+	if err != nil {
+		return "", fmt.Errorf("read provider VPN endpoint through Host guest agent: %w", err)
+	}
+	var output struct {
+		ExitCode *int   `json:"exitcode"`
+		Data     string `json:"out-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &output); err != nil || output.ExitCode == nil {
+		return "", errors.New("provider guest agent returned malformed VPN endpoint")
+	}
+	if *output.ExitCode != 0 {
+		return "", fmt.Errorf("provider VPN endpoint is unavailable (%d)", *output.ExitCode)
+	}
+	fields := strings.Fields(output.Data)
+	if len(fields) != 2 || fields[1] == "(none)" {
+		return "", errors.New("provider VPN endpoint is unavailable")
+	}
+	return fields[1], nil
+}
+
+func VPNClientMTURoutesViaHost(ctx context.Context, host HostClient, reservations []clientservices.Reservation, mtu int) error {
+	if mtu < 576 || mtu > 9000 || len(reservations) == 0 {
+		return errors.New("VPN client MTU route requirements are invalid")
+	}
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/sh -c 'set -eu; ip -4 route show table main'")
+	if err != nil {
+		return fmt.Errorf("read provider VPN client MTU routes: %w", err)
+	}
+	var output struct {
+		ExitCode *int   `json:"exitcode"`
+		Data     string `json:"out-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &output); err != nil || output.ExitCode == nil || *output.ExitCode != 0 {
+		return errors.New("provider VPN client MTU route readback failed")
+	}
+	want := strconv.Itoa(mtu)
+	for _, reservation := range reservations {
+		address := reservation.Address
+		device, ok := labDeviceForZone(reservation.Zone)
+		if !ok {
+			return fmt.Errorf("provider VPN client MTU route zone is unsupported for %s", address)
+		}
+		if !hasVPNClientMTURoute(output.Data, address, device, want) {
+			return fmt.Errorf("provider VPN client MTU route missing for %s", address)
+		}
+	}
+	return nil
+}
+
+func hasVPNClientMTURoute(data, address, device, mtu string) bool {
+	for _, line := range strings.Split(data, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 6 || (fields[0] != address && fields[0] != address+"/32") || fields[1] != "dev" || fields[2] != device {
+			continue
+		}
+		for i := 3; i+1 < len(fields); i++ {
+			if fields[i] == "mtu" && fields[i+1] == mtu {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func labDeviceForZone(zone string) (string, bool) {
+	devices := map[string]string{"TRANSIT": "br-lab.5", "INFRA": "br-lab.10", "SERVERS": "br-lab.20", "TRUSTED": "br-lab.30", "SANDBOX": "br-lab.40", "MGMT": "br-lab.99"}
+	device, ok := devices[strings.ToUpper(strings.TrimSpace(zone))]
+	return device, ok
 }
 
 func parseVPNRuntimeStatus(data string) (VPNRuntimeStatus, error) {

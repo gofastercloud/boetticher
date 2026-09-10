@@ -127,7 +127,7 @@ Ansible for deployment. It does not require the native image builder. Smallstep
 The current 0.5.2 source checkpoint has added the pinned Smallstep binaries to
 the appliance build inputs, staged an unprivileged `step-ca` service on
 `lab-dns-01`, and moved server-leaf issuance and renewal for Pulse, Gatus,
-Bifrost, Printer, Arr, AIOps, and the logging services to endpoint-owned
+Bifrost, AIOps, and the logging services to endpoint-owned
 Smallstep operations. Companion, controller, and AIOps Pulse read/write paths
 use scoped tokens. The remaining client-certificate consumers are
 explicit exceptions: browser/kiosk access, the Bifrost model canary, bounded

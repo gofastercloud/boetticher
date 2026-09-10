@@ -8,18 +8,14 @@ if ! command -v trivy >/dev/null 2>&1; then
   exit 2
 fi
 
-default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-printer boetticher-arr boetticher-aiops boetticher-gatus boetticher-network-probe"
+default_scan_names="boetticher-base boetticher-dns-blocky boetticher-firewall boetticher-tailnet-router boetticher-airvpn boetticher-printer boetticher-network-probe"
 case "$target" in
   scan-base) names="boetticher-base" ;;
   scan-dns-blocky) names="boetticher-dns-blocky" ;;
-  scan-logging) names="boetticher-logging" ;;
-  scan-monitoring) names="boetticher-monitoring" ;;
   scan-firewall) names="boetticher-firewall" ;;
   scan-tailnet-router) names="boetticher-tailnet-router" ;;
   scan-airvpn) names="boetticher-airvpn" ;;
-  scan-bifrost) names="boetticher-bifrost" ;;
   scan-printer) names="boetticher-printer" ;;
-  scan-arr) names="boetticher-arr" ;;
   scan-aiops) names="boetticher-aiops" ;;
   scan-gatus) names="boetticher-gatus" ;;
   scan-network-probe) names="boetticher-network-probe" ;;
@@ -33,7 +29,7 @@ case "$target" in
 esac
 for name in $names; do
   case "$name" in
-	    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-tailnet-router|boetticher-airvpn|boetticher-bifrost|boetticher-printer|boetticher-arr|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
+	    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-tailnet-router|boetticher-airvpn|boetticher-bifrost|boetticher-printer|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
     *) echo "unknown selected scan artifact: $name" >&2; exit 2 ;;
   esac
 done
@@ -59,9 +55,6 @@ artifact_filename() {
   name=$1
   version=1.0.0
   if [ "$name" = boetticher-monitoring ]; then version=1.0.1; fi
-  if [ "$name" = boetticher-arr ]; then
-    version=1.0.1
-  fi
   if [ "$name" = boetticher-base ]; then
 		version=0.1.0
   fi

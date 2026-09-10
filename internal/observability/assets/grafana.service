@@ -1,0 +1,16 @@
+[Unit]
+Description=Grafana
+After=network-online.target victoriametrics.service victorialogs.service
+[Service]
+User=grafana
+Group=grafana
+Environment=GF_SERVER_HTTP_ADDR=127.0.0.1
+LoadCredential=grafana-admin-password:/var/lib/boetticher/credentials/grafana-admin-password.cred
+ExecStart=/bin/sh -ec 'export GF_SECURITY_ADMIN_PASSWORD="$(cat /run/credentials/grafana.service/grafana-admin-password)"; if [ -r /run/credentials/grafana.service/pushover-credentials ]; then IFS=: read -r BOETTICHER_PUSHOVER_USER BOETTICHER_PUSHOVER_TOKEN < /run/credentials/grafana.service/pushover-credentials || :; export BOETTICHER_PUSHOVER_USER BOETTICHER_PUSHOVER_TOKEN; fi; exec /usr/sbin/grafana-server --homepath=/usr/share/grafana --config=/etc/grafana/grafana.ini'
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/boetticher/observability/state/grafana/data /var/lib/boetticher/observability/state/grafana/logs /var/lib/boetticher/observability/state/grafana/plugins
+[Install]
+WantedBy=multi-user.target

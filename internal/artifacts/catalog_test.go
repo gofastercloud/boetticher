@@ -661,7 +661,7 @@ func TestFirewallDefinitionBindsCompiledTelemetryInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -846,8 +846,8 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if !strings.Contains(buildText, `timing_emit "artifact_build_all"`) || !strings.Contains(buildText, "pid_a=") || !strings.Contains(buildText, "pid_b=") || !strings.Contains(buildText, "memory-heavy") {
 		t.Fatal("image construction is missing explicit bounded worker scheduling")
 	}
-	if strings.Count(buildText, "image-tailnet-router|image-bifrost|image-aiops") != 2 {
-		t.Fatal("AIOps is not accepted by both direct and selected image target validation")
+	if strings.Contains(buildText, "default_image_targets=\"image-base image-dns-blocky image-logging") || strings.Contains(scanText, "default_scan_names=\"boetticher-base boetticher-dns-blocky boetticher-logging") {
+		t.Fatal("retired observability artifacts remain in the default build or scan set")
 	}
 	benchmarkScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "benchmark-artifact-compression.sh"))
 	if err != nil {

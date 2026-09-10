@@ -67,3 +67,22 @@ func TestTailnetTransportAllowsControlFallbackPorts(t *testing.T) {
 	}
 	t.Fatal("Tailnet TCP transport rule missing")
 }
+
+func TestTailnetSSHToManagementIsNarrowAndIdentityBound(t *testing.T) {
+	sections := tailnetFirewallSections("192.168.4.0/22")
+	for _, section := range sections {
+		if section.Name != "boetticher_tailnet_proxmox_ssh" {
+			continue
+		}
+		if section.Options["src"] != "transit" || section.Options["src_ip"] != "10.10.5.10/32" || section.Options["src_mac"] != "02:00:00:00:05:10" || section.Options["dest"] != "mgmt" || section.Options["proto"] != "tcp" || section.Options["dest_port"] != "22" {
+			t.Fatalf("Tailnet management SSH rule is not narrowly bound: %#v", section)
+		}
+		for _, other := range sections {
+			if other.Type == "forwarding" {
+				t.Fatalf("Tailnet SSH allowance introduced zone forwarding: %#v", other)
+			}
+		}
+		return
+	}
+	t.Fatal("Tailnet management SSH rule missing")
+}

@@ -491,6 +491,12 @@ func (d *Daemon) handleStreamDeckEvent(ctx context.Context, event KeyEvent) {
 		switch {
 		case event.Index == 0:
 			d.streamdeckView = StreamDeckHostDetail
+		case event.Index == 10:
+			d.streamdeckView = StreamDeckNetworkDetail
+		case event.Index == 11:
+			d.streamdeckView = StreamDeckVPNDetail
+		case event.Index == 12:
+			d.streamdeckView = StreamDeckTailnetDetail
 		case event.Index >= 5 && event.Index <= 9:
 			index := d.streamdeckPage*5 + event.Index - 5
 			if index < len(d.telemetry.Guests) {
@@ -505,7 +511,7 @@ func (d *Daemon) handleStreamDeckEvent(ctx context.Context, event KeyEvent) {
 		case event.Index == 14:
 			d.requestTelemetry(ctx, now)
 		}
-	case StreamDeckHostDetail, StreamDeckGuestDetail:
+	case StreamDeckHostDetail, StreamDeckGuestDetail, StreamDeckNetworkDetail, StreamDeckVPNDetail, StreamDeckTailnetDetail:
 		switch event.Index {
 		case 13:
 			d.streamdeckView = StreamDeckHome
@@ -617,6 +623,12 @@ func (d *Daemon) streamdeckNeedsMarquee() bool {
 			return false
 		}
 		return needsDeckMarquee(d.telemetry.Guests[d.streamdeckGuest].Name)
+	case StreamDeckNetworkDetail:
+		return needsDeckMarquee(networkComponent(d.snapshot).Detail)
+	case StreamDeckVPNDetail:
+		return needsDeckMarquee(d.snapshot.VPN.Detail)
+	case StreamDeckTailnetDetail:
+		return needsDeckMarquee(d.snapshot.Tailnet.Detail)
 	default:
 		if needsDeckMarquee(d.telemetry.Host.Node) {
 			return true
@@ -690,18 +702,23 @@ func (d *Daemon) logTransitions() {
 	for _, transition := range []struct {
 		name          string
 		before, after State
+		detail        string
 	}{
-		{"CTL", d.previous.Controller.State, d.snapshot.Controller.State},
-		{"HOST", d.previous.Host.State, d.snapshot.Host.State},
-		{"FW", d.previous.Firewall.State, d.snapshot.Firewall.State},
-		{"DHCP/NTP", d.previous.DHCPNTP.State, d.snapshot.DHCPNTP.State},
-		{"Tailnet", d.previous.Tailnet.State, d.snapshot.Tailnet.State},
-		{"NET", d.previous.Internet.State, d.snapshot.Internet.State},
-		{"CTRL-UPDATES", d.previous.ControllerUpdates.State, d.snapshot.ControllerUpdates.State},
-		{"HOST-UPDATES", d.previous.HostUpdates.State, d.snapshot.HostUpdates.State},
+		{"CTL", d.previous.Controller.State, d.snapshot.Controller.State, ""},
+		{"HOST", d.previous.Host.State, d.snapshot.Host.State, ""},
+		{"FW", d.previous.Firewall.State, d.snapshot.Firewall.State, ""},
+		{"DHCP/NTP", d.previous.DHCPNTP.State, d.snapshot.DHCPNTP.State, ""},
+		{"Tailnet", d.previous.Tailnet.State, d.snapshot.Tailnet.State, d.snapshot.Tailnet.Detail},
+		{"NET", d.previous.Internet.State, d.snapshot.Internet.State, ""},
+		{"CTRL-UPDATES", d.previous.ControllerUpdates.State, d.snapshot.ControllerUpdates.State, ""},
+		{"HOST-UPDATES", d.previous.HostUpdates.State, d.snapshot.HostUpdates.State, ""},
 	} {
 		if transition.before != "" && transition.before != transition.after {
-			d.Logger.Printf("%s state: %s -> %s", transition.name, transition.before, transition.after)
+			if transition.name == "Tailnet" {
+				d.Logger.Printf("%s state: %s -> %s (%s)", transition.name, transition.before, transition.after, tailnetTransitionDetail(transition.detail))
+			} else {
+				d.Logger.Printf("%s state: %s -> %s", transition.name, transition.before, transition.after)
+			}
 		}
 	}
 	d.previous = d.snapshot
