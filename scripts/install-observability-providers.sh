@@ -866,7 +866,7 @@ EOF
       download_verified uv-x86_64-linux "$uv_archive"
       extract_tar_binary "$uv_archive" uv "$work/uv"
       install_atomic 0755 "$work/uv.ready" /usr/local/bin/boetticher-uv
-      /usr/local/bin/boetticher-uv venv --python /usr/bin/python3 /opt/boetticher/observability/holmes/venv || die 'Holmes virtual environment creation failed'
+      /usr/local/bin/boetticher-uv venv --clear --python /usr/bin/python3 /opt/boetticher/observability/holmes/venv || die 'Holmes virtual environment creation failed'
       /usr/local/bin/boetticher-uv pip sync --require-hashes --python /opt/boetticher/observability/holmes/venv/bin/python /opt/boetticher/observability/holmes/requirements.lock || die 'Holmes locked dependency installation failed'
     fi
     ;;
