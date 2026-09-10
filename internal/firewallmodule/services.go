@@ -84,6 +84,13 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	if err := clientservices.Validate(normalized, site); err != nil {
 		return ServiceState{}, err
 	}
+	// Operator-managed systems are the source of their own DHCP/DNS
+	// reservations. Expand that intent after validation and before composing
+	// every provider consumer so registration cannot save successfully while
+	// the guest still receives an unreserved pool lease. Validate performs its
+	// own temporary expansion, so doing this before validation would duplicate
+	// the derived reservation.
+	normalized = clientservices.SystemsExpanded(normalized)
 	dnsEnabled := normalized.DNS != nil && clientservices.Enabled(normalized.DNS.Enabled)
 	dhcpEnabled := normalized.DHCP != nil && clientservices.Enabled(normalized.DHCP.Enabled)
 	state := ServiceState{}

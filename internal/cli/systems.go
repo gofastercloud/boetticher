@@ -36,6 +36,11 @@ var (
 	}
 )
 
+// A Host inventory and the exact guest config are several sequential SSH
+// observations. Keep one bounded budget for the complete read instead of
+// expiring while the final identity check is still in flight.
+const systemInspectionTimeout = 60 * time.Second
+
 func runSystems(args []string, input io.Reader, out, errOut io.Writer) error {
 	switch args[0] {
 	case "list-systems":
@@ -72,7 +77,7 @@ func systemStatus(args []string, out io.Writer) error {
 	if e != nil {
 		return e
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), systemInspectionTimeout)
 	defer cancel()
 	transport, transportErr := systemsTransportFor(c)
 	for _, s := range c.Modules.Systems {
@@ -82,11 +87,13 @@ func systemStatus(args []string, out io.Writer) error {
 				if inv, ie := systemsCollect(ctx, transport, false); ie == nil {
 					for _, g := range inv.Guests {
 						if g.VMID == s.VMID {
-							_, mac, bridge, tag, ce := systemsInspectGuest(ctx, transport, g)
+							kind, mac, bridge, tag, ce := systemsInspectGuest(ctx, transport, g)
 							if ce == nil && g.Type == s.Kind && g.Name == s.GuestName && strings.EqualFold(mac, s.MAC) && bridge == "vmbr1" && tag == "20" {
 								observed = "identity matches"
+							} else if ce != nil {
+								observed = "identity drift: " + ce.Error()
 							} else {
-								observed = "identity drift"
+								observed = fmt.Sprintf("identity drift (guest=%s/%s kind=%s mac=%s bridge=%s tag=%s)", g.Name, s.GuestName, kind, mac, bridge, tag)
 							}
 						}
 					}
@@ -172,7 +179,7 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 	if e != nil {
 		return e
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), systemInspectionTimeout)
 	defer cancel()
 	inv, e := systemsCollect(ctx, transport, false)
 	if e != nil {

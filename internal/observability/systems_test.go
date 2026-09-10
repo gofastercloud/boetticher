@@ -109,6 +109,7 @@ type systemsRunner struct {
 	failReadbackAfterWrite bool
 	catCalls               int
 	serviceStatus          string
+	writeStderr            bool
 }
 
 func (r *systemsRunner) Run(_ context.Context, command string) (controllerhost.Result, error) {
@@ -143,7 +144,11 @@ func (r *systemsRunner) RunWithStdin(_ context.Context, command string, stdin io
 	}
 	r.config = string(payload)
 	r.serviceStatus = "active"
-	return controllerhost.Result{}, nil
+	result := controllerhost.Result{}
+	if r.writeStderr {
+		result.Stderr = []byte("WARN: Systemd 257 detected. You may need to enable nesting.")
+	}
+	return result, nil
 }
 
 func TestReconcileGatusUsesAtomicOwnedReplacementAndReadback(t *testing.T) {
@@ -156,7 +161,7 @@ func TestReconcileGatusUsesAtomicOwnedReplacementAndReadback(t *testing.T) {
 		t.Fatalf("projection was not installed: writes=%d config=%s", runner.stdinCalls, runner.config)
 	}
 	command := strings.Join(runner.calls, "\n")
-	for _, required := range []string{"test ! -L", "mktemp \"$dir/.config.yaml.new", "chown root:gatus", "chmod 0640", "mv -f \"$tmp\" \"$target\"", "mv -f \"$old\" \"$target\"", "systemctl reload-or-restart gatus.service", "curl --fail"} {
+	for _, required := range []string{"test ! -L", "mktemp \"$dir/.config.yaml.new", "chown root:gatus", "chmod 0640", "wait_health(){ for attempt in 1 2 3 4 5 6 7 8 9 10", "mv -f \"$tmp\" \"$target\"", "mv -f \"$old\" \"$target\"", "systemctl reload-or-restart gatus.service", "curl --fail"} {
 		if !strings.Contains(command, required) {
 			t.Errorf("atomic replacement omitted %q: %s", required, command)
 		}
@@ -203,6 +208,16 @@ func TestReconcileGatusFailsWithoutReplacingOnNativeReloadFailure(t *testing.T) 
 	}
 	if runner.config != base {
 		t.Fatalf("failed replacement changed retained config: %q", runner.config)
+	}
+}
+
+func TestReconcileGatusIgnoresBenignProviderStderrAfterSuccessfulReplacement(t *testing.T) {
+	runner := &systemsRunner{config: "endpoints: []\n", writeStderr: true}
+	if err := (HostClient{Transport: runner}).ReconcileGatus(context.Background(), []byte(runner.config), []clientservices.System{monitoredSystem()}); err != nil {
+		t.Fatal(err)
+	}
+	if runner.stdinCalls != 1 || !strings.Contains(runner.config, "boetticher-system-print") {
+		t.Fatalf("successful replacement with provider warning was rejected: writes=%d config=%s", runner.stdinCalls, runner.config)
 	}
 }
 
