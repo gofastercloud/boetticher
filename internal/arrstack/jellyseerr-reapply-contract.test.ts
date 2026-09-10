@@ -20,11 +20,11 @@ async function scenario(name: string, replies: Array<Response | (() => Response)
   return calls;
 }
 
-const retained = await scenario("retained login", [publicReady(), session(), ...finish()]);
-if (retained.length !== 5 || "hostname" in body(retained[1])) throw new Error("retained login attempted bootstrap");
+const retained = await scenario("retained login", [publicReady(), session(), response(200, "{}"), ...finish()]);
+if (retained.length !== 6 || "hostname" in body(retained[1])) throw new Error("retained login attempted bootstrap");
 const initialized = await scenario("initialized true", [publicReady(), response(401, "bad"), publicReady(true)], "existing-admin authentication failed");
 if (initialized.some((call) => "hostname" in body(call))) throw new Error("initialized admin attempted bootstrap");
-const fresh = await scenario("fresh bootstrap", [publicReady(), response(401, "bad"), publicReady(false), session(), session(), ...finish()]);
+const fresh = await scenario("fresh bootstrap", [publicReady(), response(401, "bad"), publicReady(false), session(), session(), response(200, "{}"), ...finish()]);
 if (!fresh.some((call) => "hostname" in body(call))) throw new Error("fresh install did not bootstrap");
 await scenario("malformed public settings", [publicReady(), response(401, "bad"), response(200, "not-json")], "not valid JSON");
 await scenario("public HTTP failure", [publicReady(), response(401, "bad"), response(500, "NO_ADMIN_USER")], "HTTP 500");

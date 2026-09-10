@@ -64,33 +64,19 @@ jellyseerr = root / "src/wiring/jellyseerr.ts"
 s = jellyseerr.read_text()
 needle = '''  // 1. Bootstrap: create the admin + store the Jellyfin connection.
   const bootstrap = await withRetry(() =>'''
-replacement = '''  // 1. Reuse an existing Jellyfin admin session on reapply. The
-  // bootstrap endpoint returns HTTP 500 (NO_ADMIN_USER) once an admin exists.
+replacement = '''  // 1. Reuse an existing Jellyfin admin session on reapply.
   let existingSession: Response | undefined;
   try {
-    const relogin = await fetch(`${base}/api/v1/auth/jellyfin`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: jellyfinUser, password: jellyfinPass, email: jellyfinUser, serverType: 2 }),
-    });
+    const relogin = await fetch(`${base}/api/v1/auth/jellyfin`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: jellyfinUser, password: jellyfinPass, email: jellyfinUser, serverType: 2 }) });
     if (relogin.ok) existingSession = relogin;
-  } catch { /* fall through to first-use bootstrap */ }
-
-  // First-use bootstrap is permitted only when public settings explicitly
-  // report initialized=false; other failures remain errors.
+  } catch { /* first-use probe follows */ }
   let bootstrap = existingSession;
   if (!bootstrap) {
     const publicSettings = await fetch(`${base}/api/v1/settings/public`);
-    if (!publicSettings.ok) {
-      throw new Error(`Jellyseerr public settings probe failed: HTTP ${publicSettings.status}`);
-    }
+    if (!publicSettings.ok) throw new Error(`Jellyseerr public settings probe failed: HTTP ${publicSettings.status}`);
     let publicState: { initialized?: boolean };
-    try { publicState = await publicSettings.json() as { initialized?: boolean }; } catch {
-      throw new Error("Jellyseerr public settings were not valid JSON");
-    }
-    if (publicState.initialized !== false) {
-      throw new Error(`Jellyseerr existing-admin authentication failed: HTTP ${publicSettings.status}`);
-    }
+    try { publicState = await publicSettings.json() as { initialized?: boolean }; } catch { throw new Error("Jellyseerr public settings were not valid JSON"); }
+    if (publicState.initialized !== false) throw new Error("Jellyseerr existing-admin authentication failed");
     bootstrap = await withRetry(() =>'''
 if needle not in s: raise SystemExit("Jellyseerr bootstrap anchor missing")
 s = s.replace(needle, replacement, 1)
@@ -104,11 +90,7 @@ if needle not in s: raise SystemExit("Jellyseerr relogin anchor missing")
 s = s.replace(needle, replacement, 1)
 needle = '''  const authedHeaders = { "Content-Type": "application/json", Cookie: cookie };'''
 replacement = needle + '''
-  const networkRes = await withRetry(() =>
-    fetch(`${base}/api/v1/settings/network`, {
-      method: "POST", headers: authedHeaders, body: JSON.stringify({ forceIpv4First: true }),
-    }),
-  );
+  const networkRes = await withRetry(() => fetch(`${base}/api/v1/settings/network`, { method: "POST", headers: authedHeaders, body: JSON.stringify({ forceIpv4First: true }) }));
   if (!networkRes.ok) throw new Error(`Jellyseerr network settings failed: HTTP ${networkRes.status}`);'''
 if needle not in s: raise SystemExit("Jellyseerr authenticated headers anchor missing")
 s = s.replace(needle, replacement, 1)
