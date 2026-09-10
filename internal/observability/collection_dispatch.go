@@ -159,8 +159,15 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 	}
 	for _, target := range config.Targets {
 		if target.Kind == TargetMedia {
-			if err := inspectOwnedMediaGuest(ctx, c.Transport, config.MediaDiskGiB); err != nil {
+			guest, err := inspectMediaGuestFacts(ctx, c.Transport, config.MediaDiskGiB)
+			if err != nil {
 				return err
+			}
+			if !guest.Running {
+				// Preserve an operator-stopped media guest. Its Gatus outcome
+				// remains observable, but collection must not start it merely to
+				// install an agent.
+				continue
 			}
 		}
 	}
