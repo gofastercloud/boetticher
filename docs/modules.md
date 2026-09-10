@@ -157,8 +157,8 @@ client enforcement. Physical navigation, USB reconnect, and overlay expiry
 returning fresh state remain NOT TESTED; fix only observed faults.
 
 The reference physical path now uses exact `nic1` ownership on `vmbr1`, with
-tagged VLAN 20 (SERVERS) and VLAN 40 (SANDBOX) only and untagged ingress
-rejected. Current lease evidence is site-specific and belongs in private
+tagged VLANs 5, 10, 20, 30, 40, and 99 and untagged ingress rejected. Current
+client access uses SERVERS and SANDBOX; lease evidence is site-specific and belongs in private
 acceptance records; HOME remains on `vmbr0`. Remote Tailnet,
 packet, physical USB, and the disposable protected VPN-client journey remain
 separate acceptance gates and are reported as `NOT TESTED` or `HOLD` until
