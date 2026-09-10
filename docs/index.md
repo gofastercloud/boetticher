@@ -11,7 +11,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
     <h1>Turn a clean Proxmox host into a very good little lab.</h1>
     <p class="lede">Boetticher gives a clean Proxmox Host one small, repeatable lifecycle from a local Controller.</p>
     <div class="actions">
-      <a class="button" href="start.html">Start a fresh lab →</a>
+      <a class="button" href="{{ '/start.html' | relative_url }}">Start a fresh lab →</a>
       <a class="button button--quiet" href="https://github.com/gofastercloud/boetticher">Browse the source ↗</a>
     </div>
   </div>
