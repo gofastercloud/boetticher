@@ -208,7 +208,7 @@ func ValidateGuestConfigForSize(config map[string]string, mediaGiB int) error {
 	}
 	for key := range config {
 		switch key {
-		case "agent", "boot", "cores", "cpu", "digest", "ide2", "machine", "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsi1", "scsihw", "serial0", "smbios1", "tags", "ipconfig0", "nameserver", "vmgenid":
+		case "agent", "boot", "cores", "cpu", "digest", "hostpci0", "ide2", "machine", "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsi1", "scsihw", "serial0", "smbios1", "tags", "ipconfig0", "nameserver", "vmgenid":
 		default:
 			return fail()
 		}
@@ -240,7 +240,14 @@ func ValidateGuestConfigForSize(config map[string]string, mediaGiB int) error {
 	if config["serial0"] != "socket" {
 		return fail()
 	}
+	if value, present := config["hostpci0"]; present && !validGuestGPUHostPCI(value) {
+		return fail()
+	}
 	return nil
+}
+
+func validGuestGPUHostPCI(value string) bool {
+	return regexp.MustCompile(`^0000:[0-9a-fA-F]{2}:02\.0,pcie=1(?:,rombar=0)?$`).MatchString(value)
 }
 
 // ValidateRecoverableGuestConfigForSize accepts only the narrow, owned shape
@@ -262,7 +269,7 @@ func ValidateRecoverableGuestConfigForSize(config map[string]string, mediaGiB in
 			continue
 		}
 		switch key {
-		case "agent", "boot", "cores", "cpu", "digest", "ide2", "machine", "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsi1", "scsihw", "serial0", "smbios1", "tags", "ipconfig0", "nameserver", "vmgenid":
+		case "agent", "boot", "cores", "cpu", "digest", "hostpci0", "ide2", "machine", "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsi1", "scsihw", "serial0", "smbios1", "tags", "ipconfig0", "nameserver", "vmgenid":
 		default:
 			return fail()
 		}
@@ -281,6 +288,9 @@ func ValidateRecoverableGuestConfigForSize(config map[string]string, mediaGiB in
 		return fail()
 	}
 	if !strings.HasPrefix(config["ide2"], StorageID+":cloudinit") && !strings.HasPrefix(config["ide2"], StorageID+":vm-290-cloudinit") {
+		return fail()
+	}
+	if value, present := config["hostpci0"]; present && !validGuestGPUHostPCI(value) {
 		return fail()
 	}
 	if root, ok := config[GuestRootDisk]; ok && !diskOwned(root, "disk-0", RootDiskGiB) {
