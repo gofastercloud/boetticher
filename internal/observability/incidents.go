@@ -46,7 +46,7 @@ func (c HostClient) grafanaIncidentRequest(ctx context.Context, b Binding, metho
 path="/var/lib/boetticher/credentials/holmes-client-token.cred"
 token=open(path,encoding="utf-8").read().strip()
 request=urllib.request.Request("http://127.0.0.1:8091"+sys.argv[1],method=sys.argv[2],headers={"Authorization":"Bearer "+token})
-with urllib.request.urlopen(request,timeout=15) as response:
+with urllib.request.urlopen(request,timeout=310) as response:
  data=response.read(524289)
  if len(data)>524288: raise SystemExit("Grafana incident response exceeded its bound")
  sys.stdout.buffer.write(data)`
