@@ -217,7 +217,7 @@ func hasExactTailnetReservation(modules clientservices.Modules) bool {
 }
 
 func observabilityDNSSections(publicDomain string) []Section {
-	names := []string{"observability", "status", "ingest", "metrics"}
+	names := []string{"observability", "status", "lab", "ingest", "metrics"}
 	sections := make([]Section, 0, len(names))
 	for _, name := range names {
 		fqdn := name + "." + publicDomain

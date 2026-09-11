@@ -66,6 +66,8 @@ type StdinRunner interface {
 type HostClient struct {
 	Transport   Runner
 	LocalRunner LocalRunner
+	// SnapshotURL is the private portal fallback; the local synced snapshot wins.
+	SnapshotURL string
 }
 
 const holmesUnitTimeoutSeconds = 295
@@ -671,7 +673,11 @@ func (c HostClient) AskHolmes(ctx context.Context, b Binding, alias string, ques
 	if !ok {
 		return "", errors.New("observability transport cannot stream a Holmes question")
 	}
-	script := fmt.Sprintf("set -eu; cred_dir=$(mktemp -d /run/boetticher-holmes-ask.XXXXXX); trap 'rm -rf -- \"$cred_dir\"' EXIT HUP INT TERM; chown holmes:holmes \"$cred_dir\"; chmod 0700 \"$cred_dir\"; install -o holmes -g holmes -m 0400 /var/lib/boetticher/credentials/holmes-client-token.cred \"$cred_dir/holmes-client-token\"; timeout --signal=TERM --kill-after=5s %ds setpriv --reuid=holmes --regid=holmes --init-groups --no-new-privs env -i HOME=/var/lib/boetticher/holmes PATH=/opt/boetticher/observability/holmes/venv/bin:/usr/bin:/bin PYTHONNOUSERSITE=1 HOLMES_CONFIGPATH_DIR=/etc/boetticher/holmes BOETTICHER_LAB_SNAPSHOT_URL=http://10.10.20.10:8090/lab/snapshot.json BOETTICHER_LAB_SNAPSHOT_PATH=/var/lib/boetticher/labviewer/snapshot/snapshot.json CREDENTIALS_DIRECTORY=\"$cred_dir\" /opt/boetticher/observability/holmes/venv/bin/python /opt/boetticher/observability/holmes/holmes-runner.py --model-alias %s", holmesUnitTimeoutSeconds, shellQuoteValue(alias))
+	snapshotURL := c.SnapshotURL
+	if snapshotURL == "" {
+		snapshotURL = "http://10.10.20.10:8090/lab/snapshot.json"
+	}
+	script := fmt.Sprintf("set -eu; cred_dir=$(mktemp -d /run/boetticher-holmes-ask.XXXXXX); trap 'rm -rf -- \"$cred_dir\"' EXIT HUP INT TERM; chown holmes:holmes \"$cred_dir\"; chmod 0700 \"$cred_dir\"; install -o holmes -g holmes -m 0400 /var/lib/boetticher/credentials/holmes-client-token.cred \"$cred_dir/holmes-client-token\"; timeout --signal=TERM --kill-after=5s %ds setpriv --reuid=holmes --regid=holmes --init-groups --no-new-privs env -i HOME=/var/lib/boetticher/holmes PATH=/opt/boetticher/observability/holmes/venv/bin:/usr/bin:/bin PYTHONNOUSERSITE=1 HOLMES_CONFIGPATH_DIR=/etc/boetticher/holmes BOETTICHER_LAB_SNAPSHOT_URL=%s BOETTICHER_LAB_SNAPSHOT_PATH=/var/lib/boetticher/labviewer/snapshot/snapshot.json CREDENTIALS_DIRECTORY=\"$cred_dir\" /opt/boetticher/observability/holmes/venv/bin/python /opt/boetticher/observability/holmes/holmes-runner.py --model-alias %s", holmesUnitTimeoutSeconds, shellQuoteValue(snapshotURL), shellQuoteValue(alias))
 	command := fmt.Sprintf("pct exec %d -- /bin/sh -c %s", b.VMID, shellQuoteValue(script))
 	result, err := stager.RunWithStdin(ctx, command, io.LimitReader(question, 32*1024+1))
 	if err != nil {

@@ -279,7 +279,7 @@ install_unit() {
 	case "$provider" in
 	  victoriametrics) sed "s/@RETENTION_DAYS@/$metrics_retention/g" "$source" > "$work/unit" ;;
 	  victorialogs) sed "s/@RETENTION_DAYS@/$logs_retention/g" "$source" > "$work/unit" ;;
-	  incidentd) sed -e "s/@HOLMES_MODEL_ALIAS@/$holmes_model_alias/g" -e "s/@HOLMES_RETENTION_DAYS@/$holmes_retention_days/g" -e "s/@HOLMES_MAX_QUEUE@/$holmes_max_queue/g" -e "s/@HOLMES_MAX_ROUNDS@/$holmes_max_rounds/g" -e "s/@HOLMES_DEADLINE_SECONDS@/$holmes_deadline_seconds/g" -e "s/@HOLMES_DAILY_BUDGET@/$holmes_daily_budget/g" -e "s/@HOLMES_INVESTIGATION_BUDGET@/$holmes_investigation_budget/g" "$source" > "$work/unit" ;;
+	  incidentd) [ -n "$public_domain" ] || die 'Incident service requires the configured public domain'; sed -e "s/@HOLMES_MODEL_ALIAS@/$holmes_model_alias/g" -e "s/@HOLMES_RETENTION_DAYS@/$holmes_retention_days/g" -e "s/@HOLMES_MAX_QUEUE@/$holmes_max_queue/g" -e "s/@HOLMES_MAX_ROUNDS@/$holmes_max_rounds/g" -e "s/@HOLMES_DEADLINE_SECONDS@/$holmes_deadline_seconds/g" -e "s/@HOLMES_DAILY_BUDGET@/$holmes_daily_budget/g" -e "s/@HOLMES_INVESTIGATION_BUDGET@/$holmes_investigation_budget/g" -e "s/@PUBLIC_DOMAIN@/$public_domain/g" "$source" > "$work/unit" ;;
 	  *) cp "$source" "$work/unit" ;;
 	esac
 	install_atomic 0644 "$work/unit" "$unit_path"
@@ -509,6 +509,17 @@ https://status.$public_domain {
     propagation_timeout -1
   }
   reverse_proxy 127.0.0.1:8080
+}
+
+https://lab.$public_domain {
+  bind 10.10.10.20
+  tls {
+    dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    propagation_delay 30s
+    propagation_timeout -1
+  }
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8090
 }
 
 https://metrics.$public_domain {

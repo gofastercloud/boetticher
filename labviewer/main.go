@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -62,15 +63,27 @@ func main() {
 	mux.HandleFunc("/lab", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/lab/", http.StatusMovedPermanently)
 	})
-	mux.Handle("/lab/", http.StripPrefix("/lab/", http.FileServer(http.FS(assets))))
-	mux.HandleFunc("/lab/snapshot.json", func(w http.ResponseWriter, r *http.Request) {
-		serveSnapshot(w, filepath.Join(*snapshotDir, "snapshot.json"))
-	})
-	mux.Handle("/lab/docs/", http.StripPrefix("/lab/docs/", http.FileServer(http.Dir(*docsRoot))))
+	mux.Handle("/lab/", labHandler(*snapshotDir, *docsRoot))
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	go watchSnapshot(*path, *factsPath, *docsRoot, *snapshotDir, *snapshotInterval, *syncVMID, *syncPath)
 	log.Printf("lab viewer listening on %s (lab=%s)", *addr, *path)
 	log.Fatal(http.ListenAndServe(*addr, mux))
+}
+
+func labHandler(snapshotDir, docsRoot string) http.Handler {
+	static, err := fs.Sub(assets, "static")
+	if err != nil {
+		panic(err)
+	}
+	mux := http.NewServeMux()
+	// Serving the static subtree makes /lab/ resolve to index.html instead of
+	// exposing the embedded asset directory.
+	mux.Handle("/lab/", http.StripPrefix("/lab/", http.FileServer(http.FS(static))))
+	mux.HandleFunc("/lab/snapshot.json", func(w http.ResponseWriter, r *http.Request) {
+		serveSnapshot(w, filepath.Join(snapshotDir, "snapshot.json"))
+	})
+	mux.Handle("/lab/docs/", http.StripPrefix("/lab/docs/", http.FileServer(http.Dir(docsRoot))))
+	return mux
 }
 
 func watchSnapshot(labPath, factsPath, docsRoot, snapshotDir string, interval time.Duration, syncVMID int, syncPath string) {
