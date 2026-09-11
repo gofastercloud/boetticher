@@ -8,7 +8,7 @@ Type=simple
 User=holmes
 Group=holmes
 Environment=HOME=/var/lib/boetticher/holmes
-Environment=BOETTICHER_LAB_SNAPSHOT_URL=https://lab.@PUBLIC_DOMAIN@/lab/snapshot.json
+Environment=BOETTICHER_LAB_SNAPSHOT_URL=https://labviewer.@PUBLIC_DOMAIN@/lab/snapshot.json
 Environment=BOETTICHER_LAB_SNAPSHOT_PATH=/var/lib/boetticher/labviewer/snapshot/snapshot.json
 LoadCredential=holmes-client-token:/var/lib/boetticher/credentials/holmes-client-token.cred
 ExecStart=/usr/local/libexec/boetticher-incidentd --listen 127.0.0.1:8091 --database /var/lib/boetticher/observability/state/incidents/incidents.db --model-alias @HOLMES_MODEL_ALIAS@ --retention-days @HOLMES_RETENTION_DAYS@ --max-incidents @HOLMES_MAX_QUEUE@ --max-rounds @HOLMES_MAX_ROUNDS@ --deadline-seconds @HOLMES_DEADLINE_SECONDS@ --daily-budget-usd @HOLMES_DAILY_BUDGET@ --investigation-budget-usd @HOLMES_INVESTIGATION_BUDGET@

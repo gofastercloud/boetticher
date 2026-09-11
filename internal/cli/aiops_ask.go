@@ -58,7 +58,7 @@ func runMonitoringAsk(args []string, input io.Reader, out, errOut io.Writer) err
 	defer cancel()
 	snapshotURL := ""
 	if domain := config.Modules.Observability.PublicDomain; domain != "" {
-		snapshotURL = "https://lab." + strings.TrimSuffix(strings.ToLower(domain), ".") + "/lab/snapshot.json"
+		snapshotURL = "https://labviewer." + strings.TrimSuffix(strings.ToLower(domain), ".") + "/lab/snapshot.json"
 	}
 	answer, err := (observability.HostClient{Transport: transport, SnapshotURL: snapshotURL}).AskHolmes(ctx, binding, alias, bytes.NewReader([]byte(question)))
 	if err != nil {

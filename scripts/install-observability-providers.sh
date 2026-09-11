@@ -511,7 +511,7 @@ https://status.$public_domain {
   reverse_proxy 127.0.0.1:8080
 }
 
-https://lab.$public_domain {
+https://lab.$public_domain, https://labviewer.$public_domain {
   bind 10.10.10.20
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
