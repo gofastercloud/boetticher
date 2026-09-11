@@ -519,7 +519,7 @@ https://lab.$public_domain {
     propagation_timeout -1
   }
   encode zstd gzip
-  reverse_proxy 127.0.0.1:8090
+  reverse_proxy ${BOETTICHER_OBSERVABILITY_LABVIEWER_ADDRESS:-10.10.20.10}:8090
 }
 
 https://metrics.$public_domain {

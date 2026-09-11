@@ -849,7 +849,7 @@ func CaddyEnvironment(modules clientservices.Modules, collection CollectionConfi
 	if addresses["controller"] == "" || addresses["proxmox-host"] == "" || addresses["lab-monitor-01"] == "" {
 		return ""
 	}
-	return fmt.Sprintf(" BOETTICHER_OBSERVABILITY_PUBLIC_DOMAIN=%s BOETTICHER_OBSERVABILITY_METRICS_CONTROLLER=%s BOETTICHER_OBSERVABILITY_METRICS_HOST=%s BOETTICHER_OBSERVABILITY_METRICS_RUNTIME=%s BOETTICHER_OBSERVABILITY_INGEST_SOURCES=%s", shellQuoteValue(strings.TrimSuffix(strings.ToLower(modules.Observability.PublicDomain), ".")), shellQuoteValue(addresses["controller"]), shellQuoteValue(addresses["proxmox-host"]), shellQuoteValue(addresses["lab-monitor-01"]), shellQuoteValue(addresses["controller"]+" "+addresses["proxmox-host"]+" "+addresses["lab-monitor-01"]))
+	return fmt.Sprintf(" BOETTICHER_OBSERVABILITY_PUBLIC_DOMAIN=%s BOETTICHER_OBSERVABILITY_METRICS_CONTROLLER=%s BOETTICHER_OBSERVABILITY_METRICS_HOST=%s BOETTICHER_OBSERVABILITY_METRICS_RUNTIME=%s BOETTICHER_OBSERVABILITY_INGEST_SOURCES=%s BOETTICHER_OBSERVABILITY_LABVIEWER_ADDRESS=%s", shellQuoteValue(strings.TrimSuffix(strings.ToLower(modules.Observability.PublicDomain), ".")), shellQuoteValue(addresses["controller"]), shellQuoteValue(addresses["proxmox-host"]), shellQuoteValue(addresses["lab-monitor-01"]), shellQuoteValue(addresses["controller"]+" "+addresses["proxmox-host"]+" "+addresses["lab-monitor-01"]), shellQuoteValue(addresses["controller"]))
 }
 
 // PayloadDigest binds no-op qualification to the exact installed provider

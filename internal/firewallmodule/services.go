@@ -20,6 +20,7 @@ const (
 	serviceStubbyGlobal                 = "global"
 	serviceNTPSection                   = "ntp"
 	observabilityControllerExporterRule = "boetticher_observability_controller_exporter"
+	observabilityControllerPortalRule   = "boetticher_observability_controller_portal"
 	observabilityHostExporterRule       = "boetticher_observability_host_exporter"
 	observabilityControllerIngressRule  = "boetticher_observability_controller_ingress"
 	observabilityHostIngressRule        = "boetticher_observability_host_ingress"
@@ -187,6 +188,7 @@ func observabilityFirewallSections(site model.Site, modules clientservices.Modul
 	}
 	sections := []Section{
 		rule(observabilityControllerExporterRule, "infra", address(b.Runtime), "servers", address(b.Controller), "9100"),
+		rule(observabilityControllerPortalRule, "infra", address(b.Runtime), "servers", address(b.Controller), "8090"),
 		rule(observabilityHostExporterRule, "infra", address(b.Runtime), "mgmt", address(b.ProxmoxHost), "9100"),
 		rule(observabilityControllerIngressRule, "servers", address(b.Controller), "infra", address(b.Runtime), "443"),
 		rule(observabilityHostIngressRule, "mgmt", address(b.ProxmoxHost), "infra", address(b.Runtime), "443"),

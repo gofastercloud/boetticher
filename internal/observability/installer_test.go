@@ -502,7 +502,7 @@ func TestProviderInstallerStagesInternalOnlyCaddyConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(config)
-	for _, required := range []string{"admin unix//run/caddy/admin.sock", "auto_https disable_redirects", "bind 10.10.10.20", "https://observability.example.com", "https://status.example.com", "https://lab.example.com", "https://metrics.example.com", "https://ingest.example.com", "path /incidents* /api/incidents*", "forward_auth 127.0.0.1:3000", "reverse_proxy 127.0.0.1:8091", "basic_auth", "BOETTICHER_METRICS_PASSWORD_HASH", "remote_ip 10.10.10.20", "remote_ip 10.10.10.21 10.10.10.22 10.10.10.20", "respond 403"} {
+	for _, required := range []string{"admin unix//run/caddy/admin.sock", "auto_https disable_redirects", "bind 10.10.10.20", "https://observability.example.com", "https://status.example.com", "https://lab.example.com", "https://metrics.example.com", "https://ingest.example.com", "reverse_proxy 10.10.20.10:8090", "path /incidents* /api/incidents*", "forward_auth 127.0.0.1:3000", "reverse_proxy 127.0.0.1:8091", "basic_auth", "BOETTICHER_METRICS_PASSWORD_HASH", "remote_ip 10.10.10.20", "remote_ip 10.10.10.21 10.10.10.22 10.10.10.20", "respond 403"} {
 		if !strings.Contains(text, required) {
 			t.Errorf("Caddy config missing %q: %s", required, text)
 		}

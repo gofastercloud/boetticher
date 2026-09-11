@@ -191,6 +191,10 @@ func TestObservabilityFirewallProjectionUsesPersistedRoleBindings(t *testing.T) 
 	if rule.Options["src"] != "infra" || rule.Options["src_ip"] != "10.10.10.20/32" || rule.Options["dest"] != "servers" || rule.Options["dest_ip"] != "10.10.20.10/32" || rule.Options["dest_port"] != "9100" {
 		t.Fatalf("controller exporter rule is not exact: %#v", rule.Options)
 	}
+	portal := find(observabilityControllerPortalRule)
+	if portal.Options["src"] != "infra" || portal.Options["src_ip"] != "10.10.10.20/32" || portal.Options["dest"] != "servers" || portal.Options["dest_ip"] != "10.10.20.10/32" || portal.Options["dest_port"] != "8090" {
+		t.Fatalf("controller portal rule is not exact: %#v", portal.Options)
+	}
 	trusted := find(observabilityTrustedIngressRule)
 	if trusted.Options["src"] != "trusted" || trusted.Options["src_ip"] != "10.10.30.0/24" || trusted.Options["dest_ip"] != "10.10.10.20/32" || trusted.Options["dest_port"] != "443" {
 		t.Fatalf("trusted observability rule is not exact: %#v", trusted.Options)

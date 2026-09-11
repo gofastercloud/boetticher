@@ -50,6 +50,7 @@ func FirewallScope(current map[string]openwrt.UCISection, desired []Section) map
 	}
 	for _, name := range []string{
 		observabilityControllerExporterRule, observabilityHostExporterRule,
+		observabilityControllerPortalRule,
 		observabilityControllerIngressRule, observabilityHostIngressRule,
 		observabilityRuntimeIngressRule, observabilityTrustedIngressRule,
 		observabilityTailnetIngressRule,
