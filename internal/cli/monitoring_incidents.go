@@ -44,7 +44,11 @@ func runMonitoringIncidents(args []string, out, errOut io.Writer) error {
 	if !ok {
 		return errors.New("observability runtime binding is unavailable")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeout := 30 * time.Second
+	if action == "investigate" {
+		timeout = holmesAskTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	client := observability.HostClient{Transport: transport}
 	var response string

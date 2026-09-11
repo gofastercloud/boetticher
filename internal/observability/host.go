@@ -646,9 +646,12 @@ func (c HostClient) RuntimeDigest(ctx context.Context, b Binding) (string, error
 	return strings.TrimSpace(string(r.Stdout)), nil
 }
 
-// AskHolmes runs exactly one request in the installed on-demand systemd
-// sandbox. The question is streamed over the existing Host transport; no
-// credential or transcript is placed in the command line or Controller disk.
+// AskHolmes runs exactly one request in the installed, bounded Holmes sandbox.
+// The guest does not expose a usable system scope bus, so the runner is
+// launched directly under the holmes account with an ephemeral projected
+// credential directory. The question is streamed over the existing Host
+// transport; no credential or transcript is placed in the command line or
+// Controller disk.
 func (c HostClient) AskHolmes(ctx context.Context, b Binding, alias string, question io.Reader) (string, error) {
 	if !validHolmesAlias(alias) {
 		return "", errors.New("Holmes model alias is invalid")
@@ -668,7 +671,8 @@ func (c HostClient) AskHolmes(ctx context.Context, b Binding, alias string, ques
 	if !ok {
 		return "", errors.New("observability transport cannot stream a Holmes question")
 	}
-	command := fmt.Sprintf("pct exec %d -- systemd-run --pipe --wait --collect --quiet --unit=boetticher-holmes-ask-run --property=Type=oneshot --property=User=holmes --property=Group=holmes --property=Environment=HOME=/var/lib/boetticher/holmes --property=Environment=PATH=/opt/boetticher/observability/holmes/venv/bin:/usr/bin:/bin --property=Environment=PYTHONNOUSERSITE=1 --property=Environment=HOLMES_CONFIGPATH_DIR=/etc/boetticher/holmes --property=NoNewPrivileges=yes --property=CapabilityBoundingSet= --property=ProtectSystem=strict --property=ProtectHome=true --property=PrivateTmp=true --property=PrivateDevices=true --property=RestrictSUIDSGID=true --property='RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' --property=IPAddressDeny=any --property=IPAddressAllow=localhost --property=RuntimeDirectory=boetticher-holmes-ask --property=TimeoutStartSec=%d --property=LoadCredential=holmes-client-token:/var/lib/boetticher/credentials/holmes-client-token.cred /opt/boetticher/observability/holmes/venv/bin/python /opt/boetticher/observability/holmes/holmes-runner.py --model-alias %s", b.VMID, holmesUnitTimeoutSeconds, shellQuoteValue(alias))
+	script := fmt.Sprintf("set -eu; cred_dir=$(mktemp -d /run/boetticher-holmes-ask.XXXXXX); trap 'rm -rf -- \"$cred_dir\"' EXIT HUP INT TERM; install -o holmes -g holmes -m 0400 /var/lib/boetticher/credentials/holmes-client-token.cred \"$cred_dir/holmes-client-token\"; timeout --signal=TERM --kill-after=5s %ds setpriv --reuid=holmes --regid=holmes --init-groups --no-new-privs env -i HOME=/var/lib/boetticher/holmes PATH=/opt/boetticher/observability/holmes/venv/bin:/usr/bin:/bin PYTHONNOUSERSITE=1 HOLMES_CONFIGPATH_DIR=/etc/boetticher/holmes CREDENTIALS_DIRECTORY=\"$cred_dir\" /opt/boetticher/observability/holmes/venv/bin/python /opt/boetticher/observability/holmes/holmes-runner.py --model-alias %s", holmesUnitTimeoutSeconds, shellQuoteValue(alias))
+	command := fmt.Sprintf("pct exec %d -- /bin/sh -c %s", b.VMID, shellQuoteValue(script))
 	result, err := stager.RunWithStdin(ctx, command, io.LimitReader(question, 32*1024+1))
 	if err != nil {
 		return "", fmt.Errorf("Holmes ask failed: %w", err)

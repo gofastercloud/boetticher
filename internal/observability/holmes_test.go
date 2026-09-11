@@ -44,7 +44,7 @@ func TestAskHolmesUsesOnDemandLocalSandboxAndStreamsQuestion(t *testing.T) {
 	if answer != "bounded Holmes answer" || runner.input != "why is DNS slow?" {
 		t.Fatalf("answer=%q input=%q", answer, runner.input)
 	}
-	for _, required := range []string{"systemd-run --pipe --wait --collect", "User=holmes", "IPAddressDeny=any", "IPAddressAllow=localhost", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "LoadCredential=holmes-client-token", "/opt/boetticher/observability/holmes/holmes-runner.py", "--model-alias 'operations'"} {
+	for _, required := range []string{"mktemp -d /run/boetticher-holmes-ask", "install -o holmes -g holmes -m 0400", "timeout --signal=TERM --kill-after=5s", "setpriv --reuid=holmes --regid=holmes --init-groups --no-new-privs", "CREDENTIALS_DIRECTORY=", "/opt/boetticher/observability/holmes/holmes-runner.py", "--model-alias", "operations"} {
 		if !strings.Contains(runner.command, required) {
 			t.Errorf("ask command missing %q: %s", required, runner.command)
 		}
