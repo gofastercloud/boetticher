@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 	"github.com/gofastercloud/boetticher/internal/observability"
 )
 
@@ -36,7 +37,20 @@ func runMonitoringIncidents(args []string, out, errOut io.Writer) error {
 	if !observability.Enabled(config.Modules) {
 		return errors.New("observability is disabled")
 	}
-	transport, err := observabilityTransport(config)
+	var transport controllerhost.Transport
+	if action == "investigate" {
+		transport, err = holmesAskTransport(config)
+	} else {
+		runner, transportErr := observabilityTransport(config)
+		err = transportErr
+		if err == nil {
+			var ok bool
+			transport, ok = runner.(controllerhost.Transport)
+			if !ok {
+				err = errors.New("monitoring incident transport does not support bounded SSH timeout")
+			}
+		}
+	}
 	if err != nil {
 		return err
 	}
