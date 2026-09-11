@@ -23,7 +23,7 @@ func TestValidateObservabilityContracts(t *testing.T) {
 	if err := Validate(bad, testSite()); err == nil || !strings.Contains(err.Error(), "holmes.model_alias") {
 		t.Fatalf("expected Holmes alias rejection, got %v", err)
 	}
-	good := Modules{Observability: &ObservabilityConfig{Enabled: &enabled, Logging: LoggingConfig{RetentionDays: 7}, Monitoring: MonitoringConfig{RetentionDays: 30}}}
+	good := Modules{Observability: &ObservabilityConfig{Enabled: &enabled, Logging: LoggingConfig{RetentionDays: 7}, Monitoring: MonitoringConfig{RetentionDays: 30, Holmes: &HolmesConfig{Enabled: &enabled, ModelAlias: "operations", DailyBudgetUSD: 2, InvestigationBudgetUSD: 0.25, InvestigationDeadlineSecs: 300, MaxRounds: 6, MaxQueue: 100, RetentionDays: 30, Bifrost: BifrostConfig{ClientCredential: "holmes-client-token", Upstreams: []BifrostUpstream{{Name: "provider", BaseURL: "https://provider.example", SecretRef: "provider-key"}}, Models: []BifrostModel{{Alias: "operations", Upstream: "provider", Model: "model"}}}}}}}
 	if err := Validate(good, testSite()); err != nil {
 		t.Fatalf("valid observability intent rejected: %v", err)
 	}

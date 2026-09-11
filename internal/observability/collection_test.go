@@ -30,6 +30,23 @@ func TestCollectionConfigAddsMediaOnlyWhenMediaAndObservabilityEnabled(t *testin
 	}
 }
 
+func TestCollectionConfigCarriesConfiguredMediaDiskSize(t *testing.T) {
+	on := true
+	config, err := CollectionConfigForLab(controllerhost.LabConfig{
+		Proxmox: controllerhost.ProxmoxConfig{Address: "192.0.2.10"},
+		Modules: clientservices.Modules{
+			Observability: &clientservices.ObservabilityConfig{Enabled: &on},
+			Media:         &clientservices.MediaConfig{Enabled: true, MediaGiB: 500},
+		},
+	}, "192.0.2.20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MediaDiskGiB != 500 {
+		t.Fatalf("media disk size = %d, want 500", config.MediaDiskGiB)
+	}
+}
+
 func TestParseQEMUCollectionResultRequiresSuccessfulJSONExitCode(t *testing.T) {
 	good, _ := json.Marshal(map[string]any{"exitcode": 0, "out-data": "ok\n"})
 	result, err := parseQEMUCollectionResult(controllerhost.Result{Stdout: good})

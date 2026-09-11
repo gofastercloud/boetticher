@@ -39,6 +39,12 @@ func MediaGatusEndpoints(modules clientservices.Modules) ([]map[string]interface
 		{"flaresolverr", "flaresolverr", "health"}, {"jellyfin", "jellyfin", "health"},
 		{"jellyseerr", "jellyseerr", "api/v1/status"}, {"trailarr", modules.Media.Aliases.Trailarr, "status"},
 	}
+	if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
+		// qBittorrent is proxied through Gluetun when VPN intent is enabled.
+		// Keep this as a separately named outcome so operators can distinguish
+		// the protected egress path from the ordinary application check.
+		services = append(services, struct{ name, alias, path string }{"vpn-egress", "qbittorrent", ""})
+	}
 	result := make([]map[string]interface{}, 0, len(services))
 	for _, service := range services {
 		if service.alias == "" {

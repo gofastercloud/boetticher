@@ -79,6 +79,8 @@ main() {
   chmod 0755 "$stage/controller/observability/bin/gatus"
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/bifrost" ./cmd/boetticher-bifrost
   chmod 0755 "$stage/controller/observability/bin/bifrost"
+  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/boetticher-incidentd" ./cmd/boetticher-incidentd
+  chmod 0755 "$stage/controller/observability/bin/boetticher-incidentd"
   (cd "$stage/controller/observability/caddy" && GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$go_bin" build -trimpath -ldflags='-s -w' -o "$stage/controller/observability/bin/caddy" .)
   chmod 0755 "$stage/controller/observability/bin/caddy"
   cp -R internal/observability/assets "$stage/controller/observability/"

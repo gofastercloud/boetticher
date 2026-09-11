@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: boetticher-install-observability-providers PROVIDER [--root PATH]
 
-PROVIDER is one of victorialogs, victoriametrics, grafana, gatus, bifrost, caddy, or holmes.
+PROVIDER is one of victorialogs, victoriametrics, grafana, gatus, bifrost, caddy, holmes, or incidentd.
 --root is an optional absolute filesystem root used for offline staging; the
 default is the running Debian guest (/, with systemd and local accounts).
 EOF
@@ -19,7 +19,7 @@ die() {
 provider=${1-}
 [ "$provider" = '--help' ] && { usage; exit 0; }
 case "$provider" in
-  victorialogs|victoriametrics|grafana|gatus|bifrost|caddy|holmes) ;;
+  victorialogs|victoriametrics|grafana|gatus|bifrost|caddy|holmes|incidentd) ;;
   *) usage >&2; exit 2 ;;
 esac
 config_digest=${BOETTICHER_OBSERVABILITY_CONFIG_DIGEST:-}
@@ -34,12 +34,32 @@ pushover_enabled=${BOETTICHER_OBSERVABILITY_PUSHOVER_ENABLED:-false}
 pushover_title=${BOETTICHER_OBSERVABILITY_PUSHOVER_TITLE:-Boetticher observability}
 pushover_priority=${BOETTICHER_OBSERVABILITY_PUSHOVER_PRIORITY:-0}
 bifrost_probe_enabled=${BOETTICHER_OBSERVABILITY_BIFROST_PROBE_ENABLED:-false}
+holmes_model_alias=${BOETTICHER_OBSERVABILITY_HOLMES_MODEL_ALIAS:-operations}
+holmes_retention_days=${BOETTICHER_OBSERVABILITY_HOLMES_RETENTION_DAYS:-30}
+holmes_max_queue=${BOETTICHER_OBSERVABILITY_HOLMES_MAX_QUEUE:-100}
+holmes_max_rounds=${BOETTICHER_OBSERVABILITY_HOLMES_MAX_ROUNDS:-6}
+holmes_deadline_seconds=${BOETTICHER_OBSERVABILITY_HOLMES_DEADLINE_SECONDS:-300}
+holmes_daily_budget=${BOETTICHER_OBSERVABILITY_HOLMES_DAILY_BUDGET:-2}
+holmes_investigation_budget=${BOETTICHER_OBSERVABILITY_HOLMES_INVESTIGATION_BUDGET:-0.25}
 case "$metrics_retention" in ''|*[!0-9]*) die 'metrics retention must be a day count' ;; esac
 case "$logs_retention" in ''|*[!0-9]*) die 'logs retention must be a day count' ;; esac
 [ "$metrics_retention" -ge 1 ] && [ "$metrics_retention" -le 3650 ] || die 'metrics retention must be between 1 and 3650 days'
 [ "$logs_retention" -ge 1 ] && [ "$logs_retention" -le 3650 ] || die 'logs retention must be between 1 and 3650 days'
 case "$pushover_enabled" in true|false) ;; *) die 'Pushover enabled setting must be true or false' ;; esac
 case "$bifrost_probe_enabled" in true|false) ;; *) die 'Bifrost probe enabled setting must be true or false' ;; esac
+case "$holmes_model_alias" in ''|*[!A-Za-z0-9._-]*) die 'Holmes model alias is invalid' ;; esac
+case "$holmes_retention_days" in ''|*[!0-9]*) die 'Holmes retention must be a day count' ;; esac
+[ "$holmes_retention_days" -ge 1 ] && [ "$holmes_retention_days" -le 3650 ] || die 'Holmes retention must be between 1 and 3650 days'
+case "$holmes_max_queue" in ''|*[!0-9]*) die 'Holmes queue size must be numeric' ;; esac
+[ "$holmes_max_queue" -ge 1 ] && [ "$holmes_max_queue" -le 100 ] || die 'Holmes queue size must be between 1 and 100'
+case "$holmes_max_rounds" in ''|*[!0-9]*) die 'Holmes round limit must be numeric' ;; esac
+[ "$holmes_max_rounds" -ge 1 ] && [ "$holmes_max_rounds" -le 6 ] || die 'Holmes round limit must be between 1 and 6'
+case "$holmes_deadline_seconds" in ''|*[!0-9]*) die 'Holmes deadline must be numeric' ;; esac
+[ "$holmes_deadline_seconds" -ge 30 ] && [ "$holmes_deadline_seconds" -le 300 ] || die 'Holmes deadline must be between 30 and 300 seconds'
+case "$holmes_daily_budget" in ''|*[!0-9.]*) die 'Holmes daily budget is invalid' ;; esac
+case "$holmes_investigation_budget" in ''|*[!0-9.]*) die 'Holmes investigation budget is invalid' ;; esac
+awk -v value="$holmes_daily_budget" 'BEGIN { exit !(value >= 0 && value <= 2) }' || die 'Holmes daily budget must be between 0 and 2 USD'
+awk -v value="$holmes_investigation_budget" 'BEGIN { exit !(value >= 0 && value <= 0.25) }' || die 'Holmes investigation budget must be between 0 and 0.25 USD'
 case "$pushover_priority" in -2|-1|0|1) ;; *) die 'Pushover priority must be between -2 and 1' ;; esac
 case "$pushover_title" in *[!A-Za-z0-9._\ -]*) die 'Pushover title contains unsupported characters' ;; esac
 [ "${#pushover_title}" -le 250 ] || die 'Pushover title exceeds 250 characters'
@@ -102,6 +122,7 @@ case "$provider" in
   bifrost) user=bifrost; unit=bifrost.service; data_dir=/var/lib/bifrost; archive_name=bifrost ;;
   caddy) user=caddy; unit=caddy.service; data_dir=/var/lib/boetticher/observability/state/caddy; archive_name=caddy ;;
   holmes) user=holmes; data_dir=/var/lib/boetticher/holmes; archive_name=holmes ;;
+  incidentd) user=holmes; unit=boetticher-incidentd.service; data_dir=/var/lib/boetticher/observability/state/incidents; archive_name=incidentd ;;
 esac
 
 holmes_root=${BOETTICHER_OBSERVABILITY_HOLMES_ROOT:-$asset_root/../holmes}
@@ -258,6 +279,7 @@ install_unit() {
 	case "$provider" in
 	  victoriametrics) sed "s/@RETENTION_DAYS@/$metrics_retention/g" "$source" > "$work/unit" ;;
 	  victorialogs) sed "s/@RETENTION_DAYS@/$logs_retention/g" "$source" > "$work/unit" ;;
+	  incidentd) sed -e "s/@HOLMES_MODEL_ALIAS@/$holmes_model_alias/g" -e "s/@HOLMES_RETENTION_DAYS@/$holmes_retention_days/g" -e "s/@HOLMES_MAX_QUEUE@/$holmes_max_queue/g" -e "s/@HOLMES_MAX_ROUNDS@/$holmes_max_rounds/g" -e "s/@HOLMES_DEADLINE_SECONDS@/$holmes_deadline_seconds/g" -e "s/@HOLMES_DAILY_BUDGET@/$holmes_daily_budget/g" -e "s/@HOLMES_INVESTIGATION_BUDGET@/$holmes_investigation_budget/g" "$source" > "$work/unit" ;;
 	  *) cp "$source" "$work/unit" ;;
 	esac
 	install_atomic 0644 "$work/unit" "$unit_path"
@@ -296,6 +318,11 @@ validate_local_assets() {
       [ -f "$holmes_root/holmes-runner.py" ] || die 'Holmes runner asset is missing'
       [ -f "$holmes_root/holmes.yaml" ] || die 'Holmes configuration asset is missing'
       [ -f "$holmes_lock" ] || die 'Holmes requirements lock is missing'
+      ;;
+    incidentd)
+      incidentd_source=${BOETTICHER_OBSERVABILITY_INCIDENTD_BINARY:-$asset_root/../bin/boetticher-incidentd}
+      [ -x "$incidentd_source" ] || die "incident service binary is missing: $incidentd_source"
+      [ -s "$(root_path /var/lib/boetticher/credentials/holmes-client-token.cred)" ] || die 'Holmes client credential is missing before incident service activation'
       ;;
   esac
 }
@@ -408,6 +435,21 @@ install_optional_pushover_dropin() {
   fi
 }
 
+install_optional_incident_dropin() {
+  service=$1
+  dropin_dir=$(root_path "/etc/systemd/system/$service.d")
+  dropin=$(root_path "/etc/systemd/system/$service.d/boetticher-incident.conf")
+  if [ "$bifrost_probe_enabled" = true ]; then
+    [ -s "$(root_path /var/lib/boetticher/credentials/holmes-client-token.cred)" ] || die "Holmes client credential is missing before $service activation"
+    install -d -m 0755 "$dropin_dir"
+    printf '%s\n' '# Boetticher incident webhook credential' '[Service]' 'LoadCredential=holmes-client-token:/var/lib/boetticher/credentials/holmes-client-token.cred' > "$work/$service-incident.conf"
+    install_atomic 0644 "$work/$service-incident.conf" "$dropin"
+  elif [ -e "$dropin" ]; then
+    grep -Fq 'Boetticher incident webhook credential' "$dropin" || die "refusing to remove an unowned incident drop-in: $dropin"
+    rm -f "$dropin"
+  fi
+}
+
 install_caddy_files() {
   caddy_source=${BOETTICHER_OBSERVABILITY_CADDY_BINARY:-$asset_root/../bin/caddy}
   metrics_controller=${BOETTICHER_OBSERVABILITY_METRICS_CONTROLLER:-}
@@ -444,6 +486,17 @@ https://observability.$public_domain {
     # ACME validates DNS independently; skip only blocked local propagation polling.
     propagation_delay 30s
     propagation_timeout -1
+  }
+  @incidents {
+    path /incidents* /api/incidents*
+  }
+  handle @incidents {
+    forward_auth 127.0.0.1:3000 {
+      uri /api/user
+    }
+    reverse_proxy 127.0.0.1:8091 {
+      header_up X-Grafana-User authenticated
+    }
   }
   reverse_proxy 127.0.0.1:3000
 }
@@ -660,6 +713,7 @@ case "$provider" in
     install_atomic 0755 "$gatus_source" "$(root_path /usr/local/bin/gatus)"
     [ -f "$asset_root/gatus.config.yaml" ] || die 'Gatus configuration asset is missing'
     install_optional_pushover_dropin gatus.service
+    install_optional_incident_dropin gatus.service
     install -d -m 0750 "$(root_path /etc/boetticher/gatus)"
     chown_owned "$(root_path /etc/boetticher/gatus)" gatus
     gatus_config_source=$asset_root/gatus.config.yaml
@@ -725,6 +779,23 @@ case "$provider" in
       gatus_config_source=$work/gatus-public.config.yaml
     fi
     if [ "$pushover_enabled" = true ]; then
+      incident_alerting=
+      if [ "$bifrost_probe_enabled" = true ]; then
+        incident_alerting=$(cat <<'EOF'
+  custom:
+    url: http://127.0.0.1:8091/webhooks/gatus
+    method: POST
+    headers:
+      Authorization: "Bearer ${BOETTICHER_INCIDENT_TOKEN}"
+      Content-Type: application/json
+    body: '{"source":"gatus","title":"[ENDPOINT_NAME]","group":"[ENDPOINT_GROUP]","body":"[ALERT_DESCRIPTION]","fingerprint":"[ENDPOINT_GROUP]/[ENDPOINT_NAME]"}'
+    default-alert:
+      failure-threshold: 3
+      success-threshold: 2
+      send-on-resolved: false
+EOF
+)
+      fi
       awk '
         /^      - \"\[STATUS\] == 200\"$/ {
           print
@@ -740,6 +811,7 @@ case "$provider" in
       ' "$gatus_config_source" > "$work/gatus.config.yaml"
       cat >> "$work/gatus.config.yaml" <<EOF
 alerting:
+$incident_alerting
   pushover:
     application-token: \${BOETTICHER_PUSHOVER_TOKEN}
     user-key: \${BOETTICHER_PUSHOVER_USER}
@@ -749,7 +821,26 @@ alerting:
 EOF
       install_atomic 0640 "$work/gatus.config.yaml" "$(root_path /etc/boetticher/gatus/config.yaml)"
     else
-      install_atomic 0640 "$gatus_config_source" "$(root_path /etc/boetticher/gatus/config.yaml)"
+	      if [ "$bifrost_probe_enabled" = true ]; then
+	        cat > "$work/gatus.config.yaml" <<'EOF'
+alerting:
+  custom:
+    url: http://127.0.0.1:8091/webhooks/gatus
+    method: POST
+    headers:
+      Authorization: "Bearer ${BOETTICHER_INCIDENT_TOKEN}"
+      Content-Type: application/json
+    body: '{"source":"gatus","title":"[ENDPOINT_NAME]","group":"[ENDPOINT_GROUP]","body":"[ALERT_DESCRIPTION]","fingerprint":"[ENDPOINT_GROUP]/[ENDPOINT_NAME]"}'
+    default-alert:
+      failure-threshold: 3
+      success-threshold: 2
+      send-on-resolved: false
+EOF
+        cat "$gatus_config_source" >> "$work/gatus.config.yaml"
+        install_atomic 0640 "$work/gatus.config.yaml" "$(root_path /etc/boetticher/gatus/config.yaml)"
+	      else
+	        install_atomic 0640 "$gatus_config_source" "$(root_path /etc/boetticher/gatus/config.yaml)"
+	      fi
     fi
     chown_owned "$(root_path /etc/boetticher/gatus/config.yaml)" gatus
     ;;
@@ -775,9 +866,15 @@ EOF
       download_verified uv-x86_64-linux "$uv_archive"
       extract_tar_binary "$uv_archive" uv "$work/uv"
       install_atomic 0755 "$work/uv.ready" /usr/local/bin/boetticher-uv
-      /usr/local/bin/boetticher-uv venv --python /usr/bin/python3 /opt/boetticher/observability/holmes/venv || die 'Holmes virtual environment creation failed'
+      /usr/local/bin/boetticher-uv venv --clear --python /usr/bin/python3 /opt/boetticher/observability/holmes/venv || die 'Holmes virtual environment creation failed'
       /usr/local/bin/boetticher-uv pip sync --require-hashes --python /opt/boetticher/observability/holmes/venv/bin/python /opt/boetticher/observability/holmes/requirements.lock || die 'Holmes locked dependency installation failed'
     fi
+    ;;
+  incidentd)
+    incidentd_source=${BOETTICHER_OBSERVABILITY_INCIDENTD_BINARY:-$asset_root/../bin/boetticher-incidentd}
+    install_atomic 0755 "$incidentd_source" "$(root_path /usr/local/libexec/boetticher-incidentd)"
+    install -d -m 0750 "$(root_path /var/lib/boetticher/observability/state/incidents)"
+    chown_owned "$(root_path /var/lib/boetticher/observability/state/incidents)" holmes
     ;;
 esac
 
@@ -803,6 +900,7 @@ if [ "$root" = / ]; then
     grafana) wait_for_local_http http://127.0.0.1:3000/api/health ;;
     gatus) wait_for_local_http http://127.0.0.1:8080/health ;;
     bifrost) wait_for_local_http http://127.0.0.1:4000/health ;;
+    incidentd) wait_for_local_http http://127.0.0.1:8091/health ;;
   esac
   if [ "$provider" = holmes ]; then
     printf 'provider %s: PASS (installed; on-demand health NOT TESTED)\n' "$provider"

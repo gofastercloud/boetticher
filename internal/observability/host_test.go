@@ -58,7 +58,7 @@ func (r *lifecycleRunner) RunWithStdin(ctx context.Context, command string, stdi
 func payloadFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, path := range []string{"controller/proxmox/libexec/boetticher-build-observability-base", "controller/proxmox/libexec/build-temp.py", "controller/observability/base/debian.yaml", "controller/proxmox/libexec/boetticher-install-observability-providers", "controller/observability/assets/catalog.json", "controller/observability/assets/victorialogs.service", "controller/observability/assets/victoriametrics.service", "controller/observability/assets/grafana.service", "controller/observability/assets/gatus.service", "controller/observability/assets/caddy.service", "controller/observability/assets/gatus.config.yaml", "controller/observability/assets/bifrost.service", "controller/observability/assets/grafana-datasource.yaml", "controller/observability/assets/grafana-dashboard.yaml", "controller/observability/assets/grafana-overview.json", "controller/observability/assets/grafana-host-resources.json", "controller/observability/assets/grafana-service-logs.json", "controller/observability/assets/grafana-observability-health.json", "controller/observability/assets/grafana-alerting.yaml", "controller/observability/bin/bifrost", "controller/observability/bin/gatus", "controller/observability/bin/caddy", "controller/observability/holmes/holmes-runner.py", "controller/observability/holmes/holmes.yaml", "controller/observability/holmes/requirements.lock"} {
+	for _, path := range []string{"controller/proxmox/libexec/boetticher-build-observability-base", "controller/proxmox/libexec/build-temp.py", "controller/observability/base/debian.yaml", "controller/proxmox/libexec/boetticher-install-observability-providers", "controller/observability/assets/catalog.json", "controller/observability/assets/victorialogs.service", "controller/observability/assets/victoriametrics.service", "controller/observability/assets/grafana.service", "controller/observability/assets/gatus.service", "controller/observability/assets/caddy.service", "controller/observability/assets/boetticher-incidentd.service", "controller/observability/assets/gatus.config.yaml", "controller/observability/assets/bifrost.service", "controller/observability/assets/grafana-datasource.yaml", "controller/observability/assets/grafana-dashboard.yaml", "controller/observability/assets/grafana-overview.json", "controller/observability/assets/grafana-host-resources.json", "controller/observability/assets/grafana-service-logs.json", "controller/observability/assets/grafana-observability-health.json", "controller/observability/assets/grafana-alerting.yaml", "controller/observability/bin/bifrost", "controller/observability/bin/gatus", "controller/observability/bin/boetticher-incidentd", "controller/observability/bin/caddy", "controller/observability/holmes/holmes-runner.py", "controller/observability/holmes/holmes.yaml", "controller/observability/holmes/requirements.lock"} {
 		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
 			t.Fatal(err)
@@ -141,10 +141,10 @@ func TestReconcileCreatesOwnedGuestAndRetriesWithoutRecreating(t *testing.T) {
 			t.Fatalf("shared runtime omitted %s: %v", mount, runner.calls)
 		}
 	}
-	if countCallContains(runner.calls, "sh /root/boetticher-install-observability-providers") != 6 {
+	if countCallContains(runner.calls, "sh /root/boetticher-install-observability-providers") != 7 {
 		t.Fatalf("atomic reconciliation did not select all providers: %v", runner.calls)
 	}
-	if countCallContains(runner.calls, "pct exec 120 -- chmod 0755") != 3 {
+	if countCallContains(runner.calls, "pct exec 120 -- chmod 0755") != 4 {
 		t.Fatalf("provider binaries were not made executable after push: %v", runner.calls)
 	}
 	if !containsCall(runner.calls, "install -d -o root -g root -m 0755 /var/lib/boetticher/observability") || !containsCall(runner.calls, "chmod 0600 /var/lib/boetticher/observability/boetticher-config.digest") {

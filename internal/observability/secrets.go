@@ -15,6 +15,18 @@ import (
 
 const SecretStorePath = "/etc/boetticher/observability-secrets.json"
 
+// CredentialFilename returns the guest-side filename for a logical Controller
+// secret.  Keep this projection explicit: callers must never derive a guest
+// path from a secret value (or put one in an argv/log line).
+func CredentialFilename(name string) (string, error) {
+	if !safeSecretName(name) {
+		return "", errors.New("observability secret name is invalid")
+	}
+	// These names are intentionally spelled out because they are consumed by
+	// systemd units.  Unknown, validated names remain forward-compatible.
+	return name + ".cred", nil
+}
+
 // SecretStore holds values only in a mode-0600 Controller-local file. Values
 // are deliberately accepted on stdin and are never represented in CLI argv or
 // status output.

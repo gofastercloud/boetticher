@@ -45,13 +45,13 @@ func Enabled(m clientservices.Modules) bool {
 	return m.Observability != nil && clientservices.Enabled(m.Observability.Enabled)
 }
 func Services() []string {
-	return []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "bifrost.service", "caddy.service"}
+	return []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "bifrost.service", "boetticher-incidentd.service", "caddy.service"}
 }
 
 func ServicesForModules(modules clientservices.Modules) []string {
 	services := []string{"victorialogs.service", "victoriametrics.service", "grafana.service", "gatus.service", "caddy.service"}
 	if modules.Observability != nil && clientservices.Enabled(modules.Observability.Enabled) && modules.Observability.Monitoring.Holmes != nil && clientservices.Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
-		services = append(services, "bifrost.service")
+		services = append(services, "bifrost.service", "boetticher-incidentd.service")
 	}
 	return services
 }
@@ -206,8 +206,37 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 	if modules.Media != nil && modules.Media.Enabled {
 		mediaDashboardEnvironment = " BOETTICHER_OBSERVABILITY_MEDIA_ENABLED=true"
 	}
+	holmesEnvironment := ""
+	if modules.Observability != nil && modules.Observability.Monitoring.Holmes != nil {
+		h := modules.Observability.Monitoring.Holmes
+		retention, queue, rounds, deadline := h.RetentionDays, h.MaxQueue, h.MaxRounds, h.InvestigationDeadlineSecs
+		dailyBudget, investigationBudget := h.DailyBudgetUSD, h.InvestigationBudgetUSD
+		if retention == 0 {
+			retention = 30
+		}
+		if queue == 0 {
+			queue = 100
+		}
+		if rounds == 0 {
+			rounds = 6
+		}
+		if deadline == 0 {
+			deadline = 300
+		}
+		if dailyBudget == 0 {
+			dailyBudget = 2
+		}
+		if investigationBudget == 0 {
+			investigationBudget = 0.25
+		}
+		holmesEnvironment = fmt.Sprintf(" BOETTICHER_OBSERVABILITY_HOLMES_RETENTION_DAYS=%d BOETTICHER_OBSERVABILITY_HOLMES_MAX_QUEUE=%d BOETTICHER_OBSERVABILITY_HOLMES_MAX_ROUNDS=%d BOETTICHER_OBSERVABILITY_HOLMES_DEADLINE_SECONDS=%d BOETTICHER_OBSERVABILITY_HOLMES_DAILY_BUDGET=%g BOETTICHER_OBSERVABILITY_HOLMES_INVESTIGATION_BUDGET=%g", retention, queue, rounds, deadline, dailyBudget, investigationBudget)
+	}
 	for _, provider := range providers {
-		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, pushoverEnvironment, caddyEnvironment, bifrostProbeEnvironment, mediaDashboardEnvironment, shellQuoteValue(provider))
+		modelAlias := "operations"
+		if modules.Observability != nil && modules.Observability.Monitoring.Holmes != nil && modules.Observability.Monitoring.Holmes.ModelAlias != "" {
+			modelAlias = modules.Observability.Monitoring.Holmes.ModelAlias
+		}
+		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_INCIDENTD_BINARY=/root/boetticher-incidentd BOETTICHER_OBSERVABILITY_HOLMES_MODEL_ALIAS=%s BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(modelAlias), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, pushoverEnvironment, caddyEnvironment, bifrostProbeEnvironment, mediaDashboardEnvironment, holmesEnvironment, shellQuoteValue(provider))
 		installCommand := fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(installScript))
 		if _, err := c.Transport.Run(ctx, installCommand); err != nil {
 			return fmt.Errorf("install %s provider: %w", provider, err)
@@ -226,14 +255,14 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 	}
 	providers = []string{"victoriametrics"}
 	if modules.Observability != nil && clientservices.Enabled(modules.Observability.Enabled) && modules.Observability.Monitoring.Holmes != nil && clientservices.Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
-		providers = append(providers, "bifrost", "holmes")
+		providers = append(providers, "bifrost", "holmes", "incidentd")
 	}
 	for _, provider := range providers {
-		holmesEnvironment := ""
+		holmesRootEnvironment := ""
 		if provider == "holmes" {
-			holmesEnvironment = fmt.Sprintf(" BOETTICHER_OBSERVABILITY_HOLMES_ROOT=%s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/holmes", b.VMID)))
+			holmesRootEnvironment = fmt.Sprintf(" BOETTICHER_OBSERVABILITY_HOLMES_ROOT=%s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/holmes", b.VMID)))
 		}
-		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, holmesEnvironment, pushoverEnvironment, mediaDashboardEnvironment, shellQuoteValue(provider))
+		installScript := fmt.Sprintf("set -eu; BOETTICHER_OBSERVABILITY_ASSETS=%s BOETTICHER_OBSERVABILITY_CONFIG_DIGEST=%s BOETTICHER_OBSERVABILITY_GATUS_BINARY=/root/gatus BOETTICHER_OBSERVABILITY_BIFROST_BINARY=/root/bifrost BOETTICHER_OBSERVABILITY_INCIDENTD_BINARY=/root/boetticher-incidentd BOETTICHER_OBSERVABILITY_BIFROST_CONFIG=%s%s%s%s%s%s sh /root/boetticher-install-observability-providers %s", shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d", b.VMID)), shellQuoteValue(digest), shellQuoteValue(fmt.Sprintf("/root/boetticher-observability-assets-%d/bifrost.config.json", b.VMID)), retentionEnvironment, holmesRootEnvironment, holmesEnvironment, pushoverEnvironment, mediaDashboardEnvironment, shellQuoteValue(provider))
 		if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(installScript))); err != nil {
 			return fmt.Errorf("install %s provider: %w", provider, err)
 		}
@@ -293,7 +322,7 @@ func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadR
 	if _, err := c.Transport.Run(ctx, fmt.Sprintf("install -d -m 0700 %s", shellQuoteValue(hostRoot+"/holmes"))); err != nil {
 		return fmt.Errorf("prepare Holmes staging: %w", err)
 	}
-	files := []string{"catalog.json", "victorialogs.service", "victoriametrics.service", "grafana.service", "grafana-datasource.yaml", "grafana-dashboard.yaml", "grafana-overview.json", "grafana-host-resources.json", "grafana-service-logs.json", "grafana-observability-health.json", "grafana-alerting.yaml", "gatus.service", "gatus.config.yaml", "bifrost.service", "caddy.service"}
+	files := []string{"catalog.json", "victorialogs.service", "victoriametrics.service", "grafana.service", "grafana-datasource.yaml", "grafana-dashboard.yaml", "grafana-overview.json", "grafana-host-resources.json", "grafana-service-logs.json", "grafana-observability-health.json", "grafana-alerting.yaml", "gatus.service", "gatus.config.yaml", "bifrost.service", "boetticher-incidentd.service", "caddy.service"}
 	if modules.Media != nil && modules.Media.Enabled {
 		files = append(files, "grafana-media.json")
 	}
@@ -331,7 +360,7 @@ func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadR
 	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct push %d %s /root/boetticher-install-observability-providers", b.VMID, shellQuoteValue(hostHelper))); err != nil {
 		return fmt.Errorf("upload observability provider installer: %w", err)
 	}
-	for _, binary := range []struct{ local, host, guest string }{{payloadRoot + "/controller/observability/bin/gatus", hostRoot + "/gatus", "/root/gatus"}, {payloadRoot + "/controller/observability/bin/bifrost", hostRoot + "/bifrost", "/root/bifrost"}, {payloadRoot + "/controller/observability/bin/caddy", hostRoot + "/caddy", "/root/caddy"}} {
+	for _, binary := range []struct{ local, host, guest string }{{payloadRoot + "/controller/observability/bin/gatus", hostRoot + "/gatus", "/root/gatus"}, {payloadRoot + "/controller/observability/bin/bifrost", hostRoot + "/bifrost", "/root/bifrost"}, {payloadRoot + "/controller/observability/bin/boetticher-incidentd", hostRoot + "/boetticher-incidentd", "/root/boetticher-incidentd"}, {payloadRoot + "/controller/observability/bin/caddy", hostRoot + "/caddy", "/root/caddy"}} {
 		if err := stageHostFile(ctx, stager, binary.local, binary.host); err != nil {
 			return err
 		}
@@ -366,8 +395,12 @@ func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadR
 		if !ok || len(value) == 0 {
 			return fmt.Errorf("required observability secret %q is missing", name)
 		}
+		filename, filenameErr := CredentialFilename(name)
+		if filenameErr != nil {
+			return filenameErr
+		}
 		hostPath := hostRoot + "/credential-" + name
-		guestPath := "/var/lib/boetticher/credentials/" + name + ".cred"
+		guestPath := "/var/lib/boetticher/credentials/" + filename
 		if err := stageHostBytes(ctx, stager, hostPath, value); err != nil {
 			return fmt.Errorf("stage observability secret %s: %w", name, err)
 		}
@@ -564,12 +597,13 @@ func (c HostClient) ServiceStatus(ctx context.Context, b Binding, service string
 // from being reported as healthy by capability status.
 func (c HostClient) ProviderHealth(ctx context.Context, b Binding, service string) (string, error) {
 	paths := map[string]string{
-		"victorialogs.service":    "http://127.0.0.1:9428/health",
-		"victoriametrics.service": "http://127.0.0.1:8428/health",
-		"grafana.service":         "http://127.0.0.1:3000/api/health",
-		"gatus.service":           "http://127.0.0.1:8080/health",
-		"bifrost.service":         "http://127.0.0.1:4000/health",
-		"caddy.service":           "http://unix/config/",
+		"victorialogs.service":         "http://127.0.0.1:9428/health",
+		"victoriametrics.service":      "http://127.0.0.1:8428/health",
+		"grafana.service":              "http://127.0.0.1:3000/api/health",
+		"gatus.service":                "http://127.0.0.1:8080/health",
+		"bifrost.service":              "http://127.0.0.1:4000/health",
+		"boetticher-incidentd.service": "http://127.0.0.1:8091/health",
+		"caddy.service":                "http://unix/config/",
 	}
 	path, ok := paths[service]
 	if !ok {
@@ -695,7 +729,7 @@ func (c HostClient) VerifyReadinessForModules(ctx context.Context, b Binding, mo
 	}
 	check := "curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8428/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:9428/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health >/dev/null; curl --fail --silent --show-error --max-time 5 --unix-socket /run/caddy/admin.sock http://unix/config/ >/dev/null"
 	if modules.Observability != nil && clientservices.Enabled(modules.Observability.Enabled) && modules.Observability.Monitoring.Holmes != nil && clientservices.Enabled(modules.Observability.Monitoring.Holmes.Enabled) {
-		check += "; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:4000/health >/dev/null"
+		check += "; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:4000/health >/dev/null; curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8091/health >/dev/null"
 	}
 	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue(check))); err != nil {
 		return fmt.Errorf("observability local readiness: %w", err)
@@ -811,7 +845,7 @@ func CaddyEnvironment(modules clientservices.Modules, collection CollectionConfi
 // PayloadDigest binds no-op qualification to the exact installed provider
 // catalog, helpers, assets, and binaries rather than intent alone.
 func PayloadDigest(root string) (string, error) {
-	files := []string{"controller/proxmox/libexec/boetticher-build-observability-base", "controller/observability/base/debian.yaml", "controller/proxmox/libexec/boetticher-install-observability-providers", "controller/observability/assets/catalog.json", "controller/observability/assets/victorialogs.service", "controller/observability/assets/victoriametrics.service", "controller/observability/assets/grafana.service", "controller/observability/assets/grafana-datasource.yaml", "controller/observability/assets/grafana-dashboard.yaml", "controller/observability/assets/grafana-overview.json", "controller/observability/assets/grafana-host-resources.json", "controller/observability/assets/grafana-service-logs.json", "controller/observability/assets/grafana-observability-health.json", "controller/observability/assets/grafana-alerting.yaml", "controller/observability/assets/gatus.service", "controller/observability/assets/gatus.config.yaml", "controller/observability/assets/bifrost.service", "controller/observability/assets/caddy.service", "controller/observability/bin/caddy", "controller/observability/bin/gatus", "controller/observability/bin/bifrost", "controller/observability/holmes/holmes-runner.py", "controller/observability/holmes/holmes.yaml", "controller/observability/holmes/requirements.lock"}
+	files := []string{"controller/proxmox/libexec/boetticher-build-observability-base", "controller/observability/base/debian.yaml", "controller/proxmox/libexec/boetticher-install-observability-providers", "controller/observability/assets/catalog.json", "controller/observability/assets/victorialogs.service", "controller/observability/assets/victoriametrics.service", "controller/observability/assets/grafana.service", "controller/observability/assets/grafana-datasource.yaml", "controller/observability/assets/grafana-dashboard.yaml", "controller/observability/assets/grafana-overview.json", "controller/observability/assets/grafana-host-resources.json", "controller/observability/assets/grafana-service-logs.json", "controller/observability/assets/grafana-observability-health.json", "controller/observability/assets/grafana-alerting.yaml", "controller/observability/assets/gatus.service", "controller/observability/assets/gatus.config.yaml", "controller/observability/assets/bifrost.service", "controller/observability/assets/boetticher-incidentd.service", "controller/observability/assets/caddy.service", "controller/observability/bin/caddy", "controller/observability/bin/gatus", "controller/observability/bin/bifrost", "controller/observability/bin/boetticher-incidentd", "controller/observability/holmes/holmes-runner.py", "controller/observability/holmes/holmes.yaml", "controller/observability/holmes/requirements.lock"}
 	hash := sha256.New()
 	for _, relative := range files {
 		data, err := os.ReadFile(root + "/" + relative)

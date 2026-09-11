@@ -33,6 +33,7 @@ type CollectionConfig struct {
 	Targets              []Target
 	MetricsRetentionDays int
 	LogsRetentionDays    int
+	MediaDiskGiB         int
 }
 type Target struct {
 	Name, Address, Hostname, Arch string
@@ -83,8 +84,12 @@ func CollectionConfigForLab(config controllerhost.LabConfig, controllerAddress s
 		},
 		MetricsRetentionDays: collectionRetention(config.Modules, true),
 		LogsRetentionDays:    collectionRetention(config.Modules, false),
+		MediaDiskGiB:         256,
 	}
 	if config.Modules.Observability != nil && clientservices.Enabled(config.Modules.Observability.Enabled) && config.Modules.Media != nil && config.Modules.Media.Enabled {
+		if config.Modules.Media.MediaGiB > 0 {
+			result.MediaDiskGiB = config.Modules.Media.MediaGiB
+		}
 		result.Targets = append(result.Targets, Target{Name: "lab-media-01", Hostname: "lab-media-01", Address: "10.10.20.230", Kind: TargetMedia, VMID: 290, Arch: "amd64", Port: NodeExporterPort})
 	}
 	if err := result.Validate(); err != nil {
@@ -139,6 +144,9 @@ func (c CollectionConfig) Validate() error {
 	if c.MetricsRetentionDays < 1 || c.MetricsRetentionDays > 3650 || c.LogsRetentionDays < 1 || c.LogsRetentionDays > 3650 {
 		return errors.New("collection retention must be between 1 and 3650 days")
 	}
+	if c.MediaDiskGiB < 0 {
+		return errors.New("collection media disk size cannot be negative")
+	}
 	if len(c.Targets) == 0 {
 		return errors.New("collection requires exactly three managed Linux targets")
 	}
@@ -154,6 +162,9 @@ func (c CollectionConfig) Validate() error {
 		case TargetRuntime:
 			expectedName, expectedHostname, expectedArch = "lab-monitor-01", "lab-monitor-01", "amd64"
 		case TargetMedia:
+			if c.MediaDiskGiB < 1 {
+				return errors.New("media collection requires a configured media disk size")
+			}
 			expectedName, expectedHostname, expectedArch = "lab-media-01", "lab-media-01", "amd64"
 		default:
 			return fmt.Errorf("collection target %s has an unknown kind", target.Name)

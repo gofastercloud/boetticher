@@ -157,10 +157,18 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 	if _, err := c.GuestConfig(ctx, b); err != nil {
 		return fmt.Errorf("verify owned collection runtime before staging: %w", err)
 	}
+	mediaRunning := true
 	for _, target := range config.Targets {
 		if target.Kind == TargetMedia {
-			if err := inspectOwnedMediaGuest(ctx, c.Transport); err != nil {
+			guest, err := inspectMediaGuestFacts(ctx, c.Transport, config.MediaDiskGiB)
+			if err != nil {
 				return err
+			}
+			if !guest.Running {
+				// Preserve an operator-stopped media guest. Its Gatus outcome
+				// remains observable, but collection must not start it merely to
+				// install an agent.
+				mediaRunning = false
 			}
 		}
 	}
@@ -181,6 +189,9 @@ func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadR
 		return fmt.Errorf("install collection scrape configuration: %w", err)
 	}
 	for _, target := range config.Targets {
+		if target.Kind == TargetMedia && !mediaRunning {
+			continue
+		}
 		if err := c.runTarget(ctx, b, target, publicDomain, readHash, helper, catalog, local, host); err != nil {
 			return err
 		}
@@ -266,15 +277,15 @@ func parseQEMUCollectionResult(result controllerhost.Result) (controllerhost.Res
 	return result, nil
 }
 
-var inspectMediaGuest = func(ctx context.Context, transport controllerhost.Transport) (arrstack.GuestFacts, error) {
-	guest, err := arrstack.InspectGuest(ctx, firewallmodule.HostClient{Transport: transport})
+var inspectMediaGuest = func(ctx context.Context, transport controllerhost.Transport, mediaSizes ...int) (arrstack.GuestFacts, error) {
+	guest, err := arrstack.InspectGuest(ctx, firewallmodule.HostClient{Transport: transport}, mediaSizes...)
 	if err != nil {
 		return arrstack.GuestFacts{}, fmt.Errorf("verify exact owned media guest before collection staging: %w", err)
 	}
 	return guest, nil
 }
 
-func inspectMediaGuestFacts(ctx context.Context, runner Runner) (arrstack.GuestFacts, error) {
+func inspectMediaGuestFacts(ctx context.Context, runner Runner, mediaSizes ...int) (arrstack.GuestFacts, error) {
 	var transport controllerhost.Transport
 	switch value := runner.(type) {
 	case controllerhost.Transport:
@@ -287,11 +298,11 @@ func inspectMediaGuestFacts(ctx context.Context, runner Runner) (arrstack.GuestF
 	default:
 		return arrstack.GuestFacts{}, errors.New("media collection requires the enrolled Host transport for exact QEMU identity inspection")
 	}
-	return inspectMediaGuest(ctx, transport)
+	return inspectMediaGuest(ctx, transport, mediaSizes...)
 }
 
-func inspectOwnedMediaGuest(ctx context.Context, runner Runner) error {
-	_, err := inspectMediaGuestFacts(ctx, runner)
+func inspectOwnedMediaGuest(ctx context.Context, runner Runner, mediaSizes ...int) error {
+	_, err := inspectMediaGuestFacts(ctx, runner, mediaSizes...)
 	return err
 }
 
