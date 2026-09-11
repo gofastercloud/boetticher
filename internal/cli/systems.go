@@ -112,7 +112,9 @@ func systemStatus(args []string, out io.Writer) error {
 							observed = "provider composition drift"
 						}
 						if s.Monitoring && observed == "identity matches" {
-							if ready, ge := (observability.HostClient{Transport: transport}).GatusSystemsHealthy(ctx, c.Modules.Systems); ge != nil || !ready {
+							// Include media intent so the read-only gate accounts for every
+							// owned Gatus endpoint, not only operator-managed systems.
+							if ready, ge := (observability.HostClient{Transport: transport}).GatusSystemsHealthy(ctx, c.Modules.Systems, c.Modules); ge != nil || !ready {
 								observed = "monitoring drift"
 							}
 						}
