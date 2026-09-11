@@ -13,6 +13,7 @@ MAX_PROMPT_BYTES = 32 * 1024
 MAX_ANSWER_BYTES = 64 * 1024
 LOOPBACK_API_BASE = "http://127.0.0.1:4000/v1"
 LAB_SNAPSHOT_URL = os.environ.get("BOETTICHER_LAB_SNAPSHOT_URL", "http://10.10.20.10:8090/lab/snapshot.json")
+LAB_SNAPSHOT_PATH = os.environ.get("BOETTICHER_LAB_SNAPSHOT_PATH", "/var/lib/boetticher/labviewer/snapshot/snapshot.json")
 ALLOWLIST = {"prometheus/metrics", "victorialogs"}
 
 
@@ -36,9 +37,12 @@ def credential() -> str:
 
 def snapshot_context() -> str:
     try:
-        request = urllib.request.Request(LAB_SNAPSHOT_URL, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(request, timeout=10) as response:
-            data = response.read(256 * 1024 + 1)
+        try:
+            data = Path(LAB_SNAPSHOT_PATH).read_bytes()
+        except OSError:
+            request = urllib.request.Request(LAB_SNAPSHOT_URL, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(request, timeout=10) as response:
+                data = response.read(256 * 1024 + 1)
         if len(data) > 256 * 1024:
             return "Lab snapshot unavailable: response exceeded its bound."
         snapshot = json.loads(data.decode("utf-8"))
@@ -64,6 +68,7 @@ def main() -> None:
             "PYTHONNOUSERSITE": "1",
             "CREDENTIALS_DIRECTORY": credentials_directory,
             "BOETTICHER_LAB_SNAPSHOT_URL": LAB_SNAPSHOT_URL,
+            "BOETTICHER_LAB_SNAPSHOT_PATH": LAB_SNAPSHOT_PATH,
         }
     )
     question = sys.stdin.buffer.read(MAX_PROMPT_BYTES + 1)

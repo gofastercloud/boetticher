@@ -7,7 +7,7 @@ RequiresMountsFor=/etc/boetticher /opt/boetticher/current
 [Service]
 Type=simple
 User=root
-ExecStart=/opt/boetticher/current/bin/boetticher-labviewer --lab /etc/boetticher/lab.yml --listen 10.10.20.10:8090 --snapshot-dir /var/lib/boetticher/labviewer/snapshot --facts /var/lib/boetticher/labviewer/facts.json --docs-root /opt/boetticher/current/controller/labviewer/docs --snapshot-interval 5m
+ExecStart=/opt/boetticher/current/bin/boetticher-labviewer --lab /etc/boetticher/lab.yml --listen 10.10.20.10:8090 --snapshot-dir /var/lib/boetticher/labviewer/snapshot --facts /var/lib/boetticher/labviewer/facts.json --docs-root /opt/boetticher/current/controller/labviewer/docs --snapshot-interval 5m --sync-vmid 120 --sync-path /var/lib/boetticher/labviewer/snapshot/snapshot.json
 Restart=on-failure
 RestartSec=3s
 NoNewPrivileges=true

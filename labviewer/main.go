@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,6 +53,8 @@ func main() {
 	factsPath := flag.String("facts", "", "optional bounded observed-facts JSON path")
 	docsRoot := flag.String("docs-root", "/opt/boetticher/docs", "documentation root published beneath /lab/docs/")
 	snapshotInterval := flag.Duration("snapshot-interval", 5*time.Minute, "lab snapshot refresh interval")
+	syncVMID := flag.Int("sync-vmid", 0, "optional Monitoring VMID receiving the published snapshot")
+	syncPath := flag.String("sync-path", "/var/lib/boetticher/labviewer/snapshot/snapshot.json", "path for the synced snapshot on the Monitoring guest")
 	flag.Parse()
 
 	mux := http.NewServeMux()
@@ -63,12 +68,12 @@ func main() {
 	})
 	mux.Handle("/lab/docs/", http.StripPrefix("/lab/docs/", http.FileServer(http.Dir(*docsRoot))))
 	mux.Handle("/", http.FileServer(http.FS(assets)))
-	go watchSnapshot(*path, *factsPath, *docsRoot, *snapshotDir, *snapshotInterval)
+	go watchSnapshot(*path, *factsPath, *docsRoot, *snapshotDir, *snapshotInterval, *syncVMID, *syncPath)
 	log.Printf("lab viewer listening on %s (lab=%s)", *addr, *path)
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }
 
-func watchSnapshot(labPath, factsPath, docsRoot, snapshotDir string, interval time.Duration) {
+func watchSnapshot(labPath, factsPath, docsRoot, snapshotDir string, interval time.Duration, syncVMID int, syncPath string) {
 	if interval < time.Minute {
 		interval = time.Minute
 	}
@@ -80,6 +85,12 @@ func watchSnapshot(labPath, factsPath, docsRoot, snapshotDir string, interval ti
 		}
 		if err := writeSnapshotAtomic(snapshotDir, snapshot); err != nil {
 			log.Printf("lab snapshot publish failed: %v", err)
+			return
+		}
+		if syncVMID > 0 {
+			if err := syncSnapshot(context.Background(), snapshot, syncVMID, syncPath); err != nil {
+				log.Printf("lab snapshot sync failed: %v", err)
+			}
 		}
 	}
 	refresh()
@@ -89,6 +100,30 @@ func watchSnapshot(labPath, factsPath, docsRoot, snapshotDir string, interval ti
 		refresh()
 	}
 }
+
+func syncSnapshot(ctx context.Context, snapshot labSnapshot, vmid int, path string) error {
+	config, err := controllerhost.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("load Controller configuration: %w", err)
+	}
+	transport, err := controllerhost.TransportFor(config)
+	if err != nil {
+		return fmt.Errorf("configure Host transport: %w", err)
+	}
+	transport.Timeout = 30 * time.Second
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	payloadCommand := fmt.Sprintf("set -eu; install -d -m 0750 %s; tmp=$(mktemp %s.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; cat >\"$tmp\"; chmod 0640 \"$tmp\"; chown root:holmes \"$tmp\"; mv -f \"$tmp\" %s", shellQuote(filepath.Dir(path)), shellQuote(path), shellQuote(path))
+	command := fmt.Sprintf("pct exec %d -- sh -c %s", vmid, shellQuote(payloadCommand))
+	if _, err := transport.RunWithStdin(ctx, command, bytes.NewReader(append(data, '\n'))); err != nil {
+		return fmt.Errorf("sync snapshot to VMID %d: %w", vmid, err)
+	}
+	return nil
+}
+
+func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 
 func serveSnapshot(w http.ResponseWriter, path string) {
 	w.Header().Set("Content-Type", "application/json")
