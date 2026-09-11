@@ -33,11 +33,18 @@ main() {
     go build -trimpath -o "$stage/bin/boetticher" ./cmd/boetticher
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
     go build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
-  chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status"
+  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+    go build -trimpath -o "$stage/bin/boetticher-lab-snapshot" ./cmd/boetticher-lab-snapshot
+  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+    go build -trimpath -o "$stage/bin/boetticher-labviewer" ./labviewer
+  chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status" "$stage/bin/boetticher-lab-snapshot" "$stage/bin/boetticher-labviewer"
   ARRSTACK_SOURCE_ARCHIVE=${ARRSTACK_SOURCE_ARCHIVE:?ARRSTACK_SOURCE_ARCHIVE must point to the reviewed upstream tarball} \
     sh scripts/build-arrstack.sh "$stage/bin/arrstack"
   chmod 0755 "$stage/bin/arrstack"
   cp -R controller "$stage/controller"
+  mkdir -p "$stage/controller/labviewer/docs"
+  cp docs/modules.md docs/lab.md docs/start.md "$stage/controller/labviewer/docs/"
+  cp labviewer/deploy/boetticher-labviewer.service "$stage/controller/labviewer/boetticher-labviewer.service"
   mkdir -p "$stage/controller/proxmox/libexec"
   cp scripts/build-openwrt-firewall.sh "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
   cp scripts/build-tailnet.sh "$stage/controller/proxmox/libexec/boetticher-build-tailnet"

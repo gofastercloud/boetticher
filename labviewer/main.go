@@ -46,132 +46,58 @@ func main() {
 	}
 	path := flag.String("lab", defaultPath, "path to the live lab.yml")
 	addr := flag.String("listen", ":8090", "listen address")
-	homepageDir := flag.String("homepage-config", "", "optional Homepage config directory to refresh from lab.yml")
-	refresh := flag.String("homepage-refresh-url", "", "optional local Homepage refresh URL")
-	interval := flag.Duration("refresh-interval", 15*time.Second, "lab.yml refresh interval")
+	snapshotDir := flag.String("snapshot-dir", "/var/lib/boetticher/labviewer/snapshot", "directory for the published lab snapshot")
+	factsPath := flag.String("facts", "", "optional bounded observed-facts JSON path")
+	docsRoot := flag.String("docs-root", "/opt/boetticher/docs", "documentation root published beneath /lab/docs/")
+	snapshotInterval := flag.Duration("snapshot-interval", 5*time.Minute, "lab snapshot refresh interval")
 	flag.Parse()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/lab", func(w http.ResponseWriter, r *http.Request) { serveLab(w, *path) })
+	mux.HandleFunc("/lab", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/lab/", http.StatusMovedPermanently)
+	})
+	mux.Handle("/lab/", http.StripPrefix("/lab/", http.FileServer(http.FS(assets))))
+	mux.HandleFunc("/lab/snapshot.json", func(w http.ResponseWriter, r *http.Request) {
+		serveSnapshot(w, filepath.Join(*snapshotDir, "snapshot.json"))
+	})
+	mux.Handle("/lab/docs/", http.StripPrefix("/lab/docs/", http.FileServer(http.Dir(*docsRoot))))
 	mux.Handle("/", http.FileServer(http.FS(assets)))
-	if *homepageDir != "" {
-		go watchHomepage(*path, *homepageDir, *refresh, *interval)
-	}
+	go watchSnapshot(*path, *factsPath, *docsRoot, *snapshotDir, *snapshotInterval)
 	log.Printf("lab viewer listening on %s (lab=%s)", *addr, *path)
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }
 
-func watchHomepage(labPath, configDir, refreshURL string, interval time.Duration) {
-	if interval < time.Second {
-		interval = time.Second
+func watchSnapshot(labPath, factsPath, docsRoot, snapshotDir string, interval time.Duration) {
+	if interval < time.Minute {
+		interval = time.Minute
 	}
-	var last time.Time
-	for {
-		if info, err := os.Stat(labPath); err == nil && info.ModTime().After(last) {
-			if err := syncHomepage(labPath, configDir); err != nil {
-				log.Printf("homepage config refresh failed: %v", err)
-			} else {
-				last = info.ModTime()
-				if refreshURL != "" {
-					request, _ := http.NewRequest(http.MethodPost, refreshURL, nil)
-					response, err := http.DefaultClient.Do(request)
-					if err == nil && response.Body != nil {
-						response.Body.Close()
-					}
-				}
-			}
+	refresh := func() {
+		snapshot, err := buildSnapshot(labPath, factsPath, docsRoot, time.Now().UTC())
+		if err != nil {
+			log.Printf("lab snapshot refresh failed: %v", err)
+			return
 		}
-		time.Sleep(interval)
-	}
-}
-
-func syncHomepage(labPath, configDir string) error {
-	b, err := os.ReadFile(labPath)
-	if err != nil {
-		return err
-	}
-	var raw map[string]any
-	if err := yaml.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	normalizeMap(raw)
-	links := publications(raw)
-	sort.SliceStable(links, func(i, j int) bool {
-		if links[i].Group == links[j].Group {
-			return links[i].Name < links[j].Name
+		if err := writeSnapshotAtomic(snapshotDir, snapshot); err != nil {
+			log.Printf("lab snapshot publish failed: %v", err)
 		}
-		return links[i].Group < links[j].Group
-	})
-	grouped := map[string][]map[string]map[string]string{}
-	for _, link := range links {
-		grouped[link.Group] = append(grouped[link.Group], map[string]map[string]string{link.Name: {
-			"href": link.URL, "description": link.Description, "icon": homepageIcon(link.Icon),
-		}})
 	}
-	groups := make([]string, 0, len(grouped))
-	for group := range grouped {
-		groups = append(groups, group)
+	refresh()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		refresh()
 	}
-	sort.Strings(groups)
-	services := make([]map[string][]map[string]map[string]string, 0, len(groups))
-	for _, group := range groups {
-		services = append(services, map[string][]map[string]map[string]string{group: grouped[group]})
-	}
-	settings := map[string]any{
-		"title": "Boetticher Lab", "description": "Private control room for the lab", "theme": "dark",
-		"color": "green", "headerStyle": "clean", "statusStyle": "dot", "iconStyle": "theme",
-		"background": map[string]any{"image": "/images/boetticher-cover.jpg", "blur": "sm", "saturate": 60, "opacity": 35},
-	}
-	if err := os.MkdirAll(filepath.Join(configDir, "images"), 0750); err != nil {
-		return err
-	}
-	cover, err := assets.ReadFile("static/boetticher-cover.jpg")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "images", "boetticher-cover.jpg"), cover, 0640); err != nil {
-		return err
-	}
-	if err := writeYAMLAtomic(filepath.Join(configDir, "services.yaml"), services); err != nil {
-		return err
-	}
-	if err := writeYAMLAtomic(filepath.Join(configDir, "settings.yaml"), settings); err != nil {
-		return err
-	}
-	return writeYAMLAtomic(filepath.Join(configDir, "bookmarks.yaml"), map[string]any{})
 }
 
-func homepageIcon(icon string) string {
-	icons := map[string]string{"◌": "gatus.png", "◈": "grafana.png", "▦": "proxmox.png", "▶": "jellyfin.png", "✦": "jellyseerr.png", "⌁": "mdi-firewall"}
-	if value, ok := icons[icon]; ok {
-		return value
-	}
-	return "mdi-open-in-new"
-}
-
-func writeYAMLAtomic(path string, value any) error {
-	b, err := yaml.Marshal(value)
+func serveSnapshot(w http.ResponseWriter, path string) {
+	w.Header().Set("Content-Type", "application/json")
+	snapshot, err := readSnapshot(path)
 	if err != nil {
-		return err
+		http.Error(w, "lab snapshot unavailable", http.StatusServiceUnavailable)
+		return
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".labviewer-*")
-	if err != nil {
-		return err
-	}
-	temporaryName := temporary.Name()
-	defer os.Remove(temporaryName)
-	if err := temporary.Chmod(0640); err != nil {
-		temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(b); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryName, path)
+	writeJSON(w, snapshot)
 }
 
 func serveLab(w http.ResponseWriter, path string) {

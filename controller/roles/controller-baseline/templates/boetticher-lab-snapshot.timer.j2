@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh Boetticher live lab facts snapshot
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

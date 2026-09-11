@@ -23,6 +23,9 @@
 - name: Configure the self-contained Controller status service
   ansible.builtin.include_tasks: status.yml
 
+- name: Configure the five-minute lab snapshot portal
+  ansible.builtin.include_tasks: labviewer.yml
+
 - name: Apply handlers before log2ram installation
   ansible.builtin.meta: flush_handlers
 

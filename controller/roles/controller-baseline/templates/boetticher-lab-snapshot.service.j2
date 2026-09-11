@@ -1,0 +1,21 @@
+[Unit]
+Description=Boetticher live lab facts snapshot
+After=network-online.target boetticher-status.service
+Wants=network-online.target
+RequiresMountsFor=/etc/boetticher /opt/boetticher/current
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/boetticher/current/bin/boetticher-lab-snapshot
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/boetticher /opt/boetticher/current
+ReadWritePaths=/var/lib/boetticher/labviewer
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryDenyWriteExecute=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native

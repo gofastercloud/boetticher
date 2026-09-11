@@ -1,6 +1,7 @@
-# Add this site to the Observability host Caddy configuration.
-# Keep the existing Caddy authentication policy in front of this route.
+# Add this site to the private Observability Caddy configuration.
+# The route is reachable only from the existing LAN/Tailnet boundary.
 labviewer.example.com {
+	bind 10.10.10.20
 	encode zstd gzip
-	reverse_proxy 127.0.0.1:8090
+	reverse_proxy 10.10.20.10:8090
 }
