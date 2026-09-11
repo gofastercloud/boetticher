@@ -62,6 +62,17 @@ func TestParseQEMUCollectionResultRequiresSuccessfulJSONExitCode(t *testing.T) {
 	}
 }
 
+func TestCollectionInstallCommandKeepsRuntimeInsideItsGuest(t *testing.T) {
+	install := "sh /usr/local/libexec/boetticher-install-observability-collection --address 10.10.10.20 --kind runtime"
+	if got := collectionInstallCommand("", install); got != install {
+		t.Fatalf("controller install command changed: %q", got)
+	}
+	got := collectionInstallCommand("pct exec 120 -- sh -c ", install)
+	if !strings.HasPrefix(got, "pct exec 120 -- sh -c '") || !strings.Contains(got, "--kind runtime") {
+		t.Fatalf("runtime install escaped its guest: %q", got)
+	}
+}
+
 func TestDefaultControllerIdentityUsesObservabilityRoute(t *testing.T) {
 	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$ROUTE_ARGS\"\nprintf '2: eth1 inet 10.10.20.10/24 scope global eth1\\n'\n"), 0755); err != nil {

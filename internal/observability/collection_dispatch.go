@@ -233,10 +233,18 @@ func (c HostClient) runTarget(ctx context.Context, b Binding, target Target, pub
 	if err := stageTarget(ctx, runner, prefix, collectionAssetRoot+"/catalog.json", catalog, 0644); err != nil {
 		return fmt.Errorf("stage collection catalog on %s: %w", target.Name, err)
 	}
-	if _, err := runner.Run(ctx, installScript); err != nil {
+	installCommand := collectionInstallCommand(prefix, installScript)
+	if _, err := runner.Run(ctx, installCommand); err != nil {
 		return fmt.Errorf("install collection on %s: %w", target.Name, err)
 	}
 	return nil
+}
+
+func collectionInstallCommand(prefix, installScript string) string {
+	if prefix == "" {
+		return installScript
+	}
+	return prefix + shellQuoteValue(installScript)
 }
 
 type qemuCollectionRunner struct {
