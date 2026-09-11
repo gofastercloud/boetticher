@@ -67,6 +67,9 @@ func TestReconcileCollectionStagesConfigHelperAndExecutesOwnedGuest(t *testing.T
 			t.Fatalf("collection dispatch missing %q: %s", required, joined)
 		}
 	}
+	if !strings.Contains(joined, "--name 'proxmox-host' --address '10.10.99.5'") {
+		t.Fatalf("collection dispatch did not preserve the canonical Proxmox management address: %s", joined)
+	}
 }
 
 func TestReconcileCollectionRejectsInvalidDomainBeforeRemoteIO(t *testing.T) {
