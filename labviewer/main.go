@@ -115,7 +115,7 @@ func syncSnapshot(ctx context.Context, snapshot labSnapshot, vmid int, path stri
 	if err != nil {
 		return err
 	}
-	payloadCommand := fmt.Sprintf("set -eu; install -d -m 0750 %s; tmp=$(mktemp %s.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; cat >\"$tmp\"; chmod 0640 \"$tmp\"; chown root:holmes \"$tmp\"; mv -f \"$tmp\" %s", shellQuote(filepath.Dir(path)), shellQuote(path), shellQuote(path))
+	payloadCommand := fmt.Sprintf("set -eu; install -d -m 0750 %s; chown root:holmes %s; tmp=$(mktemp %s.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; cat >\"$tmp\"; chmod 0640 \"$tmp\"; chown root:holmes \"$tmp\"; mv -f \"$tmp\" %s", shellQuote(filepath.Dir(path)), shellQuote(filepath.Dir(path)), shellQuote(path), shellQuote(path))
 	command := fmt.Sprintf("pct exec %d -- sh -c %s", vmid, shellQuote(payloadCommand))
 	if _, err := transport.RunWithStdin(ctx, command, bytes.NewReader(append(data, '\n'))); err != nil {
 		return fmt.Errorf("sync snapshot to VMID %d: %w", vmid, err)
