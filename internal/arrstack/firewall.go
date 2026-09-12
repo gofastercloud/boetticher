@@ -22,7 +22,7 @@ func GuestPolicyScript(peerPort int, monitoring ...bool) (string, error) {
 	monitorInput := ""
 	monitorIPTables := ""
 	if len(monitoring) > 0 && monitoring[0] {
-		monitorInput = `    iifname "$uplink" ether saddr "$gateway_mac" ip saddr 10.10.10.20 tcp dport 9100 accept
+		monitorInput = `    iifname "$uplink" ether saddr "$gateway_mac" ip saddr 10.10.10.20 tcp dport { 9100, 9110 } accept
 `
 		monitorRules = `    iifname "$uplink" oifname "$bridge" ether saddr "$gateway_mac" ip saddr 10.10.10.20 tcp dport 9110 accept
 `

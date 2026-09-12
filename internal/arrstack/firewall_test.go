@@ -54,7 +54,7 @@ func TestGuestPolicyAddsMonitorOnlyHealthAndMetricsWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"ip saddr 10.10.10.20 tcp dport 9100 accept", "ip saddr 10.10.10.20 tcp dport 9110 accept", "-s 10.10.10.20 -p tcp --dport 9110 -j ACCEPT"} {
+	for _, required := range []string{"ip saddr 10.10.10.20 tcp dport { 9100, 9110 } accept", "ip saddr 10.10.10.20 tcp dport 9110 accept", "-s 10.10.10.20 -p tcp --dport 9110 -j ACCEPT"} {
 		if !strings.Contains(policy, required) {
 			t.Fatalf("monitor policy missing %q", required)
 		}
