@@ -111,5 +111,5 @@ done
 iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -p tcp --dport %s -j ACCEPT
 iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -p udp --dport %s -j ACCEPT
 iptables -w -A DOCKER-USER -j DROP
-`, DockerBridge, DockerBridgeSubnet, GuestGateway, GuestAddress, GuestMAC, monitorInput, monitorRules, monitorIPTables, port, port, DockerBridgeSubnet, GuestAddress, GuestAddress, port, port), nil
+`, DockerBridge, DockerBridgeSubnet, GuestGateway, GuestAddress, GuestMAC, monitorInput, monitorRules, port, port, DockerBridgeSubnet, GuestAddress, GuestAddress, monitorIPTables, port, port), nil
 }
