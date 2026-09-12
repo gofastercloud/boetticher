@@ -59,7 +59,7 @@ func TestGuestPolicyAddsMonitorOnlyHealthAndMetricsWhenEnabled(t *testing.T) {
 			t.Fatalf("monitor policy missing %q", required)
 		}
 	}
-	if strings.Index(policy, "-s 10.10.10.20 -p tcp --dport 9110 -j ACCEPT") > strings.Index(policy, "for net in 0.0.0.0/8 10.0.0.0/8") {
+	if strings.Index(policy, "-s 10.10.10.20 -p tcp --dport 9110 -j ACCEPT") > strings.Index(policy, "-s \"$net\" -j DROP") {
 		t.Fatal("monitoring Docker health rule is placed after the private-source drop")
 	}
 	if strings.Contains(policy, "oifname \"$bridge\" ether saddr \"$gateway_mac\" ip saddr 10.10.10.20 tcp dport { 9110, 9100 }") || strings.Contains(policy, "--dports 9110,9100") {
