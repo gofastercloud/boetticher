@@ -31,26 +31,32 @@ func MediaGatusEndpoints(modules clientservices.Modules) ([]map[string]interface
 	if modules.Media.ApplicationDomain == "" {
 		return nil, errors.New("enabled media monitoring requires an application domain")
 	}
-	services := []struct{ name, alias, path string }{
-		{"caddy", "caddy", ""},
-		{"qbittorrent", "qbittorrent", ""}, {"prowlarr", modules.Media.Aliases.Prowlarr, "ping"},
-		{"sonarr", modules.Media.Aliases.Sonarr, "ping"}, {"radarr", modules.Media.Aliases.Radarr, "ping"},
-		{"bazarr", modules.Media.Aliases.Bazarr, "api/system/ping"}, {"ai-subtitle-translator", "ai-subtitle-translator", "health"},
-		{"flaresolverr", "flaresolverr", "health"}, {"jellyfin", "jellyfin", "health"},
-		{"jellyseerr", "jellyseerr", "api/v1/status"}, {"trailarr", modules.Media.Aliases.Trailarr, "status"},
-	}
-	if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
-		// qBittorrent is proxied through Gluetun when VPN intent is enabled.
-		// Keep this as a separately named outcome so operators can distinguish
-		// the protected egress path from the ordinary application check.
-		services = append(services, struct{ name, alias, path string }{"vpn-egress", "qbittorrent", ""})
+	services := []struct {
+		name, alias, path string
+		tcp               bool
+	}{
+		{"caddy", "", "", true},
+		{"qbittorrent", "qbittorrent", "", false}, {"prowlarr", modules.Media.Aliases.Prowlarr, "ping", false},
+		{"sonarr", modules.Media.Aliases.Sonarr, "ping", false}, {"radarr", modules.Media.Aliases.Radarr, "ping", false},
+		{"bazarr", modules.Media.Aliases.Bazarr, "api/system/ping", false}, {"ai-subtitle-translator", "ai-subtitle-translator", "health", false},
+		{"flaresolverr", "flaresolverr", "health", false}, {"jellyfin", "jellyfin", "health", false},
+		{"jellyseerr", "jellyseerr", "api/v1/status", false}, {"trailarr", modules.Media.Aliases.Trailarr, "status", false},
 	}
 	result := make([]map[string]interface{}, 0, len(services))
 	for _, service := range services {
+		if service.tcp {
+			result = append(result, map[string]interface{}{
+				"name": "boetticher-media-" + service.name, "group": "boetticher-media",
+				"url": "tcp://10.10.20.230:9110", "interval": "30s", "conditions": []string{"[CONNECTED] == true"},
+			})
+			continue
+		}
 		if service.alias == "" {
 			return nil, fmt.Errorf("media monitoring alias for %s is empty", service.name)
 		}
-		path := "/" + strings.TrimPrefix(service.path, "/")
+		// The internal listener dispatches by service id and rewrites to the
+		// catalog health path inside the media stack.
+		path := "/" + service.name
 		result = append(result, map[string]interface{}{
 			"name": "boetticher-media-" + service.name, "group": "boetticher-media",
 			"url": "http://10.10.20.230:9110" + path, "method": "GET",

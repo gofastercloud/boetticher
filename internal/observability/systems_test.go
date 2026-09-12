@@ -41,10 +41,16 @@ func TestMediaGatusEndpointsUsePinnedHealthPathsAndInternalListener(t *testing.T
 	enabled := true
 	m := clientservices.Modules{Media: &clientservices.MediaConfig{Enabled: true, ApplicationDomain: "media.example.test", Aliases: clientservices.MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"}}, VPN: &clientservices.VPNConfig{Enabled: &enabled}}
 	endpoints, err := MediaGatusEndpoints(m)
-	if err != nil || len(endpoints) != 12 {
+	if err != nil || len(endpoints) != 11 {
 		t.Fatalf("media endpoints = %d, err=%v", len(endpoints), err)
 	}
 	for _, endpoint := range endpoints {
+		if endpoint["url"] == "tcp://10.10.20.230:9110" {
+			if endpoint["conditions"].([]string)[0] != "[CONNECTED] == true" {
+				t.Fatalf("unsafe TCP media endpoint: %#v", endpoint)
+			}
+			continue
+		}
 		if endpoint["method"] != "GET" || endpoint["url"].(string)[:len("http://10.10.20.230:9110")] != "http://10.10.20.230:9110" {
 			t.Fatalf("unsafe media endpoint: %#v", endpoint)
 		}
