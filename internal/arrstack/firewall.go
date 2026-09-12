@@ -104,12 +104,12 @@ iptables -w -A DOCKER-USER -i "$bridge" -o "$bridge" -j ACCEPT
 iptables -w -A DOCKER-USER -i "$bridge" -o "$uplink" -j ACCEPT
 iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -s 10.10.30.0/24 -p tcp --dport 443 -j ACCEPT
 iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -s 10.10.5.10 -p tcp --dport 443 -j ACCEPT
+%s
 for net in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4; do
   iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -s "$net" -j DROP
 done
 iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -p tcp --dport %s -j ACCEPT
 iptables -w -A DOCKER-USER -i "$uplink" -o "$bridge" -m mac --mac-source "$gateway_mac" -p udp --dport %s -j ACCEPT
-%s
 iptables -w -A DOCKER-USER -j DROP
-`, DockerBridge, DockerBridgeSubnet, GuestGateway, GuestAddress, GuestMAC, monitorInput, monitorRules, port, port, DockerBridgeSubnet, GuestAddress, GuestAddress, port, port, monitorIPTables), nil
+`, DockerBridge, DockerBridgeSubnet, GuestGateway, GuestAddress, GuestMAC, monitorInput, monitorRules, monitorIPTables, port, port, DockerBridgeSubnet, GuestAddress, GuestAddress, port, port), nil
 }
