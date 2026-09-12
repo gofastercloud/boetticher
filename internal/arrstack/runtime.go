@@ -44,6 +44,7 @@ const (
 	GuestMediaDisk            = "scsi1"
 	GuestCPU                  = "x86-64-v3"
 	GuestAgentTimeout         = 90 * time.Second
+	GuestAgentStableChecks    = 3
 	GuestExecTimeout          = 30
 	GuestPolicyInstallTimeout = 120
 	GuestInstallTimeout       = 20 * 60
@@ -761,9 +762,21 @@ func Start(ctx context.Context, host firewallmodule.HostClient, mediaSizes ...in
 
 func waitGuestAgent(ctx context.Context, host firewallmodule.HostClient) error {
 	deadline := time.Now().Add(GuestAgentTimeout)
+	stable := 0
 	for time.Now().Before(deadline) {
-		if _, err := host.Run(ctx, "qm guest cmd "+strconv.Itoa(GuestVMID)+" ping"); err == nil {
-			return nil
+		pingErr := error(nil)
+		if _, err := host.Run(ctx, "qm guest cmd "+strconv.Itoa(GuestVMID)+" ping"); err != nil {
+			pingErr = err
+		} else if _, err := host.Run(ctx, "qm guest exec "+strconv.Itoa(GuestVMID)+" --synchronous 1 -- /bin/true"); err != nil {
+			pingErr = err
+		}
+		if pingErr == nil {
+			stable++
+			if stable >= GuestAgentStableChecks {
+				return nil
+			}
+		} else {
+			stable = 0
 		}
 		select {
 		case <-ctx.Done():
