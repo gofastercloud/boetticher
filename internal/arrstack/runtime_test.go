@@ -93,6 +93,19 @@ func TestMediaRuntimeRequiresDockerComposeBeforeAdapterTransfer(t *testing.T) {
 	}
 }
 
+func TestMediaStartWaitsForStableGuestAgentCommandPath(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{"GuestAgentStableChecks", "stable >= GuestAgentStableChecks", "qm guest cmd \"+strconv.Itoa(GuestVMID)+\" ping", "qm guest exec \"+strconv.Itoa(GuestVMID)+\" --synchronous 1 -- /bin/true"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("guest-agent stabilization missing %q", required)
+		}
+	}
+}
+
 func TestMediaRuntimeRequiresGuestRenderNodeAndPropagatesVAAPIIdentity(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {
