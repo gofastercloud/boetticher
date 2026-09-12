@@ -21,6 +21,7 @@ const (
 	serviceNTPSection                   = "ntp"
 	observabilityControllerExporterRule = "boetticher_observability_controller_exporter"
 	observabilityControllerPortalRule   = "boetticher_observability_controller_portal"
+	mediaMonitoringRule                 = "boetticher_media_monitoring"
 	observabilityHostExporterRule       = "boetticher_observability_host_exporter"
 	observabilityControllerIngressRule  = "boetticher_observability_controller_ingress"
 	observabilityHostIngressRule        = "boetticher_observability_host_ingress"
@@ -133,6 +134,7 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
 	state.Firewall = append(state.Firewall, systemFirewallSections(normalized.Systems)...)
+	state.Firewall = append(state.Firewall, mediaMonitoringFirewallSections(normalized)...)
 	observabilityFirewall, err := observabilityFirewallSections(site, normalized)
 	if err != nil {
 		return ServiceState{}, err
@@ -626,6 +628,17 @@ func systemFirewallSections(systems []clientservices.System) []Section {
 		}
 	}
 	return sections
+}
+
+func mediaMonitoringFirewallSections(modules clientservices.Modules) []Section {
+	if modules.Media == nil || !modules.Media.Enabled || modules.Observability == nil || !clientservices.Enabled(modules.Observability.Enabled) {
+		return nil
+	}
+	return []Section{{Name: mediaMonitoringRule, Type: "rule", Options: map[string]string{
+		"name": "Boetticher media monitoring", "src": "infra", "src_ip": "10.10.10.20/32",
+		"dest": "servers", "dest_ip": "10.10.20.230/32", "proto": "tcp", "dest_port": "9110",
+		"family": "ipv4", "target": "ACCEPT",
+	}, Lists: map[string][]string{}}}
 }
 
 func zoneByName(site model.Site, name string) (model.Zone, bool) {
