@@ -87,6 +87,30 @@ func TestSystemFirewallProjectionRegistersAndUpdatesMonitoringRule(t *testing.T)
 	}
 }
 
+func TestMediaMonitoringFirewallProjectionAllowsGatusToMediaCaddy(t *testing.T) {
+	enabled := true
+	state, err := ServiceStateFromModules(model.NewSite("lab", "controller-local", model.GatewayModeManaged), clientservices.Modules{
+		Media:         &clientservices.MediaConfig{Enabled: true, ApplicationDomain: "example.com", Aliases: clientservices.MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"}},
+		Observability: &clientservices.ObservabilityConfig{Enabled: &enabled, Collection: clientservices.ObservabilityCollectionBindings{Controller: "10.10.20.10", ProxmoxHost: "10.10.99.5", Runtime: "10.10.10.20"}},
+		DNS:           &clientservices.DNSConfig{Enabled: &enabled},
+		DHCP:          &clientservices.DHCPConfig{Enabled: &enabled, Reservations: []clientservices.Reservation{{Name: "lab-media-01", Zone: "SERVERS", MAC: "02:00:00:00:20:e6", Address: "10.10.20.230"}}},
+		VPN:           &clientservices.VPNConfig{Enabled: &enabled, Location: "europe", Clients: []string{"lab-media-01"}, Forwards: []clientservices.VPNForward{{Name: "media-qbittorrent", Reservation: "lab-media-01", Protocols: []string{"tcp", "udp"}, Port: 35796}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *Section
+	for i := range state.Firewall {
+		if state.Firewall[i].Name == mediaMonitoringRule {
+			found = &state.Firewall[i]
+			break
+		}
+	}
+	if found == nil || found.Options["src"] != "infra" || found.Options["src_ip"] != "10.10.10.20/32" || found.Options["dest"] != "servers" || found.Options["dest_ip"] != "10.10.20.230/32" || found.Options["dest_port"] != "9110" {
+		t.Fatalf("media monitoring rule is not exact: %#v", found)
+	}
+}
+
 func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	enabled := true
