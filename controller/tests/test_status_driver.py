@@ -69,6 +69,8 @@ class BlinktDriverTests(unittest.TestCase):
 
     def test_controller_status_unit_is_enabled_with_streamdeck_device_access(self):
         service = STATUS_UNIT.read_text(encoding="utf-8")
+        self.assertIn("CapabilityBoundingSet=\n", service)
+        self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK", service)
         self.assertIn("DeviceAllow=char-usb_device rw", service)
         self.assertIn("DeviceAllow=char-hidraw rw", service)
         self.assertIn("WantedBy=multi-user.target", service)

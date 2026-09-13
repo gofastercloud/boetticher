@@ -24,7 +24,8 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Local Controller lab binding discovers interfaces through Linux netlink.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 DevicePolicy=closed
 DeviceAllow=/dev/gpiochip{{ controller_blinkt_gpiochip }} rw
 DeviceAllow=char-usb_device rw
