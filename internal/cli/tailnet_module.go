@@ -279,6 +279,7 @@ func runTailnetApply(a []string, in io.Reader, out, errOut io.Writer) error {
 	if e != nil {
 		return e
 	}
+	defer provider.Close()
 	state, e := firewallmodule.ServiceStateFromModules(sc.Site, n.Modules)
 	if e != nil {
 		return e

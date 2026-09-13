@@ -73,9 +73,10 @@ func runClientServiceCapability(capability, action string, args []string, input 
 }
 
 type clientServiceOptions struct {
-	yes         bool
-	plan        bool
-	cleanupOnly bool
+	yes          bool
+	plan         bool
+	cleanupOnly  bool
+	homeRecovery bool
 }
 
 func parseClientServiceOptions(command string, args []string, allowYes, allowPlan, allowCleanup bool) (clientServiceOptions, error) {
@@ -91,6 +92,7 @@ func parseClientServiceOptions(command string, args []string, allowYes, allowPla
 	if allowCleanup {
 		fs.BoolVar(&options.cleanupOnly, "cleanup-only", false, "remove only recognised client-service test leftovers")
 	}
+	fs.BoolVar(&options.homeRecovery, "home-recovery", false, "explicitly use the HOME bootstrap/recovery path")
 	if err := fs.Parse(args); err != nil {
 		return clientServiceOptions{}, err
 	}
@@ -135,11 +137,15 @@ type clientServiceContext struct {
 }
 
 func loadClientServiceContext() (clientServiceContext, error) {
+	return loadClientServiceContextWithOptions(false)
+}
+
+func loadClientServiceContextWithOptions(homeRecovery bool) (clientServiceContext, error) {
 	config, err := controllerhost.LoadConfig()
 	if err != nil {
 		return clientServiceContext{}, err
 	}
-	current, desired, host, err := loadFirewallContext()
+	current, desired, host, err := loadFirewallContextWithOptions("", homeRecovery)
 	if err != nil {
 		return clientServiceContext{}, err
 	}
@@ -162,12 +168,23 @@ func acquireClientServicesLock() (*site.OperationLock, error) {
 }
 
 func composeClientAppliance(serviceContext clientServiceContext, modules clientservices.Modules) (firewallmodule.ApplianceComposition, error) {
+	return composeClientApplianceWithLookup(serviceContext, modules, controllerhost.LocalControllerLABBinding)
+}
+
+func composeClientApplianceWithLookup(serviceContext clientServiceContext, modules clientservices.Modules, lookup func(controllerhost.LabConfig) (controllerhost.ControllerLABBinding, error)) (firewallmodule.ApplianceComposition, error) {
 	if serviceContext.Config.Network == nil || serviceContext.Config.Network.ProtectedRanges == nil {
 		return firewallmodule.ApplianceComposition{}, errors.New("protected ranges require explicit Host adoption before client-service mutation")
 	}
-	ranges := serviceContext.Config.Network.ProtectedRanges
-	policy := &firewallmodule.CompositionPolicy{ProtectedIPv4: []string{ranges.Infra, ranges.Servers, ranges.Trusted, ranges.Sandbox}}
+	policyConfig := serviceContext.Config
+	policyConfig.Modules = modules
+	policy, err := managementCompositionPolicyWithLookup(policyConfig, serviceContext.Host.HomeRecovery, lookup)
+	if err != nil {
+		return firewallmodule.ApplianceComposition{}, err
+	}
 	if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
+		if serviceContext.VPNProfile != nil {
+			return firewallmodule.ComposeApplianceWithVPN(serviceContext.Site, modules, policy, *serviceContext.VPNProfile)
+		}
 		if serviceContext.VPNProfile == nil {
 			return firewallmodule.ApplianceComposition{}, errors.New("VPN connection material is unavailable; provision or retain the configured profile before applying")
 		}
@@ -184,18 +201,25 @@ func requireClientProvider(ctx context.Context, current model.Site, desired fire
 	if !status.Exists {
 		return nil, errors.New("firewall provider is absent; run boetticher module firewall apply --yes first")
 	}
-	provider, err := firewallProviderClient(current, desired)
+	mode := providerAccessLAB
+	if host.HomeRecovery {
+		mode = providerAccessHomeRecovery
+	}
+	provider, err := providerClientForAccess(current, desired, host.Transport, mode)
 	if err != nil {
 		return nil, err
 	}
 	if err := waitProviderAPI(ctx, provider); err != nil {
+		_ = provider.Close()
 		return nil, fmt.Errorf("firewall management is unavailable: %w", err)
 	}
 	ready, err := firewallmodule.ClientServicesImageReady(ctx, host)
 	if err != nil {
+		_ = provider.Close()
 		return nil, err
 	}
 	if !ready {
+		_ = provider.Close()
 		return nil, errors.New("provider image does not contain the current client-services bootstrap contract; replace it through the supported firewall lifecycle before applying DNS or DHCP")
 	}
 	return provider, nil
@@ -478,7 +502,7 @@ func runClientServiceLifecycle(capability, action string, args []string, input i
 		}
 		defer lock.Release()
 	}
-	serviceContext, err := loadClientServiceContext()
+	serviceContext, err := loadClientServiceContextWithOptions(options.homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -495,6 +519,7 @@ func runClientServiceLifecycle(capability, action string, args []string, input i
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	if action == "teardown" {
 		return runClientServiceTeardown(ctx, capability, serviceContext, provider, options, input, out)
 	}
@@ -506,6 +531,7 @@ func runClientServicePlan(ctx context.Context, capability string, serviceContext
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	modules, configChanged, err := prepareClientModules(serviceContext.Config.Modules, capability, true, serviceContext.Site)
 	if err != nil {
 		return err
@@ -582,6 +608,7 @@ func runClientServiceStatus(ctx context.Context, capability string, serviceConte
 		fmt.Fprintf(out, "%s: unavailable\nReason: %s\n", strings.ToUpper(capability), err)
 		return err
 	}
+	defer provider.Close()
 	state, err := firewallmodule.ServiceStateFromModules(serviceContext.Site, serviceContext.Config.Modules)
 	if err != nil {
 		return err
@@ -1394,6 +1421,7 @@ func runDHCPAddReservation(args []string, input io.Reader, out io.Writer) error 
 	mac := fs.String("mac", "", "stable Ethernet MAC")
 	address := fs.String("address", "", "reserved IPv4 address")
 	yes := fs.Bool("yes", false, "approve the desired and provider change")
+	homeRecovery := fs.Bool("home-recovery", false, "explicitly use the HOME bootstrap/recovery path")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return errors.New("usage: boetticher module dhcp add-reservation NAME --zone ZONE --mac MAC --address IPv4 [--yes]")
 	}
@@ -1402,7 +1430,7 @@ func runDHCPAddReservation(args []string, input io.Reader, out io.Writer) error 
 		return err
 	}
 	defer lock.Release()
-	serviceContext, err := loadClientServiceContext()
+	serviceContext, err := loadClientServiceContextWithOptions(*homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -1450,6 +1478,7 @@ func runDHCPRemoveReservation(args []string, input io.Reader, out io.Writer) err
 	fs := flag.NewFlagSet("module dhcp remove-reservation", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	yes := fs.Bool("yes", false, "approve the desired and provider change")
+	homeRecovery := fs.Bool("home-recovery", false, "explicitly use the HOME bootstrap/recovery path")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return errors.New("usage: boetticher module dhcp remove-reservation NAME [--yes]")
 	}
@@ -1458,7 +1487,7 @@ func runDHCPRemoveReservation(args []string, input io.Reader, out io.Writer) err
 		return err
 	}
 	defer lock.Release()
-	serviceContext, err := loadClientServiceContext()
+	serviceContext, err := loadClientServiceContextWithOptions(*homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -1522,6 +1551,7 @@ func runDNSAddRecord(args []string, input io.Reader, out io.Writer) error {
 	recordType := fs.String("type", "", "A or CNAME")
 	value := fs.String("value", "", "record value")
 	yes := fs.Bool("yes", false, "approve the desired and provider change")
+	homeRecovery := fs.Bool("home-recovery", false, "explicitly use the HOME bootstrap/recovery path")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return errors.New("usage: boetticher module dns add-record NAME --type A|CNAME --value VALUE [--yes]")
 	}
@@ -1530,7 +1560,7 @@ func runDNSAddRecord(args []string, input io.Reader, out io.Writer) error {
 		return err
 	}
 	defer lock.Release()
-	serviceContext, err := loadClientServiceContext()
+	serviceContext, err := loadClientServiceContextWithOptions(*homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -1583,6 +1613,7 @@ func runDNSRemoveRecord(args []string, input io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("module dns remove-record", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	yes := fs.Bool("yes", false, "approve the desired and provider change")
+	homeRecovery := fs.Bool("home-recovery", false, "explicitly use the HOME bootstrap/recovery path")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return errors.New("usage: boetticher module dns remove-record NAME [--yes]")
 	}
@@ -1591,7 +1622,7 @@ func runDNSRemoveRecord(args []string, input io.Reader, out io.Writer) error {
 		return err
 	}
 	defer lock.Release()
-	serviceContext, err := loadClientServiceContext()
+	serviceContext, err := loadClientServiceContextWithOptions(*homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -1624,6 +1655,7 @@ func applyClientResourceMutation(serviceContext clientServiceContext, descriptio
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	changes, err := clientServiceChangeCount(ctx, provider, serviceContext, serviceContext.Config.Modules)
 	if err != nil {
 		return err

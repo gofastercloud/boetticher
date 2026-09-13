@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -15,11 +16,73 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 const hostImagePath = "/var/tmp/boetticher-firewall-280.img"
 
 const firewallSafetyStatusMarker = "BOETTICHER_SAFETY_OK"
+
+// ProviderManagementAddressViaHost reads the exact provider NIC and HOME
+// address through the enrolled Host guest agent. The command is fixed to the
+// owned VM and never changes guest state.
+func ProviderManagementAddressViaHost(ctx context.Context, host HostClient) (string, error) {
+	probe := "printf 'LINK\\n'; ip -json link show dev eth0; printf 'ADDR\\n'; ip -json -4 addr show dev eth0"
+	result, err := host.Run(ctx, "set -eu; qm guest exec "+itoa(ProviderVMID)+" --synchronous 1 -- /bin/sh -c "+shellQuote(probe))
+	if err != nil {
+		return "", fmt.Errorf("read provider management address through Host guest agent: %w", err)
+	}
+	var output struct {
+		ExitCode int    `json:"exitcode"`
+		Data     string `json:"out-data"`
+		Error    string `json:"err-data"`
+	}
+	if err := json.Unmarshal(result.Stdout, &output); err != nil {
+		return "", errors.New("provider guest agent returned malformed management address state")
+	}
+	if output.ExitCode != 0 {
+		return "", fmt.Errorf("provider guest agent management address command failed (%d): %s", output.ExitCode, strings.TrimSpace(output.Error))
+	}
+	return parseProviderManagementAddress(output.Data)
+}
+
+func parseProviderManagementAddress(data string) (string, error) {
+	parts := strings.SplitN(data, "ADDR\n", 2)
+	if len(parts) != 2 || !strings.HasPrefix(parts[0], "LINK\n") {
+		return "", errors.New("provider management address output is malformed")
+	}
+	var links []struct {
+		IfName  string `json:"ifname"`
+		Address string `json:"address"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(parts[0], "LINK\n")), &links); err != nil || len(links) != 1 || links[0].IfName != "eth0" || !strings.EqualFold(links[0].Address, "02:00:00:04:00:01") {
+		return "", errors.New("provider management address refused: eth0 MAC does not match owned provider NIC")
+	}
+	var addrs []struct {
+		AddrInfo []struct {
+			Local     string `json:"local"`
+			PrefixLen int    `json:"prefixlen"`
+		} `json:"addr_info"`
+	}
+	if err := json.Unmarshal([]byte(parts[1]), &addrs); err != nil || len(addrs) != 1 {
+		return "", errors.New("provider management address output is malformed")
+	}
+	var found string
+	for _, item := range addrs[0].AddrInfo {
+		parsed, err := netip.ParseAddr(item.Local)
+		if err != nil || !parsed.Is4() {
+			continue
+		}
+		if item.PrefixLen != 22 || !netip.MustParsePrefix(model.GatewayManagementNetwork).Contains(parsed) || parsed == netip.MustParseAddr(model.GatewayManagementGateway) || parsed == netip.MustParseAddr(model.GatewayControllerAddress) || parsed == netip.MustParseAddr("192.168.4.5") || parsed == netip.MustParseAddr("192.168.4.0") || parsed == netip.MustParseAddr("192.168.7.255") || found != "" {
+			return "", errors.New("provider management address refused: address is outside usable HOME bindings")
+		}
+		found = parsed.String()
+	}
+	if found == "" {
+		return "", errors.New("provider management address refused: exactly one canonical HOME IPv4 address is required")
+	}
+	return found, nil
+}
 
 // FirewallSafetyStatusViaHost executes the appliance's read-only safety gate
 // through the Host guest agent. The command is fixed to the owned provider VM
@@ -235,9 +298,10 @@ func ClientServicesImageReady(ctx context.Context, host HostClient) (bool, error
 // operator command remains boetticher; these remote commands are its internal
 // implementation path and are never exposed as operator workflow.
 type HostClient struct {
-	Transport controllerhost.Transport
-	CopyTo    func(context.Context, string, string) error
-	CopyFrom  func(context.Context, string, string) error
+	Transport    controllerhost.Transport
+	CopyTo       func(context.Context, string, string) error
+	CopyFrom     func(context.Context, string, string) error
+	HomeRecovery bool
 }
 
 type HostProviderStatus struct {

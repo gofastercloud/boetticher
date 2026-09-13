@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Bounded Host-side controller LAB SSH authorization helper."""
+import json, os, re, subprocess, sys, tempfile, ipaddress, shutil, glob, base64, struct, stat, fcntl, time
+from contextlib import contextmanager
+
+HOMEAK='/root/.ssh/authorized_keys'; AK='/etc/ssh/boetticher-controller-lab.authorized_keys'; MAIN='/etc/ssh/sshd_config'; DROP='/etc/ssh/boetticher-controller-lab.conf'; INC='Include /etc/ssh/boetticher-controller-lab.conf\n'
+PATHS={'authorized_keys':AK,'home_authorized_keys':HOMEAK,'main':MAIN,'drop':DROP}
+HOME_TARGET='/etc/pve/priv/authorized_keys'; HOME_TARGET_GID=33
+OWNER_UID=0
+OWNER_GID=0
+TMPROOT='/etc/ssh'
+LOCKPATH='/run/lock/boetticher-authorize-controller-lab.lock'
+_last_post={}
+def die(s): raise RuntimeError(s)
+@contextmanager
+def mutation_lock():
+    created=False
+    try:
+        fd=os.open(LOCKPATH,os.O_CREAT|os.O_EXCL|os.O_RDWR|os.O_NOFOLLOW,0o600); created=True
+        os.fchmod(fd,0o600); os.fchown(fd,OWNER_UID,OWNER_GID)
+    except FileExistsError:
+        try: fd=os.open(LOCKPATH,os.O_RDWR|os.O_NOFOLLOW)
+        except OSError as e: die('unsafe controller authorization lock: '+str(e))
+    except OSError as e: die('unsafe controller authorization lock: '+str(e))
+    try:
+      st=os.fstat(fd)
+      if not stat.S_ISREG(st.st_mode) or st.st_uid!=OWNER_UID or st.st_gid!=OWNER_GID or st.st_mode&0o777!=0o600: die('unsafe controller authorization lock')
+      end=time.monotonic()+5
+      while True:
+       try: fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB); break
+       except BlockingIOError:
+        if time.monotonic()>=end: die('controller authorization lock timed out')
+        time.sleep(.05)
+      yield
+    finally:
+      try: fcntl.flock(fd,fcntl.LOCK_UN)
+      finally: os.close(fd)
+def active_directives(text):
+    result=[]
+    for raw in text.splitlines():
+        line=raw.strip()
+        if not line or line.startswith('#'): continue
+        result.append(line)
+    return result
+def valid_ed25519(blob):
+    try: raw=base64.b64decode(blob,validate=True)
+    except Exception: return False
+    if len(raw)<4: return False
+    n=struct.unpack('>I',raw[:4])[0]
+    if n!=11 or raw[4:4+n]!=b'ssh-ed25519' or len(raw)!=4+n+4+32: return False
+    return struct.unpack('>I',raw[4+n:8+n])[0]==32
+def exact_policy(text,lab):
+    vals={}
+    for line in text.splitlines():
+      p=line.split(None,1)
+      if len(p)==2: vals.setdefault(p[0],[]).append(p[1])
+    want={'allowtcpforwarding':'local','permitopen':'10.10.99.1:443','permitlisten':'none','allowstreamlocalforwarding':'no','x11forwarding':'no','allowagentforwarding':'no'}
+    return all(vals.get(k)==[v] for k,v in want.items())
+def exact_authorized_keys(text, expected):
+    rows=[x.split(None,1)[1].split() for x in text.splitlines() if x.lower().startswith('authorizedkeysfile ')]
+    return len(rows)==1 and rows[0]==expected
+def _guard_parent(path, uid=None):
+    if uid is None: uid=OWNER_UID
+    parent=os.path.dirname(path) or '/'
+    while parent and parent != '/':
+        if parent == '/private/tmp': break
+        st=os.lstat(parent)
+        if not os.path.isdir(parent) or os.path.islink(parent) or st.st_uid != uid or st.st_mode & 0o022: die('unsafe parent '+parent)
+        parent=os.path.dirname(parent)
+def expected_mode(path): return 0o600 if path in (AK,DROP) else 0o644
+def snapshot(path, uid=None):
+    if uid is None: uid=OWNER_UID
+    _guard_parent(path,uid)
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW); st=os.fstat(fd)
+    try:
+        if not stat.S_ISREG(st.st_mode) or st.st_uid!=uid or st.st_gid!=OWNER_GID or st.st_mode&0o777 != expected_mode(path): die('unsafe owned path '+path)
+        data=b''
+        while True:
+            part=os.read(fd,65536)
+            if not part: break
+            data+=part
+        return (st.st_dev,st.st_ino,st.st_mode,st.st_uid,st.st_gid,data)
+    finally: os.close(fd)
+def optional_snapshot(path, uid=None):
+    try: return snapshot(path,uid)
+    except FileNotFoundError: return None
+def read(p): return snapshot(p)[5].decode()
+def read_home(path):
+    st=os.lstat(path)
+    if stat.S_ISLNK(st.st_mode):
+        if os.path.realpath(path)!=HOME_TARGET: die('unsafe HOME authorized_keys link')
+        fd=os.open(HOME_TARGET,os.O_RDONLY|os.O_NOFOLLOW); st=os.fstat(fd)
+        try:
+            if not stat.S_ISREG(st.st_mode) or st.st_uid!=OWNER_UID or st.st_gid!=HOME_TARGET_GID or st.st_mode&0o777!=0o600: die('unsafe HOME authorized_keys target')
+            data=b''
+            while True:
+                part=os.read(fd,65536)
+                if not part: break
+                data+=part
+            return (st.st_dev,st.st_ino,st.st_mode,st.st_uid,st.st_gid,data)
+        finally: os.close(fd)
+    return snapshot(path)
+def restore_if_unchanged(path, old, post, mode):
+    if post is None: return False
+    cur=optional_snapshot(path)
+    if cur != post: return False
+    if old is None: os.unlink(path)
+    else: atomic(path,old[5],mode,post)
+    return True
+class AtomicWriteError(RuntimeError):
+    def __init__(self,message,post=None): super().__init__(message); self.post=post
+def atomic(p,data,mode,prior=None,uid=None):
+    if uid is None: uid=OWNER_UID
+    _guard_parent(p,uid)
+    current=optional_snapshot(p,uid)
+    if prior is not None and current != prior: die('concurrent change '+p)
+    if prior is None and current is not None: die('concurrent change '+p)
+    d=os.path.dirname(p); dfd=os.open(d,os.O_RDONLY|os.O_DIRECTORY); tmp=None; fd=None
+    try:
+        fd,tmp=tempfile.mkstemp(prefix='.boetticher-',dir=d); os.fchmod(fd,mode); os.fchown(fd,uid,OWNER_GID)
+        raw=data.encode() if isinstance(data,str) else data; off=0
+        while off<len(raw): off+=os.write(fd,raw[off:])
+        os.fsync(fd); ts=os.fstat(fd); post=(ts.st_dev,ts.st_ino,ts.st_mode,ts.st_uid,ts.st_gid,raw); _last_post[p]=post
+        os.close(fd); fd=None; os.replace(tmp,p); tmp=None
+        try:
+            os.fsync(dfd); got=snapshot(p,uid)
+            if got != post or got[5] != raw or got[3] != uid or got[4] != OWNER_GID or got[2]&0o777 != mode: die('atomic verification failed '+p)
+        except Exception as e: raise AtomicWriteError(str(e),post) from e
+        return post
+    finally:
+        if fd is not None: os.close(fd)
+        if tmp:
+            try: os.unlink(tmp)
+            except FileNotFoundError: pass
+        os.close(dfd)
+def _main(req):
+    global AK, MAIN, DROP, INC
+    AK=PATHS['authorized_keys']; MAIN=PATHS['main']; DROP=PATHS['drop']; INC='Include '+DROP+'\n'; home_path=PATHS.get('home_authorized_keys',AK)
+    action=req.get('action'); lab=req.get('lab_address'); key=req.get('public_key'); mac=req.get('lab_mac')
+    try: ip=ipaddress.ip_address(lab)
+    except ValueError: die('invalid request')
+    if action not in ('plan','apply') or ip.version!=4 or ip not in ipaddress.ip_network('10.10.20.0/24') or ip in (ipaddress.ip_address('10.10.20.0'),ipaddress.ip_address('10.10.20.1'),ipaddress.ip_address('10.10.20.255')): die('invalid request')
+    if not re.fullmatch(r'[0-9a-f]{2}(?::[0-9a-f]{2}){5}',str(mac).lower()): die('invalid Controller LAB MAC')
+    parts=str(key).split()
+    if len(parts)<2 or parts[0]!='ssh-ed25519' or not valid_ed25519(parts[1]): die('invalid public key')
+    keyblob=base64.b64decode(parts[1],validate=True)
+    canonical='ssh-ed25519 '+parts[1]
+    homesnap=read_home(home_path); snaps={'ak':optional_snapshot(AK),'main':snapshot(MAIN),'drop':optional_snapshot(DROP)}
+    homeak=homesnap[5].decode(); ak=snaps['ak'][5].decode() if snaps['ak'] else ''; maincfg=snaps['main'][5].decode()
+    homeopts='from="192.168.4.6",restrict'; labopts=f'from="{lab}",restrict,port-forwarding,permitopen="10.10.99.1:443"'; homecount=labcount=0
+    keytext=homeak if home_path==AK else homeak+'\n'+ak
+    for line in keytext.splitlines():
+        fields=line.split();
+        if 'ssh-ed25519' not in fields: continue
+        i=fields.index('ssh-ed25519')
+        if i+1>=len(fields) or not valid_ed25519(fields[i+1]): continue
+        if base64.b64decode(fields[i+1],validate=True) != keyblob: continue
+        opts=' '.join(fields[:i])
+        if opts==homeopts: homecount+=1
+        elif opts==labopts: labcount+=1
+        else: die('ambiguous controller key ownership')
+    if home_path != AK:
+        for line in ak.splitlines():
+            if not line.strip(): continue
+            fields=line.split(); i=fields.index('ssh-ed25519') if 'ssh-ed25519' in fields else -1
+            if i < 0 or i+1 >= len(fields) or not valid_ed25519(fields[i+1]) or base64.b64decode(fields[i+1],validate=True)!=keyblob or ' '.join(fields[:i]) != labopts:
+                die('conflicting supplemental authorized_keys content')
+    if homecount!=1 or labcount>1: die('ambiguous controller key ownership')
+    labline=labopts+' '+canonical
+    directives=active_directives(maincfg); early='Include /etc/ssh/sshd_config.d/*.conf'
+    includes=[x for x in directives if x.lower().startswith('include ')]
+    if includes.count(early)!=1 or any(x not in (early,INC.strip()) for x in includes) or any(x.lower().startswith('match ') for x in directives): die('unsafe sshd configuration topology')
+    for earlyfile in glob.glob('/etc/ssh/sshd_config.d/*.conf'):
+      for item in active_directives(read(earlyfile)):
+        if item.lower().startswith('match ') or item.lower().startswith('include '): die('unsafe early sshd drop-in topology')
+    if INC.strip() in directives and directives[-1] != INC.strip(): die('owned trailing include is not final')
+    newmain=maincfg if INC.strip() in directives else maincfg+('' if maincfg.endswith('\n') else '\n')+INC
+    effective=subprocess.check_output(['sshd','-T','-f',MAIN,'-C','user=root,addr=192.168.4.6,laddr=192.168.4.5'],text=True)
+    authrows=[x.split(None,1)[1].split() for x in effective.splitlines() if x.lower().startswith('authorizedkeysfile ')]
+    if len(authrows)!=1 or not authrows[0] or len(set(authrows[0]))!=len(authrows[0]): die('missing or ambiguous effective AuthorizedKeysFile')
+    if 'none' in authrows[0] or AK in authrows[0]: die('invalid effective AuthorizedKeysFile baseline')
+    expected_auth=authrows[0]+[AK]
+    authkeys=' '.join(expected_auth)
+    drop=f'Match User root Address {lab} LocalAddress 10.10.99.5\n    AuthorizedKeysFile {authkeys}\n    AllowTcpForwarding local\n    PermitOpen 10.10.99.1:443\n    PermitListen none\n    AllowStreamLocalForwarding no\n    X11Forwarding no\n    AllowAgentForwarding no\n'
+    dropprior=snaps['drop']
+    dropok=False
+    if dropprior is not None:
+      if os.path.islink(DROP): die('unsafe owned sshd policy')
+      dropok=(dropprior[5].decode()==drop and dropprior[2]&0o777==0o600)
+    if os.path.exists(DROP) and not dropok: die('conflicting owned sshd policy')
+    changed=(labcount==0 or newmain!=maincfg or not dropok)
+    if action=='plan': print(json.dumps({'changed':changed,'paths':[AK,MAIN,DROP]})); return
+    # Validate a wholly temporary main/include pair before canonical mutation.
+    td=tempfile.mkdtemp(prefix='.boetticher-authorize-',dir=TMPROOT)
+    try:
+      tmp=os.path.join(td,'sshd_config'); tmppolicy=os.path.join(td,'policy.conf')
+      with open(tmppolicy,'w') as f: f.write(drop)
+      with open(tmp,'w') as f: f.write(newmain.replace(INC,'Include '+tmppolicy+'\n'))
+      subprocess.run(['sshd','-t','-f',tmp],check=True)
+      labout=subprocess.check_output(['sshd','-T','-f',tmp,'-C',f'user=root,addr={lab},laddr=10.10.99.5'],text=True)
+      originalhome=subprocess.check_output(['sshd','-T','-f',MAIN,'-C','user=root,addr=192.168.4.6,laddr=192.168.4.5'],text=True)
+      homeout=subprocess.check_output(['sshd','-T','-f',tmp,'-C','user=root,addr=192.168.4.6,laddr=192.168.4.5'],text=True)
+      if not exact_policy(labout,lab) or not exact_authorized_keys(labout,expected_auth): die('LAB sshd policy did not validate')
+      if homeout != originalhome: die('HOME sshd policy changed')
+    finally: shutil.rmtree(td,ignore_errors=True)
+    if not changed:
+      print(json.dumps({'changed':False})); return
+    olddrop=dropprior
+    oldmain=snaps['main']
+    written={}
+    try:
+        try: postdrop=atomic(DROP,drop,0o600,dropprior) or _last_post.get(DROP); written['drop']=postdrop
+        except AtomicWriteError as e: postdrop=e.post; written['drop']=postdrop; raise
+        try: postmain=atomic(MAIN,newmain,0o644,snaps['main']) or _last_post.get(MAIN); written['main']=postmain
+        except AtomicWriteError as e: postmain=e.post; written['main']=postmain; raise
+        subprocess.run(['sshd','-t','-f',MAIN],check=True); subprocess.run(['systemctl','reload','ssh'],check=True)
+        canonlab=subprocess.check_output(['sshd','-T','-f',MAIN,'-C',f'user=root,addr={lab},laddr=10.10.99.5'],text=True)
+        canonhome=subprocess.check_output(['sshd','-T','-f',MAIN,'-C','user=root,addr=192.168.4.6,laddr=192.168.4.5'],text=True)
+        if canonlab != labout or canonhome != homeout or not exact_authorized_keys(canonlab,expected_auth): die('canonical sshd policy differs from validated candidate')
+        if labcount==0:
+            try: postak=atomic(AK,ak+( '' if ak.endswith('\n') else '\n')+labline+'\n',0o600,snaps['ak']); written['ak']=postak
+            except AtomicWriteError as e: postak=e.post; written['ak']=postak; raise
+            except Exception:
+                postak=_last_post.get(AK); written['ak']=postak; raise
+        else: postak=None
+    except Exception:
+        # Remove our newly-added key first, then restore policy files only if untouched.
+        if labcount==0:
+            if written.get('ak') is not None: restore_if_unchanged(AK,snaps['ak'],written['ak'],0o600)
+        for path,old,post,mode in ((MAIN,oldmain,written.get('main'),0o644),(DROP,olddrop,written.get('drop'),0o600)):
+            restore_if_unchanged(path,old,post,mode)
+        try:
+            subprocess.run(['sshd','-t'],check=True); subprocess.run(['systemctl','reload','ssh'],check=True)
+        except Exception as rollback: raise RuntimeError('activation failed and rollback reload failed: '+str(rollback))
+        raise
+    print(json.dumps({'changed':changed}))
+    return
+def main():
+    req=json.load(sys.stdin)
+    if req.get('action')=='apply':
+        with mutation_lock(): return _main(req)
+    return _main(req)
+if __name__ == '__main__':
+    try: main()
+    except Exception as e: print(json.dumps({'error':str(e)})); sys.exit(1)

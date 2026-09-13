@@ -80,6 +80,7 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		if err != nil {
 			return err
 		}
+		defer provider.Close()
 		state, err := firewallmodule.ServiceStateFromModules(sc.Site, c.Modules)
 		if err != nil {
 			return err
@@ -157,6 +158,7 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	state, err := firewallmodule.ServiceStateFromModules(sc.Site, proposed)
 	if err != nil {
 		return err
@@ -372,6 +374,7 @@ func runArrstackTeardown(current controllerhost.LabConfig, yes bool, input io.Re
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	if err := controllerhost.SaveConfig(func() controllerhost.LabConfig { current.Modules = proposed; return current }()); err != nil {
 		return err
 	}

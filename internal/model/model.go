@@ -1272,6 +1272,11 @@ func validateGatewayConfiguration(s Site) error {
 	if parsedManagementAddress == nil || parsedManagementAddress.To4() == nil || parsedManagementAddress.To4().String() != managementAddress || !network.Contains(parsedManagementAddress) {
 		return fmt.Errorf("gateway.management_address must be a canonical IPv4 address")
 	}
+	// HOME management addresses must be usable and must not collide with the
+	// upstream gateway, Controller, or enrolled Proxmox host bindings.
+	if parsedManagementAddress.Equal(network.IP) || parsedManagementAddress.Equal(net.IPv4(192, 168, 7, 255)) || parsedManagementAddress.Equal(parsedManagementGateway) || parsedManagementAddress.Equal(parsedControllerAddress) || parsedManagementAddress.Equal(net.ParseIP("192.168.4.5")) {
+		return fmt.Errorf("gateway.management_address must be a usable HOME address without reserved bindings")
+	}
 	if parsedManagementGateway == nil || parsedManagementGateway.To4() == nil || parsedManagementGateway.To4().String() != managementGateway || !network.Contains(parsedManagementGateway) || parsedManagementGateway.Equal(parsedManagementAddress) {
 		return fmt.Errorf("gateway.management_gateway must be a distinct canonical IPv4 address in management_network")
 	}

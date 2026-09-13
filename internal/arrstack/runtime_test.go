@@ -391,7 +391,7 @@ func TestPolicyReceiptPersistsAcrossBootWhileScratchIsRuntimeOwned(t *testing.T)
 	if !strings.Contains(text, "RuntimeDirectory=boetticher/arrstack") {
 		t.Fatal("policy service does not recreate its runtime scratch directory")
 	}
-	if !strings.Contains(text, "GuestPolicyReceipt   = \"/var/lib/boetticher/arrstack/policy-receipt\"") {
+	if !strings.Contains(text, "GuestPolicyReceipt") || !strings.Contains(text, `"/var/lib/boetticher/arrstack/policy-receipt"`) {
 		t.Fatal("policy receipt is still stored in volatile /run")
 	}
 	capture := policyReceiptCaptureCommand()

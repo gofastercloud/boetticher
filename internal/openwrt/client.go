@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,16 +37,23 @@ type Config struct {
 	ServerName string
 	HTTP       *http.Client
 	Timeout    time.Duration
+	// DialContext optionally supplies a caller-owned, already-authorized route
+	// (for example SSH direct-tcpip). TLS is still constructed and verified by
+	// this client; callers retain ownership of returned connections.
+	DialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 // Client is a session-bound, HTTPS-only ubus client.
 type Client struct {
-	baseURL string
-	user    string
-	pass    string
-	http    *http.Client
-	session atomic.Value // string
-	request uint64
+	baseURL  string
+	user     string
+	pass     string
+	http     *http.Client
+	session  atomic.Value // string
+	request  uint64
+	lifetime context.Context
+	cancel   context.CancelFunc
+	closed   atomic.Bool
 }
 
 func NewClient(config Config) (*Client, error) {
@@ -66,6 +74,10 @@ func NewClient(config Config) (*Client, error) {
 		return nil, errors.New("pinned provider TLS trust contains no certificates")
 	}
 	transport.TLSClientConfig.RootCAs = roots
+	if config.DialContext != nil {
+		transport.Proxy = nil
+		transport.DialContext = config.DialContext
+	}
 	client := config.HTTP
 	if client == nil {
 		timeout := config.Timeout
@@ -74,7 +86,25 @@ func NewClient(config Config) (*Client, error) {
 		}
 		client = &http.Client{Transport: transport, Timeout: timeout}
 	}
-	return &Client{baseURL: parsed.String() + "/ubus", user: config.Username, pass: config.Password, http: client}, nil
+	lifetime, cancel := context.WithCancel(context.Background())
+	return &Client{baseURL: parsed.String() + "/ubus", user: config.Username, pass: config.Password, http: client, lifetime: lifetime, cancel: cancel}, nil
+}
+
+// Close cancels active requests and releases idle transport connections. It
+// is safe to call repeatedly and prevents new provider RPCs.
+func (c *Client) Close() error {
+	if c == nil {
+		return nil
+	}
+	if c.closed.CompareAndSwap(false, true) {
+		c.cancel()
+		if transport, ok := c.http.Transport.(interface{ CloseIdleConnections() }); ok {
+			transport.CloseIdleConnections()
+		} else {
+			c.http.CloseIdleConnections()
+		}
+	}
+	return nil
 }
 
 // Authenticate establishes a fresh ubus session. The password is never
@@ -401,6 +431,17 @@ func (c *Client) callWithSession(ctx context.Context, object, method string, par
 }
 
 func (c *Client) call(ctx context.Context, session, object, method string, params map[string]any) (json.RawMessage, error) {
+	if c == nil || c.closed.Load() {
+		return nil, errors.New("provider client is closed")
+	}
+	callCtx, cancel := context.WithCancel(ctx)
+	stop := func() {}
+	if c.lifetime != nil {
+		after := context.AfterFunc(c.lifetime, cancel)
+		stop = func() { after() }
+	}
+	defer stop()
+	defer cancel()
 	id := atomic.AddUint64(&c.request, 1)
 	body, err := json.Marshal(struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -411,7 +452,7 @@ func (c *Client) call(ctx context.Context, session, object, method string, param
 	if err != nil {
 		return nil, errors.New("encode provider request")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(callCtx, http.MethodPost, c.baseURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, errors.New("create provider request")
 	}

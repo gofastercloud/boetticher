@@ -39,7 +39,11 @@ func runFirewallCapability(action string, args []string, input io.Reader, out, e
 	}
 }
 
-type firewallCommandOptions struct{ yes bool }
+type firewallCommandOptions struct {
+	yes               bool
+	managementAddress string
+	homeRecovery      bool
+}
 
 func parseFirewallOptions(command string, args []string, allowYes bool) (firewallCommandOptions, error) {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -48,13 +52,21 @@ func parseFirewallOptions(command string, args []string, allowYes bool) (firewal
 	if allowYes {
 		fs.BoolVar(&options.yes, "yes", false, "approve the firewall capability change")
 	}
+	if command == "module firewall plan" || command == "module firewall apply" {
+		fs.StringVar(&options.managementAddress, "management-address", "", "set the HOME firewall management IPv4 address")
+	}
+	if command == "module firewall plan" || command == "module firewall apply" || command == "module firewall status" || command == "module firewall reboot" {
+		fs.BoolVar(&options.homeRecovery, "home-recovery", false, "explicitly use the HOME bootstrap/recovery path")
+	}
 	if err := fs.Parse(args); err != nil {
 		return firewallCommandOptions{}, err
 	}
 	if fs.NArg() != 0 {
 		suffix := ""
 		if allowYes {
-			suffix = " [--yes]"
+			suffix = " [--yes] [--management-address IPv4] [--home-recovery]"
+		} else if command == "module firewall plan" || command == "module firewall status" || command == "module firewall reboot" {
+			suffix = " [--management-address IPv4] [--home-recovery]"
 		}
 		return firewallCommandOptions{}, fmt.Errorf("usage: boetticher module firewall %s %s", command, suffix)
 	}
@@ -62,6 +74,14 @@ func parseFirewallOptions(command string, args []string, allowYes bool) (firewal
 }
 
 func loadFirewallContext() (model.Site, firewallmodule.DesiredState, firewallmodule.HostClient, error) {
+	return loadFirewallContextWithOptions("", false)
+}
+
+func loadFirewallContextWithAddress(address string) (model.Site, firewallmodule.DesiredState, firewallmodule.HostClient, error) {
+	return loadFirewallContextWithOptions(address, false)
+}
+
+func loadFirewallContextWithOptions(address string, homeRecovery bool) (model.Site, firewallmodule.DesiredState, firewallmodule.HostClient, error) {
 	hostConfig, err := controllerhost.LoadConfig()
 	if err != nil {
 		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, err
@@ -82,25 +102,63 @@ func loadFirewallContext() (model.Site, firewallmodule.DesiredState, firewallmod
 	}
 	current := model.NewSite(hostConfig.Name, "controller-local", model.GatewayModeManaged)
 	current.Network.Domain = configuredNetwork.Domain
-	desired, err := firewallmodule.DesiredFromSiteWithServices(current, hostConfig.Modules)
+	if hostConfig.Gateway != nil {
+		if hostConfig.Gateway.ManagementAddress != "" {
+			current.Gateway.ManagementAddress = hostConfig.Gateway.ManagementAddress
+		}
+	}
+	if address != "" {
+		current.Gateway.ManagementAddress = address
+	}
+	policy, policyErr := managementCompositionPolicy(hostConfig, homeRecovery)
+	if policyErr != nil {
+		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, policyErr
+	}
+	desired, err := firewallmodule.DesiredFromSiteWithServices(current, hostConfig.Modules, policy)
 	if err != nil {
 		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, fmt.Errorf("validate firewall network intent: %w", err)
 	}
-	transport, err := controllerhost.TransportFor(hostConfig)
+	if hostConfig.Modules.VPN != nil && clientservices.Enabled(hostConfig.Modules.VPN.Enabled) {
+		profile, _, present, profileErr := loadVPNMaterial(current)
+		if profileErr != nil {
+			return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, profileErr
+		}
+		if !present {
+			return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, errors.New("VPN connection material is unavailable; retain the configured profile before firewall planning or applying")
+		}
+		projection, projectionErr := vpnProfileProjection(profile)
+		if projectionErr != nil {
+			return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, projectionErr
+		}
+		desired, err = firewallmodule.DesiredFromSiteWithServicesAndVPN(current, hostConfig.Modules, projection, policy)
+		if err != nil {
+			return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, err
+		}
+	}
+	var transport controllerhost.Transport
+	if homeRecovery {
+		transport, err = controllerhost.HomeTransportFor(hostConfig)
+	} else {
+		if hostConfig.Proxmox.ConnectionAddress != controllerhost.LabHostAddress {
+			return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, errors.New("normal firewall operations require enrolled LAB Host 10.10.99.5; use --home-recovery for bootstrap")
+		}
+		transport, err = controllerhost.TransportFor(hostConfig)
+	}
 	if err != nil {
 		return model.Site{}, firewallmodule.DesiredState{}, firewallmodule.HostClient{}, err
 	}
 	// ImageBuilder and first boot are deliberately bounded but can exceed the
 	// short default used by ordinary Host status commands.
 	transport.Timeout = 10 * time.Minute
-	return current, desired, firewallmodule.HostClient{Transport: transport}, nil
+	return current, desired, firewallmodule.HostClient{Transport: transport, HomeRecovery: homeRecovery}, nil
 }
 
 func runFirewallPlan(args []string, out io.Writer) error {
-	if _, err := parseFirewallOptions("module firewall plan", args, false); err != nil {
+	options, err := parseFirewallOptions("module firewall plan", args, false)
+	if err != nil {
 		return err
 	}
-	current, desired, host, err := loadFirewallContext()
+	current, desired, host, err := loadFirewallContextWithOptions(options.managementAddress, options.homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -127,7 +185,17 @@ func runFirewallPlan(args []string, out io.Writer) error {
 	} else {
 		fmt.Fprintf(out, "\nPreserve:\n  provider %s\n", firewallmodule.ProviderName)
 		fmt.Fprintln(out, "  existing provider-native state outside Boetticher-owned sections")
-		changes, err := firewallPlanChanges(ctx, current, desired)
+		if provider.Running {
+			observed, observeErr := firewallmodule.ProviderManagementAddressViaHost(ctx, host)
+			if observeErr != nil {
+				return observeErr
+			}
+			current.Gateway.ManagementAddress = observed
+			if observed != desired.ManagementAddress {
+				fmt.Fprintf(out, "  migrate HOME management endpoint %s -> %s\n", observed, desired.ManagementAddress)
+			}
+		}
+		changes, err := firewallPlanChanges(ctx, current, desired, host)
 		if err != nil {
 			return err
 		}
@@ -151,11 +219,20 @@ func runFirewallPlan(args []string, out io.Writer) error {
 	return nil
 }
 
-func firewallPlanChanges(ctx context.Context, current model.Site, desired firewallmodule.DesiredState) ([]firewallmodule.Mutation, error) {
-	client, err := firewallProviderClient(current, desired)
+func firewallPlanChanges(ctx context.Context, current model.Site, desired firewallmodule.DesiredState, host firewallmodule.HostClient) ([]firewallmodule.Mutation, error) {
+	mode := providerAccessLAB
+	if host.HomeRecovery {
+		mode = providerAccessHomeRecovery
+	}
+	connectionDesired := desired
+	if host.HomeRecovery && current.Gateway.ManagementAddress != "" {
+		connectionDesired.ManagementAddress = current.Gateway.ManagementAddress
+	}
+	client, err := providerClientForAccess(current, connectionDesired, host.Transport, mode)
 	if err != nil {
 		return nil, err
 	}
+	defer client.Close()
 	networkCurrent, err := client.UCIGet(ctx, "network")
 	if err != nil {
 		return nil, err
@@ -186,7 +263,7 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 		return err
 	}
 	defer lock.Release()
-	current, desired, host, err := loadFirewallContext()
+	current, desired, host, err := loadFirewallContextWithOptions(options.managementAddress, options.homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -208,6 +285,13 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if err != nil {
 		return err
 	}
+	var observedManagementAddress string
+	if providerStatus.Exists && providerStatus.Running && strings.Contains(providerStatus.Config, "scsi0:") {
+		observedManagementAddress, err = firewallmodule.ProviderManagementAddressViaHost(ctx, host)
+		if err != nil {
+			return err
+		}
+	}
 	bootstrapNeeded := !providerStatus.Exists || !strings.Contains(providerStatus.Config, "scsi0:")
 	replaceProvider := false
 	if providerStatus.Exists && strings.Contains(providerStatus.Config, "scsi0:") {
@@ -216,6 +300,9 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 			return readyErr
 		}
 		if !ready {
+			if observedManagementAddress != "" && observedManagementAddress != desired.ManagementAddress {
+				return errors.New("refuse firewall management migration while the existing provider image contract is unavailable")
+			}
 			replaceProvider = true
 			bootstrapNeeded = true
 			fmt.Fprintln(out, "Provider image: replacing the owned VM 280 image to establish the current client-services contract")
@@ -303,10 +390,54 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 		return fmt.Errorf("load firewall provider TLS trust: %w", trustErr)
 	}
 	display.Progress(4, "Provider trust established")
-	provider, err := openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, ServerName: firewallmodule.ProviderTLSName, Username: "boetticher", Password: credential, TrustPEM: trust})
+	// Persist an explicit address only after ownership, credentials, and trust
+	// are established, but before any provider network migration. This leaves
+	// desired intent available for normal apply recovery if reload fails.
+	if options.managementAddress != "" {
+		if hostConfig.Gateway == nil {
+			hostConfig.Gateway = &controllerhost.GatewayConfig{}
+		}
+		if hostConfig.Gateway.ManagementAddress != desired.ManagementAddress {
+			hostConfig.Gateway.ManagementAddress = desired.ManagementAddress
+			if err := controllerhost.SaveConfig(hostConfig); err != nil {
+				return fmt.Errorf("save firewall management address intent: %w", err)
+			}
+		}
+	}
+	observedAddress := observedManagementAddress
+	if observedAddress == "" {
+		observedAddress, err = firewallmodule.ProviderManagementAddressViaHost(ctx, host)
+		if err != nil {
+			return err
+		}
+	}
+	if observedAddress != desired.ManagementAddress {
+		migrationMode := providerAccessLAB
+		if host.HomeRecovery {
+			migrationMode = providerAccessHomeRecovery
+		}
+		migrationDesired := desired
+		if host.HomeRecovery {
+			migrationDesired.ManagementAddress = observedAddress
+		}
+		migrationProvider, oldErr := providerClientForAccess(current, migrationDesired, host.Transport, migrationMode)
+		if oldErr != nil {
+			return oldErr
+		}
+		defer migrationProvider.Close()
+		if err := migrateProviderManagementAddress(ctx, host, migrationProvider, observedAddress, desired.ManagementAddress); err != nil {
+			return err
+		}
+	}
+	mode := providerAccessLAB
+	if host.HomeRecovery {
+		mode = providerAccessHomeRecovery
+	}
+	provider, err := providerClientForAccess(current, desired, host.Transport, mode)
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	if err := waitProviderAPI(ctx, provider); err != nil {
 		return fmt.Errorf("wait for firewall provider management API: %w", err)
 	}
@@ -318,8 +449,11 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	if config.Network == nil || config.Network.ProtectedRanges == nil {
 		return errors.New("protected ranges require explicit Host adoption before firewall mutation")
 	}
-	ranges := config.Network.ProtectedRanges
-	composed, err := firewallmodule.ComposeAppliance(current, config.Modules, &firewallmodule.CompositionPolicy{ProtectedIPv4: []string{ranges.Infra, ranges.Servers, ranges.Trusted, ranges.Sandbox}})
+	policy, err := managementCompositionPolicy(config, host.HomeRecovery)
+	if err != nil {
+		return err
+	}
+	composed, err := composeFirewallAppliance(current, config.Modules, policy)
 	if err != nil {
 		return err
 	}
@@ -378,6 +512,62 @@ func runFirewallApply(args []string, input io.Reader, out, errOut io.Writer) (er
 	return nil
 }
 
+func composeFirewallAppliance(site model.Site, modules clientservices.Modules, policy *firewallmodule.CompositionPolicy) (firewallmodule.ApplianceComposition, error) {
+	if modules.VPN != nil && clientservices.Enabled(modules.VPN.Enabled) {
+		profile, _, present, err := firewallLoadVPNMaterial(site)
+		if err != nil {
+			return firewallmodule.ApplianceComposition{}, err
+		}
+		if !present {
+			return firewallmodule.ApplianceComposition{}, errors.New("VPN connection material is unavailable; retain the configured profile before firewall apply")
+		}
+		projection, err := firewallVPNProfileProjection(profile)
+		if err != nil {
+			return firewallmodule.ApplianceComposition{}, err
+		}
+		return firewallmodule.ComposeApplianceWithVPN(site, modules, policy, projection)
+	}
+	return firewallmodule.ComposeAppliance(site, modules, policy)
+}
+
+var firewallLoadVPNMaterial = loadVPNMaterial
+var firewallVPNProfileProjection = vpnProfileProjection
+
+func migrateProviderManagementAddress(ctx context.Context, host firewallmodule.HostClient, provider *openwrt.Client, observed, desired string) error {
+	if err := provider.Authenticate(ctx); err != nil {
+		return fmt.Errorf("authenticate at observed firewall address: %w", err)
+	}
+	sections, err := provider.UCIGet(ctx, "network")
+	if err != nil {
+		return err
+	}
+	section, ok := sections["boetticher_home"]
+	if !ok || section.Type != "interface" || section.Options["device"] != "eth0" || section.Options["proto"] != "static" || section.Options["ipaddr"] != observed || section.Options["netmask"] != "255.255.252.0" || section.Options["gateway"] != "192.168.4.1" {
+		return errors.New("refuse firewall management migration: owned HOME UCI section is not the pinned contract")
+	}
+	if err := provider.UCISet(ctx, "network", "boetticher_home", "ipaddr", desired); err != nil {
+		return err
+	}
+	if err := provider.UCICommit(ctx, "network"); err != nil {
+		return migrationRecoveryError(ctx, host, desired, fmt.Errorf("commit firewall management address: %w", err))
+	}
+	if err := provider.ServiceConfigChange(ctx, "network"); err != nil {
+		return migrationRecoveryError(ctx, host, desired, fmt.Errorf("reload firewall management network: %w", err))
+	}
+	return nil
+}
+
+func migrationRecoveryError(ctx context.Context, host firewallmodule.HostClient, desired string, cause error) error {
+	actual, err := firewallmodule.ProviderManagementAddressViaHost(ctx, host)
+	if err == nil && actual == desired {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%w; unable to verify post-migration address: %v", cause, err)
+	}
+	return fmt.Errorf("%w; provider remains at %s", cause, actual)
+}
+
 func waitProviderAPI(ctx context.Context, provider *openwrt.Client) error {
 	readinessCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -397,10 +587,11 @@ func waitProviderAPI(ctx context.Context, provider *openwrt.Client) error {
 }
 
 func runFirewallStatus(args []string, out io.Writer) error {
-	if _, err := parseFirewallOptions("module firewall status", args, false); err != nil {
+	options, err := parseFirewallOptions("module firewall status", args, false)
+	if err != nil {
 		return err
 	}
-	current, desired, host, err := loadFirewallContext()
+	current, desired, host, err := loadFirewallContextWithOptions("", options.homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -414,15 +605,11 @@ func runFirewallStatus(args []string, out io.Writer) error {
 		fmt.Fprintln(out, "Firewall: absent\nProvider: absent")
 		return errors.New("firewall provider is absent")
 	}
-	credential, err := firewallmodule.LoadCredential(firewallmodule.StateDir(current))
-	if err != nil {
-		return err
+	mode := providerAccessLAB
+	if host.HomeRecovery {
+		mode = providerAccessHomeRecovery
 	}
-	trust, err := firewallmodule.LoadTrust(firewallmodule.StateDir(current))
-	if err != nil {
-		return err
-	}
-	provider, err := openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, ServerName: firewallmodule.ProviderTLSName, Username: "boetticher", Password: credential, TrustPEM: trust})
+	provider, err := providerClientForAccess(current, desired, host.Transport, mode)
 	if err != nil {
 		return err
 	}
@@ -448,7 +635,7 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 		return err
 	}
 	defer lock.Release()
-	current, _, host, err := loadFirewallContext()
+	current, _, host, err := loadFirewallContextWithOptions("", options.homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -510,8 +697,9 @@ func runFirewallTeardown(args []string, input io.Reader, out, errOut io.Writer) 
 }
 
 type firewallTeardownOptions struct {
-	yes  bool
-	plan bool
+	yes          bool
+	plan         bool
+	homeRecovery bool
 }
 
 func parseFirewallTeardownOptions(args []string) (firewallTeardownOptions, error) {
@@ -520,6 +708,7 @@ func parseFirewallTeardownOptions(args []string) (firewallTeardownOptions, error
 	options := firewallTeardownOptions{}
 	fs.BoolVar(&options.yes, "yes", false, "approve firewall provider removal")
 	fs.BoolVar(&options.plan, "plan", false, "preview exact owned provider removal")
+	fs.BoolVar(&options.homeRecovery, "home-recovery", false, "explicitly use the HOME bootstrap/recovery path")
 	if err := fs.Parse(args); err != nil {
 		return firewallTeardownOptions{}, err
 	}
@@ -558,7 +747,7 @@ func runFirewallReboot(args []string, input io.Reader, out io.Writer) error {
 		return err
 	}
 	defer lock.Release()
-	_, _, host, err := loadFirewallContext()
+	_, _, host, err := loadFirewallContextWithOptions("", options.homeRecovery)
 	if err != nil {
 		return err
 	}

@@ -49,12 +49,14 @@ main() {
   cp scripts/build-openwrt-firewall.sh "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
   cp scripts/build-tailnet.sh "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
   cp scripts/build-arrstack-vm.sh "$stage/controller/proxmox/libexec/boetticher-build-arrstack-vm"
+	  cp controller/proxmox/libexec/boetticher-authorize-controller-lab "$stage/controller/proxmox/libexec/boetticher-authorize-controller-lab"
   cp scripts/build-temp.py "$stage/controller/proxmox/libexec/build-temp.py"
   cp scripts/cleanup-controller-storage.sh "$stage/controller/proxmox/libexec/cleanup-controller-storage.sh"
   chmod 0755 "$stage/controller/proxmox/libexec/build-temp.py" "$stage/controller/proxmox/libexec/cleanup-controller-storage.sh"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-tailnet"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-arrstack-vm"
   chmod 0755 "$stage/controller/proxmox/libexec/boetticher-build-openwrt-firewall"
+	  chmod 0755 "$stage/controller/proxmox/libexec/boetticher-authorize-controller-lab"
 
   mkdir -p "$stage/controller/observability/bin"
   catalog_value() {

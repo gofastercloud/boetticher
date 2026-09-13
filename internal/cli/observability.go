@@ -308,6 +308,7 @@ func reconcileObservabilityDependencies(ctx context.Context, config controllerho
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	serviceContext, err := loadClientServiceContext()
 	if err != nil {
 		return err

@@ -140,6 +140,23 @@ Next:
 After reconnecting with a fresh key-authenticated SSH session, rerun bootstrap
 and status. A successful final state reports `Controller readiness: PASS`.
 
+For a fresh or HOME recovery path, use `--home-recovery` on firewall, DNS, and
+DHCP operations until the Host LAB key is imported and the enrolled LAB SSH
+route is verified. Normal operation then uses the Controller-to-Host LAB SSH
+path (`10.10.99.5`) and the firewall MGMT gateway; HOME remains a recovery
+binding. Import the existing verified Host public key before enrollment and
+confirm the key-authenticated LAB alias before switching away from recovery.
+
+The supported Host cutover command is
+`boetticher host authorize-controller --home-recovery --plan`, followed by
+`boetticher host authorize-controller --home-recovery --yes`. It uses the
+existing verified Controller key, preserves HOME access, and grants only the
+restricted LAB source and firewall HTTPS tunnel. Import the verified Host key
+and then run `boetticher host enroll root@10.10.99.5` before normal LAB SSH use.
+The LAB authorization is stored in the separate Host-owned supplemental file
+`/etc/ssh/boetticher-controller-lab.authorized_keys`; the Proxmox-managed
+`/root/.ssh/authorized_keys` link and its cluster target remain untouched.
+
 ## Controller status LEDs
 
 The Controller runs one local `boetticher-status.service` daemon. It is the

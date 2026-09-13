@@ -487,6 +487,7 @@ func runVPNApply(ctx context.Context, serviceContext clientServiceContext, opts 
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	profile, _, err := ensureVPNProfile(ctx, serviceContext, modules, opts, input)
 	if err != nil {
 		return err
@@ -646,6 +647,7 @@ func runVPNStatus(ctx context.Context, serviceContext clientServiceContext, opts
 		fmt.Fprintf(out, "VPN: UNAVAILABLE\nConnection: unavailable\nEnforcement: unknown\nReason: %s\n", err)
 		return err
 	}
+	defer provider.Close()
 	profile, _, present, materialErr := loadVPNMaterial(serviceContext.Site)
 	if materialErr != nil || !present {
 		reason := "retained VPN profile is absent"
@@ -693,6 +695,7 @@ func runVPNPlan(ctx context.Context, serviceContext clientServiceContext, out io
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	modules := serviceContext.Config.Modules
 	profile, _, present, _ := loadVPNMaterial(serviceContext.Site)
 	if present {
@@ -741,6 +744,7 @@ func runVPNTeardown(ctx context.Context, serviceContext clientServiceContext, op
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	changes, err := clientServiceChangeCount(ctx, provider, serviceContext, proposed)
 	if err != nil {
 		return err

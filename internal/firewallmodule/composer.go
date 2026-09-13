@@ -13,7 +13,9 @@ import (
 // used only when it is explicitly supplied; an absent policy retains the
 // packaged permanent baseline from DefaultSafetyConfig.
 type CompositionPolicy struct {
-	ProtectedIPv4 []string
+	ProtectedIPv4        []string
+	ControllerLABAddress string
+	ControllerLABMAC     string
 }
 
 // Ownership names the exact native sections produced for each package. A
@@ -46,7 +48,7 @@ type VPNDeclaration struct {
 // ComposeAppliance builds all native packages and safety state in one pure
 // operation. WireGuard/profile material is deliberately not composed here.
 func ComposeAppliance(site model.Site, modules clientservices.Modules, policy *CompositionPolicy) (ApplianceComposition, error) {
-	desired, err := DesiredFromSiteWithServices(site, modules)
+	desired, err := DesiredFromSiteWithServices(site, modules, policy)
 	if err != nil {
 		return ApplianceComposition{}, err
 	}

@@ -32,11 +32,16 @@ type StorageConfig struct {
 	GuestStorage string `yaml:"guest_storage"`
 }
 
+type GatewayConfig struct {
+	ManagementAddress string `yaml:"management_address,omitempty"`
+}
+
 type LabConfig struct {
 	Name    string                 `yaml:"name"`
 	Proxmox ProxmoxConfig          `yaml:"proxmox"`
 	Storage *StorageConfig         `yaml:"storage,omitempty"`
 	Network *NetworkConfig         `yaml:"network,omitempty"`
+	Gateway *GatewayConfig         `yaml:"gateway,omitempty"`
 	Modules clientservices.Modules `yaml:"modules,omitempty"`
 }
 
@@ -93,6 +98,11 @@ func ValidateConfig(config LabConfig) error {
 		}
 	}
 	intentSite := model.NewSite(config.Name, "controller-local", model.GatewayModeManaged)
+	if config.Gateway != nil {
+		if config.Gateway.ManagementAddress != "" {
+			intentSite.Gateway.ManagementAddress = config.Gateway.ManagementAddress
+		}
+	}
 	if config.Network != nil && config.Network.Domain != "" {
 		intentSite.Network.Domain = config.Network.Domain
 	}

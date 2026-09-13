@@ -165,6 +165,43 @@ func TestServiceStateComposesSharedDHCPDNSAndTimeOwnership(t *testing.T) {
 	}
 }
 
+func TestServiceStateRebindsConfiguredHomeGatewayAlongsideExistingDNSRecords(t *testing.T) {
+	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
+	site.Gateway.ManagementAddress = "192.168.4.8"
+	enabled := true
+	state, err := ServiceStateFromModules(site, clientservices.Modules{DNS: &clientservices.DNSConfig{
+		Enabled: &enabled,
+		Records: []clientservices.DNSRecord{{Name: "legacy", Type: "A", Value: "10.10.30.61"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var home, legacy *Section
+	for i := range state.DHCP {
+		section := &state.DHCP[i]
+		if section.Type != "hostrecord" && section.Type != "cname" {
+			continue
+		}
+		if section.Options["name"] == "home-gateway.lab.home.arpa" {
+			home = section
+		}
+		if section.Options["name"] == "legacy.lab.home.arpa" {
+			legacy = section
+		}
+	}
+	if home == nil || home.Options["ip"] != "192.168.4.8" {
+		t.Fatalf("configured HOME gateway binding was not projected: %#v", home)
+	}
+	if legacy == nil || legacy.Options["ip"] != "10.10.30.61" {
+		t.Fatalf("unrelated DNS record was not preserved: %#v", legacy)
+	}
+	for _, section := range state.DHCP {
+		if section.Options["ip"] == "192.168.4.28" {
+			t.Fatalf("stale default HOME gateway remained in DNS projection: %#v", section)
+		}
+	}
+}
+
 func TestServiceStateProjectsOperatorSystemIntoDHCPReservation(t *testing.T) {
 	site := model.NewSite("lab", "controller-local", model.GatewayModeManaged)
 	enabled := true

@@ -3,6 +3,7 @@
 package firewallmodule
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -66,7 +67,7 @@ func DesiredFromSite(site model.Site) (DesiredState, error) {
 	return DesiredFromSiteWithServices(site, clientservices.Modules{})
 }
 
-func DesiredFromSiteWithServices(site model.Site, services clientservices.Modules) (DesiredState, error) {
+func DesiredFromSiteWithServices(site model.Site, services clientservices.Modules, policies ...*CompositionPolicy) (DesiredState, error) {
 	management := site.Gateway.ManagementAddress
 	if management == "" {
 		management = model.GatewayManagementAddress
@@ -99,6 +100,20 @@ func DesiredFromSiteWithServices(site model.Site, services clientservices.Module
 	controllerIP, controllerErr := netip.ParseAddr(controllerAddress)
 	if !managementIP.IsPrivate() || !managementPrefix.Contains(managementIP) {
 		return DesiredState{}, errors.New("gateway.management_address must be a HOME private IPv4 address")
+	}
+	first := managementPrefix.Masked().Addr()
+	last := first.As4()
+	hostBits := 32 - managementPrefix.Bits()
+	lastInt := binary.BigEndian.Uint32(last[:])
+	if hostBits > 0 {
+		lastInt |= uint32(1<<hostBits) - 1
+	}
+	binary.BigEndian.PutUint32(last[:], lastInt)
+	// The supported /22 HOME binding has fixed reserved endpoints. Keep the
+	// generic network/broadcast checks here so alternate valid prefixes remain
+	// safe as well; callers supply the fixed HOME contract.
+	if managementIP == first || managementIP == netip.AddrFrom4(last) || managementIP == netip.MustParseAddr(model.GatewayManagementGateway) || managementIP == netip.MustParseAddr(model.GatewayControllerAddress) || managementIP == netip.MustParseAddr("192.168.4.5") {
+		return DesiredState{}, errors.New("gateway.management_address must be a usable HOME address without reserved bindings")
 	}
 	if gatewayErr != nil || !managementGatewayIP.Is4() || !managementPrefix.Contains(managementGatewayIP) || managementGatewayIP == managementIP {
 		return DesiredState{}, errors.New("gateway.management_gateway must be a distinct IPv4 address in management_network")
@@ -142,6 +157,37 @@ func DesiredFromSiteWithServices(site model.Site, services clientservices.Module
 	state := DesiredState{ManagementAddress: management, ManagementNetwork: managementNetwork, ManagementNetmask: managementNetmask, ManagementGateway: managementGateway, ControllerAddress: controllerAddress, Zones: zones}
 	state.Network = networkSections(zones, management, managementNetmask, managementGateway)
 	state.Firewall = firewallSections(zones, managementNetwork, controllerAddress)
+	if len(policies) > 0 && policies[0] != nil {
+		p := policies[0]
+		if (p.ControllerLABAddress == "") != (p.ControllerLABMAC == "") {
+			return DesiredState{}, errors.New("controller LAB address and MAC must be supplied together")
+		}
+		mgmt, servers := zones[5], zones[2]
+		state.Firewall = append(state.Firewall, Section{Name: "boetticher_allow_trusted_proxmox_https", Type: "rule", Options: map[string]string{"name": "Boetticher TRUSTED Proxmox HTTPS", "src": "mgmt", "src_ip": model.ProxmoxManagementAddress + "/32", "dest_ip": mgmt.Gateway + "/32", "proto": "tcp", "dest_port": "443", "target": "ACCEPT"}})
+		if p.ControllerLABAddress != "" {
+			ip := net.ParseIP(p.ControllerLABAddress)
+			mac, macErr := net.ParseMAC(p.ControllerLABMAC)
+			if ip == nil || ip.To4() == nil || macErr != nil || len(mac) != 6 {
+				return DesiredState{}, errors.New("controller LAB binding is invalid")
+			}
+			if !netip.MustParsePrefix(servers.Subnet).Contains(netip.MustParseAddr(ip.To4().String())) {
+				return DesiredState{}, errors.New("controller LAB address must be in SERVERS")
+			}
+			ok := false
+			if services.DHCP != nil {
+				for _, reservation := range services.DHCP.Reservations {
+					if reservation.Zone == "SERVERS" && reservation.Address == ip.To4().String() && strings.EqualFold(reservation.MAC, p.ControllerLABMAC) {
+						ok = true
+						break
+					}
+				}
+			}
+			if !ok {
+				return DesiredState{}, errors.New("controller LAB binding does not match a SERVERS reservation")
+			}
+			state.Firewall = append(state.Firewall, Section{Name: "boetticher_allow_controller_lab_ssh", Type: "rule", Options: map[string]string{"name": "Boetticher Controller LAB SSH", "src": "servers", "src_ip": ip.To4().String() + "/32", "src_mac": strings.ToLower(p.ControllerLABMAC), "dest": "mgmt", "dest_ip": model.ProxmoxManagementAddress + "/32", "proto": "tcp", "dest_port": "22", "target": "ACCEPT"}})
+		}
+	}
 	serviceState, err := ServiceStateFromModules(site, services)
 	if err != nil {
 		return DesiredState{}, err
@@ -150,6 +196,22 @@ func DesiredFromSiteWithServices(site model.Site, services clientservices.Module
 	if services.Tailnet != nil && services.Tailnet.Enabled {
 		state.Firewall = append(state.Firewall, tailnetFirewallSections(managementNetwork)...)
 	}
+	return state, nil
+}
+
+// DesiredFromSiteWithServicesAndVPN extends the shared projection with the
+// retained, validated provider profile required to preserve active VPN policy.
+func DesiredFromSiteWithServicesAndVPN(site model.Site, services clientservices.Modules, profile VPNProfile, policies ...*CompositionPolicy) (DesiredState, error) {
+	state, err := DesiredFromSiteWithServices(site, services, policies...)
+	if err != nil {
+		return DesiredState{}, err
+	}
+	if services.VPN == nil || !clientservices.Enabled(services.VPN.Enabled) {
+		return state, nil
+	}
+	network, firewall := vpnSections(site, services, profile)
+	state.Network = append(state.Network, network...)
+	state.Firewall = append(state.Firewall, firewall...)
 	return state, nil
 }
 

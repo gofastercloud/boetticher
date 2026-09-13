@@ -2,6 +2,7 @@ package firewallmodule
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,35 @@ func TestParseFirewallSafetyStatusRequiresFixedMarker(t *testing.T) {
 	}
 	if _, err := parseFirewallSafetyStatus([]byte(`{"exitcode":0,"out-data":"ok"}`)); err == nil || !strings.Contains(err.Error(), "success marker") {
 		t.Fatalf("wrong marker not rejected: %v", err)
+	}
+}
+
+func TestParseProviderManagementAddressPinsNICAndHOMEAddress(t *testing.T) {
+	data := `LINK
+[{"ifname":"eth0","address":"02:00:00:04:00:01"}]
+ADDR
+[{"ifname":"eth0","addr_info":[{"local":"192.168.4.8","prefixlen":22}]}]`
+	got, err := parseProviderManagementAddress(data)
+	if err != nil || got != "192.168.4.8" {
+		t.Fatalf("address=%q err=%v", got, err)
+	}
+	for _, bad := range []string{
+		strings.Replace(data, `"ifname":"eth0"`, `"ifname":"eth1"`, 1),
+		strings.Replace(data, "02:00:00:04:00:01", "dc:f3:1c:2a:c2:e5", 1),
+		strings.Replace(data, "192.168.4.8", "192.168.4.5", 1),
+		strings.Replace(data, `"prefixlen":22`, `"prefixlen":24`, 1),
+	} {
+		if _, err := parseProviderManagementAddress(bad); err == nil {
+			t.Fatalf("unsafe address accepted: %s", bad)
+		}
+	}
+}
+
+func TestManagementAddressProbeDelimitersSurviveShellRendering(t *testing.T) {
+	command := "printf 'LINK\\n'; printf 'ADDR\\n'"
+	out, err := exec.Command("/bin/sh", "-c", command).Output()
+	if err != nil || string(out) != "LINK\nADDR\n" {
+		t.Fatalf("probe delimiters rendered incorrectly: %q err=%v", out, err)
 	}
 }
 

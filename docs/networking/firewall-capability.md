@@ -10,9 +10,9 @@ description: Phase 4A firewall capability contract and boundaries.
 Phase 4A delivers the first production Module capability:
 
 ```text
-boetticher module firewall plan
-boetticher module firewall apply
-boetticher module firewall status
+boetticher module firewall plan [--management-address IPv4] [--home-recovery]
+boetticher module firewall apply [--yes] [--management-address IPv4] [--home-recovery]
+boetticher module firewall status [--home-recovery]
 boetticher module firewall reboot --yes
 boetticher module firewall test --plan
 boetticher module firewall test --yes
@@ -26,6 +26,11 @@ the pinned official ImageBuilder revision `r33051-f5dae5ece4`, is the current
 provider implementation. Provider-specific nouns are intentionally absent
 from the normal command grammar.
 
+Reserve the selected fixed HOME management address for the verified firewall
+NIC in the upstream DHCP system, or exclude it from the pool. A DHCP
+reservation alone does not change an appliance using a static address; verify
+that the address has no conflicting lease before applying the capability.
+
 ## Ownership
 
 The capability owns the exact provider identity `lab-firewall-01` (VMID 280 in
@@ -38,13 +43,19 @@ physical networking. Firewall apply verifies that `vmbr1` is present, VLAN
 aware, virtual-only, and compatible; it fails with an instruction to run or
 fix `host apply` instead of repairing Host state.
 
-The HOME management binding is explicit site intent at
-`gateway.management_address`, `gateway.management_network`, and
-`gateway.management_gateway`; `gateway.controller_address` is the only HOME
-source allowed to reach provider administration. Older site files receive the
+The installed Controller supports the typed `gateway.management_address` field;
+the remaining management network, gateway, and Controller values are fixed
+reference bindings. Older site files receive the
 reference defaults `192.168.4.28/22` via `192.168.4.1`, with Controller
 `192.168.4.6`. The provider uses this HOME interface for its default route and
 NAT; it does not alter HOME routing or DHCP.
+
+`--management-address` is available on firewall `plan` and `apply` only. It
+selects a canonical usable address inside `192.168.4.0/22`; the network,
+broadcast, upstream gateway, Controller, and enrolled Host HOME addresses are
+reserved. Before applying, reserve the selected address in the upstream DHCP
+server. `plan` never saves intent. `apply` saves the desired address before a
+provider migration so a failed reload can be recovered by a later apply.
 
 ## Network and policy
 
@@ -54,19 +65,19 @@ and 99. The capability is IPv4-only. Provider-side DHCP and DNS are disabled
 in Phase 4A.
 
 The Proxmox Host management address is `10.10.99.5/32` on MGMT. The firewall
-allows only TCP/22 to that exact address from TRUSTED `10.10.30.0/24` and the
-Tailnet router `10.10.5.10/32`; all other MGMT access remains denied by default.
+allows Host SSH from TRUSTED `10.10.30.0/24`, the Tailnet router
+`10.10.5.10/32`, and the exact Controller SERVERS reservation (resolved by
+address and MAC); all other MGMT access remains denied by default.
 
 The fixed reference policy is default-deny for provider input and unspecified
 inter-zone forwarding. TRUSTED, SERVERS, INFRA, SANDBOX, and MGMT may use
 ordinary HOME/WAN NAT; TRANSIT may not. TRUSTED may initiate toward SERVERS,
 SERVERS/INFRA cannot initiate toward TRUSTED, SANDBOX cannot initiate toward
 other LAB zones, and MGMT has broad reference-lab access to other LAB zones.
-Provider management is permitted only from the HOME management path; LAB
-clients do not receive access to `/ubus`. Host SSH is a separate explicit
-allowance: TRUSTED and the identity-bound Tailnet router may reach MGMT TCP/22,
-and the resolved Controller SERVERS reservation may reach the Host at
-`10.10.99.5` on TCP/22.
+Provider API management uses the pinned HTTPS path through the Controller's
+enrolled LAB SSH route to the firewall MGMT gateway; no broad LAB `/ubus`
+access is granted. The exact Controller SERVERS reservation may reach the Host
+at `10.10.99.5` on TCP/22.
 
 ## Lifecycle safety
 

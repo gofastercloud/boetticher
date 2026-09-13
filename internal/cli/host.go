@@ -17,7 +17,7 @@ import (
 
 func runHost(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher host <create-identity|show-public-key|import-host-key|enroll|apply|status|plan-storage|teardown|reboot>")
+		return errors.New("usage: boetticher host <create-identity|show-public-key|import-host-key|authorize-controller|enroll|apply|status|plan-storage|teardown|reboot>")
 	}
 	switch args[0] {
 	case "create-identity":
@@ -26,6 +26,8 @@ func runHost(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runHostShowPublicKey(args[1:], out)
 	case "import-host-key":
 		return runHostImportHostKey(args[1:], out)
+	case "authorize-controller":
+		return runHostAuthorizeController(args[1:], input, out)
 	case "enroll":
 		return runHostEnroll(args[1:], out)
 	case "apply":
@@ -100,7 +102,7 @@ func runHostImportHostKey(args []string, out io.Writer) error {
 	fs.SetOutput(io.Discard)
 	address := fs.String("address", "", "verified Proxmox IPv4 address")
 	key := fs.String("key", "", "public host key copied from the trusted Mac")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || *address == "" || *key == "" {

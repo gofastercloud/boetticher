@@ -1,6 +1,6 @@
 module github.com/gofastercloud/boetticher
 
-go 1.26
+go 1.26.0
 
 require (
 	filippo.io/age v1.3.1
@@ -8,7 +8,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0
 	github.com/matthewpi/streamdeck v0.0.0-20240226234722-6586ce762db3
 	github.com/showwin/speedtest-go v1.8.3
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/image v0.39.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sys v0.47.0
@@ -132,7 +132,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/api v0.289.0 // indirect
 	google.golang.org/genproto v0.0.0-20260720171339-e059f2f05d78 // indirect

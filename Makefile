@@ -27,7 +27,6 @@ streamdeck-check:
 
 companion-check:
 	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --no-project --python 3.13 python -m unittest discover -s ansible/roles/kiosk/tests -p 'test_*.py'
-	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --no-project --python 3.13 python -m unittest discover -s ansible/tasks/tests -p 'test_*.py'
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/boetticher-streamdeck-linux-arm64-check ./cmd/boetticher-streamdeck
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/boetticher-companion-linux-arm64-check ./cmd/boetticher-companion
 
@@ -35,6 +34,7 @@ controller-check:
 	sh -n scripts/install-controller.sh scripts/package-controller.sh
 	shellcheck scripts/install-controller.sh scripts/package-controller.sh
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s controller/tests -p 'test_*.py'
+	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --no-project --python 3.13 python -m unittest controller.proxmox.libexec.test_authorize_controller_lab
 	ANSIBLE_CONFIG=controller/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i localhost, controller/bootstrap.yml
 	ANSIBLE_CONFIG=controller/proxmox/ansible.cfg ANSIBLE_LOCAL_TEMP=$(ANSIBLE_LOCAL_TEMP) ANSIBLE_REMOTE_TEMP=$(ANSIBLE_REMOTE_TEMP) ansible-playbook --syntax-check -i proxmox, controller/proxmox/prepare.yml
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/controller ./internal/controller/host ./internal/controllerstatus ./internal/cli

@@ -57,6 +57,23 @@ func TestFirewallPlanAndStatusRejectApprovalFlags(t *testing.T) {
 	}
 }
 
+func TestManagementAddressFlagIsLimitedToPlanAndApply(t *testing.T) {
+	for _, command := range []string{"module firewall status", "module firewall reboot", "module firewall teardown"} {
+		if _, err := parseFirewallOptions(command, []string{"--management-address", "192.168.4.8"}, command == "module firewall reboot"); err == nil {
+			t.Fatalf("%s accepted unsupported management address flag", command)
+		}
+	}
+	if options, err := parseFirewallOptions("module firewall status", []string{"--home-recovery"}, false); err != nil || !options.homeRecovery {
+		t.Fatalf("status recovery flag failed: %#v %v", options, err)
+	}
+	for _, command := range []string{"module firewall plan", "module firewall apply"} {
+		options, err := parseFirewallOptions(command, []string{"--management-address", "192.168.4.8"}, command == "module firewall apply")
+		if err != nil || options.managementAddress != "192.168.4.8" {
+			t.Fatalf("%s did not accept management address: %#v %v", command, options, err)
+		}
+	}
+}
+
 func TestFirewallTeardownPreviewRejectsApproval(t *testing.T) {
 	if _, err := parseFirewallTeardownOptions([]string{"--plan", "--yes"}); err == nil || !strings.Contains(err.Error(), "--plan") {
 		t.Fatalf("teardown preview approval was accepted: %v", err)

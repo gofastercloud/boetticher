@@ -118,6 +118,7 @@ func systemStatus(args []string, out io.Writer) error {
 								observed = "monitoring drift"
 							}
 						}
+						_ = provider.Close()
 					} else {
 						observed = "provider unavailable: " + pe.Error()
 					}
@@ -274,6 +275,7 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 		fmt.Fprintln(out, "Registration: saved; application deferred")
 		return e
 	}
+	defer provider.Close()
 	serviceContext.Config = proposed
 	if _, _, e = reconcileClientServices(ctx2, provider, serviceContext, proposed.Modules); e != nil {
 		fmt.Fprintln(out, "Registration: saved; application failed")
@@ -345,6 +347,7 @@ func unregisterSystem(args []string, input io.Reader, out io.Writer) error {
 		if providerErr != nil {
 			return providerErr
 		}
+		defer provider.Close()
 		if _, _, reconcileErr := reconcileClientServices(ctx, provider, serviceContext, serviceContext.Config.Modules); reconcileErr != nil {
 			return reconcileErr
 		}
@@ -375,6 +378,7 @@ func unregisterSystem(args []string, input io.Reader, out io.Writer) error {
 		fmt.Fprintln(out, "Unregistration: saved; application deferred")
 		return e
 	}
+	defer provider.Close()
 	if _, _, e = reconcileClientServices(ctx, provider, serviceContext, c.Modules); e != nil {
 		fmt.Fprintln(out, "Unregistration: saved; application failed")
 		return e

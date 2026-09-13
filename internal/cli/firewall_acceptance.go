@@ -29,9 +29,10 @@ import (
 )
 
 type firewallTestOptions struct {
-	yes         bool
-	plan        bool
-	cleanupOnly bool
+	yes          bool
+	plan         bool
+	cleanupOnly  bool
+	homeRecovery bool
 }
 
 func parseFirewallTestOptions(args []string) (firewallTestOptions, error) {
@@ -41,6 +42,7 @@ func parseFirewallTestOptions(args []string) (firewallTestOptions, error) {
 	fs.BoolVar(&options.yes, "yes", false, "approve the bounded Phase 4A packet test")
 	fs.BoolVar(&options.plan, "plan", false, "preview fixtures and expected journeys without mutation")
 	fs.BoolVar(&options.cleanupOnly, "cleanup-only", false, "remove only recognised Phase 4A test leftovers")
+	fs.BoolVar(&options.homeRecovery, "home-recovery", false, "explicitly use the HOME bootstrap/recovery path")
 	if err := fs.Parse(args); err != nil {
 		return firewallTestOptions{}, err
 	}
@@ -64,7 +66,7 @@ func runFirewallTest(args []string, input io.Reader, out, errOut io.Writer) (err
 	if err != nil {
 		return err
 	}
-	current, desired, host, err := loadFirewallContext()
+	current, desired, host, err := loadFirewallContextWithOptions("", options.homeRecovery)
 	if err != nil {
 		return err
 	}
@@ -113,10 +115,19 @@ func runFirewallTest(args []string, input io.Reader, out, errOut io.Writer) (err
 	if err := confirmHomeEndpoints(ctx, desired); err != nil {
 		return err
 	}
-	provider, err := firewallProviderClient(current, desired)
+	mode := providerAccessLAB
+	if host.HomeRecovery {
+		mode = providerAccessHomeRecovery
+	}
+	connectionDesired := desired
+	if host.HomeRecovery && current.Gateway.ManagementAddress != "" {
+		connectionDesired.ManagementAddress = current.Gateway.ManagementAddress
+	}
+	provider, err := providerClientForAccess(current, connectionDesired, host.Transport, mode)
 	if err != nil {
 		return err
 	}
+	defer provider.Close()
 	health, err := firewallmodule.CheckHealthViaSSH(ctx, host, desired, provider)
 	if err != nil {
 		return fmt.Errorf("firewall operational preflight failed: %w", err)
@@ -251,6 +262,23 @@ func invokeFirewallTestHost(ctx context.Context, host firewallmodule.HostClient,
 }
 
 func firewallProviderClient(current model.Site, desired firewallmodule.DesiredState) (*openwrt.Client, error) {
+	return providerClientForAccess(current, desired, controllerhost.Transport{Address: controllerhost.LabHostAddress, User: "root", Identity: controllerhost.PrivateKeyPath, KnownHosts: controllerhost.KnownHostsPath}, providerAccessLAB)
+}
+
+type providerAccessMode uint8
+
+const (
+	providerAccessLAB providerAccessMode = iota
+	providerAccessHomeRecovery
+)
+
+// providerClientForAccess is the single typed constructor for provider API
+// access. Normal operation is forced through the enrolled LAB Host; HOME is
+// available only when the caller explicitly selects recovery.
+func providerClientForAccess(current model.Site, desired firewallmodule.DesiredState, transport controllerhost.Transport, mode providerAccessMode) (*openwrt.Client, error) {
+	if mode == providerAccessLAB && (transport.Address != controllerhost.LabHostAddress || transport.User != "root") {
+		return nil, errors.New("normal firewall API access requires enrolled LAB Host 10.10.99.5; use explicit HOME recovery for bootstrap")
+	}
 	stateDir := firewallmodule.StateDir(current)
 	credential, err := firewallmodule.LoadCredential(stateDir)
 	if err != nil {
@@ -260,7 +288,17 @@ func firewallProviderClient(current model.Site, desired firewallmodule.DesiredSt
 	if err != nil {
 		return nil, fmt.Errorf("load firewall provider TLS trust: %w", err)
 	}
-	return openwrt.NewClient(openwrt.Config{BaseURL: "https://" + desired.ManagementAddress, ServerName: firewallmodule.ProviderTLSName, Username: "boetticher", Password: credential, TrustPEM: trust})
+	config := openwrt.Config{ServerName: firewallmodule.ProviderTLSName, Username: "boetticher", Password: credential, TrustPEM: trust}
+	switch mode {
+	case providerAccessLAB:
+		config.BaseURL = "https://10.10.99.1"
+		config.DialContext = controllerhost.FirewallDialContext(transport)
+	case providerAccessHomeRecovery:
+		config.BaseURL = "https://" + desired.ManagementAddress
+	default:
+		return nil, errors.New("unknown firewall provider access mode")
+	}
+	return openwrt.NewClient(config)
 }
 
 func verifyPhase4AScope(ctx context.Context, host firewallmodule.HostClient, provider *openwrt.Client, desired firewallmodule.DesiredState) error {

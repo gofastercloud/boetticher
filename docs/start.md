@@ -147,9 +147,22 @@ always:
 boetticher module <capability> <action> [flags]
 ```
 
-The supported client-service order is `module firewall apply`, `module dns
-apply`, then `module dhcp apply`. DHCP-derived DNS and client-facing NTP are
+The supported client-service order is `module firewall apply --home-recovery`, `module dns
+apply --home-recovery`, then `module dhcp apply --home-recovery`. On a fresh recovery, establish the firewall
+management path first, then DNS and DHCP, before importing or enrolling the
+verified Host LAB SSH key. After Host enrollment, normal operations use the
+LAB SSH path; the HOME address remains an explicit recovery binding. DHCP-derived DNS and client-facing NTP are
 supporting behaviour of those two capabilities, not standalone Modules.
+
+With the firewall, DNS, DHCP, and Controller reservation ready, run
+`host authorize-controller --home-recovery --plan`, then repeat with `--yes`.
+This uses the existing verified Controller key and preserves HOME recovery
+while allowing only the restricted LAB source and firewall HTTPS tunnel. Then
+import the verified Host key and enroll `root@10.10.99.5`; normal operations
+use the LAB route after enrollment.
+The LAB key entry lives in `/etc/ssh/boetticher-controller-lab.authorized_keys`,
+leaving the Proxmox-managed `/root/.ssh/authorized_keys` link and cluster key
+file unchanged.
 Provider software, appliance names, daemons, guests, and Controller
 peripherals are not Module namespaces. Use the bounded resource commands under
 `module dhcp` and `module dns`; arbitrary provider configuration is not part of
