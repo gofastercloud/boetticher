@@ -427,7 +427,7 @@ func reconcileSystemMonitoring(ctx context.Context, transport host.Transport, mo
 	if err != nil {
 		return fmt.Errorf("read Gatus configuration: %w", err)
 	}
-	return client.ReconcileGatus(ctx, []byte(config), modules.Systems)
+	return client.ReconcileGatus(ctx, []byte(config), modules.Systems, modules)
 }
 
 func inspectSystemGuest(ctx context.Context, t host.Transport, g host.Guest) (kind, mac, bridge, tag string, err error) {

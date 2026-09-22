@@ -178,6 +178,27 @@ func TestReconcileGatusUsesAtomicOwnedReplacementAndReadback(t *testing.T) {
 	}
 }
 
+func TestReconcileGatusPreservesCurrentMediaEndpointsWithMonitoredSystem(t *testing.T) {
+	modules := clientservices.Modules{Media: &clientservices.MediaConfig{
+		Enabled: true, ApplicationDomain: "example.com",
+		Aliases: clientservices.MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"},
+	}}
+	base, err := RenderGatusConfig([]byte("endpoints: []\n"), nil, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(base), "boetticher-media-ai-subtitle-translator") {
+		t.Fatal("media fixture omitted the reserved endpoint")
+	}
+	runner := &systemsRunner{config: string(base)}
+	if err := (HostClient{Transport: runner}).ReconcileGatus(context.Background(), base, []clientservices.System{monitoredSystem()}, modules); err != nil {
+		t.Fatalf("monitored system reconciliation rejected current media endpoints: %v", err)
+	}
+	if !strings.Contains(runner.config, "boetticher-media-ai-subtitle-translator") || !strings.Contains(runner.config, "boetticher-system-print") {
+		t.Fatalf("reconciliation did not retain both media and system projections: %s", runner.config)
+	}
+}
+
 func TestReconcileGatusNoOpRequiresHealthyExactRuntime(t *testing.T) {
 	base, err := RenderGatusConfig([]byte("endpoints: []\n"), []clientservices.System{monitoredSystem()})
 	if err != nil {
