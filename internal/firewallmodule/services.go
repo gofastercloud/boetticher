@@ -110,6 +110,7 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 			return ServiceState{}, err
 		}
 		state.DHCP = append(state.DHCP, generated...)
+		state.DHCP = append(state.DHCP, systemDNSSections(site, normalized.Systems)...)
 		if normalized.Media != nil && normalized.Media.Enabled {
 			state.DHCP = append(state.DHCP, mediaDNSSections(site, normalized.Media)...)
 		}
@@ -142,6 +143,25 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	}
 	state.Firewall = append(state.Firewall, observabilityFirewall...)
 	return state, nil
+}
+
+func systemDNSSections(site model.Site, systems []clientservices.System) []Section {
+	sections := make([]Section, 0, len(systems))
+	for _, system := range systems {
+		if system.DNSName == "" {
+			continue
+		}
+		target, err := clientservices.CanonicalName(system.Name, site.Network.Domain)
+		if err != nil {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSuffix(system.DNSName, "."))
+		sections = append(sections, Section{
+			Name: systemDNSSectionName(name, target), Type: "cname",
+			Options: map[string]string{"cname": name, "target": target}, Lists: map[string][]string{},
+		})
+	}
+	return sections
 }
 
 func mediaDNSSections(site model.Site, config *clientservices.MediaConfig) []Section {

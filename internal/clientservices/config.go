@@ -73,6 +73,7 @@ type System struct {
 	Address    string `yaml:"address" json:"address"`
 	Port       int    `yaml:"port" json:"port"`
 	HomePort   int    `yaml:"home_port,omitempty" json:"home_port,omitempty"`
+	DNSName    string `yaml:"dns_name,omitempty" json:"dns_name,omitempty"`
 	Monitoring bool   `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
 }
 
@@ -425,7 +426,7 @@ func (m Modules) Clone() Modules {
 
 func Validate(modules Modules, site model.Site) error {
 	normalized := modules.Normalize()
-	if err := validateSystems(normalized.Systems, site); err != nil {
+	if err := validateSystems(normalized.Systems, site, normalized); err != nil {
 		return err
 	}
 	normalized = SystemsExpanded(normalized)
@@ -516,9 +517,11 @@ func Validate(modules Modules, site model.Site) error {
 	return nil
 }
 
-func validateSystems(systems []System, site model.Site) error {
+func validateSystems(systems []System, site model.Site, modules Modules) error {
 	platformNames := make(map[string]struct{})
 	homePorts := make(map[int]string)
+	dnsNames := make(map[string]string)
+	reservedDNSNames := systemReservedDNSNames(site, modules)
 	for _, component := range site.PlatformComponents() {
 		if name, err := canonicalName(component.Hostname, site.Network.Domain); err == nil {
 			platformNames[name] = struct{}{}
@@ -550,8 +553,54 @@ func validateSystems(systems []System, site model.Site) error {
 			}
 			homePorts[system.HomePort] = system.Name
 		}
+		if system.DNSName != "" {
+			if system.DNSName != strings.ToLower(system.DNSName) || !ValidPublicDomain(system.DNSName) || strings.HasSuffix(system.DNSName, ".") {
+				return fmt.Errorf("system %q dns_name must be a lowercase canonical external FQDN", system.Name)
+			}
+			labDomain := strings.ToLower(strings.TrimSuffix(site.Network.Domain, "."))
+			if system.DNSName == labDomain || strings.HasSuffix(system.DNSName, "."+labDomain) {
+				return fmt.Errorf("system %q dns_name must be outside the LAB domain", system.Name)
+			}
+			if previous, exists := dnsNames[system.DNSName]; exists {
+				return fmt.Errorf("system DNS name %s is already used by system %s", system.DNSName, previous)
+			}
+			if _, exists := reservedDNSNames[system.DNSName]; exists {
+				return fmt.Errorf("system DNS name %s conflicts with an existing owned name", system.DNSName)
+			}
+			dnsNames[system.DNSName] = system.Name
+			if modules.DNS == nil || !Enabled(modules.DNS.Enabled) {
+				return fmt.Errorf("system %q dns_name requires enabled DNS", system.Name)
+			}
+		}
 	}
 	return nil
+}
+
+func systemReservedDNSNames(site model.Site, modules Modules) map[string]struct{} {
+	reserved := make(map[string]struct{})
+	if modules.Media != nil && modules.Media.Enabled {
+		domain := strings.ToLower(strings.TrimSuffix(modules.Media.ApplicationDomain, "."))
+		for _, alias := range []string{modules.Media.Aliases.Radarr, modules.Media.Aliases.Sonarr, modules.Media.Aliases.Bazarr, modules.Media.Aliases.Prowlarr, modules.Media.Aliases.Trailarr, "qbittorrent", "jellyfin", "jellyseerr"} {
+			reserved[alias+"."+domain] = struct{}{}
+		}
+	}
+	if modules.Observability != nil && modules.Observability.Enabled != nil && *modules.Observability.Enabled && ValidPublicDomain(modules.Observability.PublicDomain) {
+		domain := strings.ToLower(strings.TrimSuffix(modules.Observability.PublicDomain, "."))
+		for _, prefix := range []string{"observability", "status", "lab", "labviewer", "ingest", "metrics"} {
+			reserved[prefix+"."+domain] = struct{}{}
+		}
+	}
+	for _, component := range site.PlatformComponents() {
+		if name, err := canonicalName(component.Hostname, site.Network.Domain); err == nil {
+			reserved[strings.TrimSuffix(name, ".")] = struct{}{}
+		}
+		for _, alias := range component.DNSAliases {
+			if name, err := canonicalName(alias, site.Network.Domain); err == nil {
+				reserved[strings.TrimSuffix(name, ".")] = struct{}{}
+			}
+		}
+	}
+	return reserved
 }
 
 func validateObservability(modules Modules) error {

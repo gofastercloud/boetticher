@@ -65,10 +65,14 @@ func listSystems(args []string, out io.Writer) error {
 	}
 	for _, s := range c.Modules.Systems {
 		if s.HomePort != 0 {
-			fmt.Fprintf(out, "%s VMID=%d %s %s:%d home-port=%d check=%t\n", s.Name, s.VMID, s.Kind, s.Address, s.Port, s.HomePort, s.Monitoring)
+			fmt.Fprintf(out, "%s VMID=%d %s %s:%d home-port=%d", s.Name, s.VMID, s.Kind, s.Address, s.Port, s.HomePort)
 		} else {
-			fmt.Fprintf(out, "%s VMID=%d %s %s:%d check=%t\n", s.Name, s.VMID, s.Kind, s.Address, s.Port, s.Monitoring)
+			fmt.Fprintf(out, "%s VMID=%d %s %s:%d", s.Name, s.VMID, s.Kind, s.Address, s.Port)
 		}
+		if s.DNSName != "" {
+			fmt.Fprintf(out, " dns-name=%s", s.DNSName)
+		}
+		fmt.Fprintf(out, " check=%t\n", s.Monitoring)
 	}
 	return nil
 }
@@ -134,6 +138,9 @@ func systemStatus(args []string, out io.Writer) error {
 			if s.HomePort != 0 {
 				fmt.Fprintf(out, "  HOME      TCP %d -> SERVERS %s:%d\n", s.HomePort, s.Address, s.Port)
 			}
+			if s.DNSName != "" {
+				fmt.Fprintf(out, "  DNS       %s -> %s.%s\n", s.DNSName, s.Name, labConfigDomain(c))
+			}
 			fmt.Fprintf(out, "  Monitoring %s\n", map[bool]string{true: "configured", false: "disabled"}[s.Monitoring])
 			fmt.Fprintf(out, "  Observed  %s\n", observed)
 			return nil
@@ -144,7 +151,7 @@ func systemStatus(args []string, out io.Writer) error {
 
 func registerSystem(args []string, input io.Reader, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--home-port PORT] [--check] [--plan|--yes]")
+		return errors.New("usage: boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--home-port PORT] [--dns-name FQDN] [--check] [--plan|--yes]")
 	}
 	name := strings.ToLower(args[0])
 	fs := flag.NewFlagSet("host register-system", flag.ContinueOnError)
@@ -153,11 +160,12 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 	address := fs.String("address", "", "")
 	port := fs.Int("port", 0, "")
 	homePort := fs.Int("home-port", 0, "")
+	dnsName := fs.String("dns-name", "", "")
 	check := fs.Bool("check", false, "")
 	plan := fs.Bool("plan", false, "")
 	yes := fs.Bool("yes", false, "")
 	if e := fs.Parse(args[1:]); e != nil || fs.NArg() != 0 {
-		return errors.New("usage: boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--home-port PORT] [--check] [--plan|--yes]")
+		return errors.New("usage: boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--home-port PORT] [--dns-name FQDN] [--check] [--plan|--yes]")
 	}
 	if *plan && *yes {
 		return errors.New("--plan cannot be combined with --yes")
@@ -222,7 +230,7 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 	if mac == "" {
 		return errors.New("guest SERVERS NIC has no MAC")
 	}
-	s := clientservices.System{Name: name, VMID: *vmid, Kind: kind, GuestName: found.Name, MAC: mac, Address: *address, Port: *port, HomePort: *homePort, Monitoring: *check}
+	s := clientservices.System{Name: name, VMID: *vmid, Kind: kind, GuestName: found.Name, MAC: mac, Address: *address, Port: *port, HomePort: *homePort, DNSName: strings.TrimSpace(*dnsName), Monitoring: *check}
 	if *vmid < model.UserGuestIDMin || *vmid > model.UserGuestIDMax {
 		return fmt.Errorf("VMID must be in the user-workload range %d-%d", model.UserGuestIDMin, model.UserGuestIDMax)
 	}
@@ -268,6 +276,9 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 	fmt.Fprintf(out, "System %s\n  Guest %s VMID %d (%s)\n  Network SERVERS vmbr1:20 %s -> %s\n  Port %d\n", name, found.Name, *vmid, kind, mac, *address, *port)
 	if *homePort != 0 {
 		fmt.Fprintf(out, "  HOME publication TCP %d -> %s:%d\n", *homePort, *address, *port)
+	}
+	if s.DNSName != "" {
+		fmt.Fprintf(out, "  DNS name %s -> %s.<lab-domain>\n", s.DNSName, name)
 	}
 	if *check {
 		fmt.Fprintln(out, "  Monitoring requested")

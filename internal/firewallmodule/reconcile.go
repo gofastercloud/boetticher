@@ -34,6 +34,13 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 		wanted[section.Name] = section
 	}
 	for _, section := range desired {
+		if section.Type == "cname" && strings.HasPrefix(section.Name, "boetticher_system_dns_") {
+			for name, observed := range current {
+				if name != section.Name && observed.Type == "cname" && observed.Options["cname"] == section.Options["cname"] && !managedStaleSection(name, observed) {
+					return nil, fmt.Errorf("system DNS name %s conflicts with provider CNAME %s", section.Options["cname"], name)
+				}
+			}
+		}
 		if section.Type != "redirect" || section.Options["src"] != "home_wan" || section.Options["src_dport"] == "" {
 			continue
 		}
@@ -94,6 +101,11 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 		}
 		label := strings.TrimSuffix(strings.TrimPrefix(section.Options["name"], "Boetticher system "), " HOME publication")
 		return homePublicationIdentity(name, section.Options, section.Lists) && label != ""
+	}
+	if section.Type == "cname" && strings.HasPrefix(name, "boetticher_system_dns_") {
+		cname := section.Options["cname"]
+		target := section.Options["target"]
+		return cname != "" && target != "" && len(section.Options) == 2 && name == systemDNSSectionName(cname, target)
 	}
 	if section.Type == "route" && strings.HasPrefix(name, "boetticher_vpn_client_mtu_") {
 		address := section.Options["target"]
@@ -161,6 +173,10 @@ func managedStaleSection(name string, section openwrt.UCISection) bool {
 	return false
 }
 
+func systemDNSSectionName(cname, target string) string {
+	return "boetticher_system_dns_" + nativeRecordSuffix(strings.TrimSuffix(cname, ".")) + "_to_" + nativeRecordSuffix(strings.TrimSuffix(target, "."))
+}
+
 func managedRuleIdentity(name string, options map[string]string) bool {
 	if strings.HasPrefix(name, "boetticher_system_") {
 		parts := strings.Split(name, "_")
@@ -222,6 +238,9 @@ func managedRuleIdentity(name string, options map[string]string) bool {
 }
 
 func compatibleIdentity(name string, observed openwrt.UCISection, desired Section) bool {
+	if observed.Type == "cname" && strings.HasPrefix(name, "boetticher_system_dns_") {
+		return managedStaleSection(name, observed) && desired.Type == "cname" && desired.Name == name
+	}
 	if observed.Type == "redirect" && strings.HasPrefix(name, "boetticher_system_") && strings.HasSuffix(name, "_home_publication") {
 		return homePublicationIdentity(name, observed.Options, observed.Lists) && desired.Type == "redirect" && desired.Name == name
 	}

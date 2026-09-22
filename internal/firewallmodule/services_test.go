@@ -130,6 +130,32 @@ func TestSystemHomePublicationProjectionIsExactAndOwned(t *testing.T) {
 	}
 }
 
+func TestSystemExternalDNSProjectionIsOwnedAndPreservesCanonicalTarget(t *testing.T) {
+	site := model.NewSite("lab", "local", model.GatewayModeManaged)
+	sections := systemDNSSections(site, []clientservices.System{{Name: "jupyter", DNSName: "jupyter.davebarton.cc"}})
+	if len(sections) != 1 || sections[0].Type != "cname" || sections[0].Options["cname"] != "jupyter.davebarton.cc" || sections[0].Options["target"] != "jupyter."+site.Network.Domain {
+		t.Fatalf("unexpected system DNS projection: %#v", sections)
+	}
+	if _, exists := sections[0].Options["ip"]; exists {
+		t.Fatal("system DNS projection created an A owner")
+	}
+	foreign := map[string]openwrt.UCISection{"foreign": {Type: "cname", Options: map[string]string{"cname": "jupyter.davebarton.cc", "target": "other.lab.home.arpa"}}}
+	if _, err := DiffOwned(foreign, sections); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("foreign same-name CNAME was accepted: %v", err)
+	}
+	foreignTarget := map[string]openwrt.UCISection{sections[0].Name: {Type: "cname", Options: map[string]string{"cname": "jupyter.davebarton.cc", "target": "other.lab.home.arpa"}}}
+	if _, err := DiffOwned(foreignTarget, sections); err == nil || !strings.Contains(err.Error(), "conflicting managed identity") {
+		t.Fatalf("same-name foreign-target CNAME was accepted: %v", err)
+	}
+	if changes, err := DiffOwned(foreignTarget, nil); err != nil || len(changes) != 0 {
+		t.Fatalf("same-name foreign-target CNAME was removed as stale: changes=%#v err=%v", changes, err)
+	}
+	changes, err := DiffOwned(map[string]openwrt.UCISection{sections[0].Name: {Type: sections[0].Type, Options: sections[0].Options}}, nil)
+	if err != nil || len(changes) != 1 || changes[0].Kind != MutationDelete {
+		t.Fatalf("owned system CNAME was not removed cleanly: changes=%#v err=%v", changes, err)
+	}
+}
+
 func TestMediaMonitoringFirewallProjectionAllowsGatusToMediaCaddy(t *testing.T) {
 	enabled := true
 	state, err := ServiceStateFromModules(model.NewSite("lab", "controller-local", model.GatewayModeManaged), clientservices.Modules{
