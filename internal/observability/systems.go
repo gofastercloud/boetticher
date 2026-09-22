@@ -95,7 +95,8 @@ func (c HostClient) ReconcileGatus(ctx context.Context, base []byte, systems []c
 	if !ok {
 		return errors.New("observability transport does not support bounded stdin")
 	}
-	_, err = runner.RunWithStdin(ctx, gatusReplaceCommand(), bytes.NewReader(payload))
+	replacementCommand := fmt.Sprintf("pct exec %d -- sh -c %s", binding.VMID, shellQuoteValue(gatusReplaceCommand()))
+	_, err = runner.RunWithStdin(ctx, replacementCommand, bytes.NewReader(payload))
 	if err != nil {
 		// Do not reflect provider stderr: it can include configuration diagnostics.
 		return errors.New("Gatus configuration replacement or health verification failed")

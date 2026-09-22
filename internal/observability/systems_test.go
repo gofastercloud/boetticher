@@ -168,6 +168,9 @@ func TestReconcileGatusUsesAtomicOwnedReplacementAndReadback(t *testing.T) {
 		t.Fatalf("projection was not installed: writes=%d config=%s", runner.stdinCalls, runner.config)
 	}
 	command := strings.Join(runner.calls, "\n")
+	if !strings.Contains(command, "pct exec 120 -- sh -c '") || command == gatusReplaceCommand() {
+		t.Fatalf("Gatus replacement was not bounded inside observability guest: %s", command)
+	}
 	for _, required := range []string{"test ! -L", "mktemp \"$dir/.config.yaml.new", "chown root:gatus", "chmod 0640", "wait_health(){ for attempt in 1 2 3 4 5 6 7 8 9 10", "mv -f \"$tmp\" \"$target\"", "mv -f \"$old\" \"$target\"", "systemctl reload-or-restart gatus.service", "curl --fail"} {
 		if !strings.Contains(command, required) {
 			t.Errorf("atomic replacement omitted %q: %s", required, command)
