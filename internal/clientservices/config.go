@@ -72,6 +72,7 @@ type System struct {
 	MAC        string `yaml:"mac" json:"mac"`
 	Address    string `yaml:"address" json:"address"`
 	Port       int    `yaml:"port" json:"port"`
+	HomePort   int    `yaml:"home_port,omitempty" json:"home_port,omitempty"`
 	Monitoring bool   `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
 }
 
@@ -517,6 +518,7 @@ func Validate(modules Modules, site model.Site) error {
 
 func validateSystems(systems []System, site model.Site) error {
 	platformNames := make(map[string]struct{})
+	homePorts := make(map[int]string)
 	for _, component := range site.PlatformComponents() {
 		if name, err := canonicalName(component.Hostname, site.Network.Domain); err == nil {
 			platformNames[name] = struct{}{}
@@ -538,6 +540,15 @@ func validateSystems(systems []System, site model.Site) error {
 		}
 		if _, exists := platformNames[canonical]; exists {
 			return fmt.Errorf("system name %q conflicts with a platform name", system.Name)
+		}
+		if system.HomePort < 0 || system.HomePort > 65535 || system.HomePort == 443 {
+			return fmt.Errorf("system %q home publication port is invalid or reserved", system.Name)
+		}
+		if system.HomePort != 0 {
+			if previous, exists := homePorts[system.HomePort]; exists {
+				return fmt.Errorf("home publication port %d is already used by system %s", system.HomePort, previous)
+			}
+			homePorts[system.HomePort] = system.Name
 		}
 	}
 	return nil

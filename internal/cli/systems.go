@@ -64,7 +64,11 @@ func listSystems(args []string, out io.Writer) error {
 		return e
 	}
 	for _, s := range c.Modules.Systems {
-		fmt.Fprintf(out, "%s VMID=%d %s %s:%d check=%t\n", s.Name, s.VMID, s.Kind, s.Address, s.Port, s.Monitoring)
+		if s.HomePort != 0 {
+			fmt.Fprintf(out, "%s VMID=%d %s %s:%d home-port=%d check=%t\n", s.Name, s.VMID, s.Kind, s.Address, s.Port, s.HomePort, s.Monitoring)
+		} else {
+			fmt.Fprintf(out, "%s VMID=%d %s %s:%d check=%t\n", s.Name, s.VMID, s.Kind, s.Address, s.Port, s.Monitoring)
+		}
 	}
 	return nil
 }
@@ -126,7 +130,11 @@ func systemStatus(args []string, out io.Writer) error {
 					observed = "provider context unavailable: " + ce.Error()
 				}
 			}
-			fmt.Fprintf(out, "System %s\n  Guest     %s VMID %d (%s)\n  Network   SERVERS %s MAC %s\n  Port      %d\n  Monitoring %s\n", s.Name, s.GuestName, s.VMID, s.Kind, s.Address, s.MAC, s.Port, map[bool]string{true: "configured", false: "disabled"}[s.Monitoring])
+			fmt.Fprintf(out, "System %s\n  Guest     %s VMID %d (%s)\n  Network   SERVERS %s MAC %s\n  Port      %d\n", s.Name, s.GuestName, s.VMID, s.Kind, s.Address, s.MAC, s.Port)
+			if s.HomePort != 0 {
+				fmt.Fprintf(out, "  HOME      TCP %d -> SERVERS %s:%d\n", s.HomePort, s.Address, s.Port)
+			}
+			fmt.Fprintf(out, "  Monitoring %s\n", map[bool]string{true: "configured", false: "disabled"}[s.Monitoring])
 			fmt.Fprintf(out, "  Observed  %s\n", observed)
 			return nil
 		}
@@ -136,7 +144,7 @@ func systemStatus(args []string, out io.Writer) error {
 
 func registerSystem(args []string, input io.Reader, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--check] [--plan|--yes]")
+		return errors.New("usage: boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--home-port PORT] [--check] [--plan|--yes]")
 	}
 	name := strings.ToLower(args[0])
 	fs := flag.NewFlagSet("host register-system", flag.ContinueOnError)
@@ -144,11 +152,12 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 	vmid := fs.Int("vmid", 0, "")
 	address := fs.String("address", "", "")
 	port := fs.Int("port", 0, "")
+	homePort := fs.Int("home-port", 0, "")
 	check := fs.Bool("check", false, "")
 	plan := fs.Bool("plan", false, "")
 	yes := fs.Bool("yes", false, "")
 	if e := fs.Parse(args[1:]); e != nil || fs.NArg() != 0 {
-		return errors.New("usage: boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--check] [--plan|--yes]")
+		return errors.New("usage: boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--home-port PORT] [--check] [--plan|--yes]")
 	}
 	if *plan && *yes {
 		return errors.New("--plan cannot be combined with --yes")
@@ -167,11 +176,14 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 		return e
 	}
 	for _, s := range c.Modules.Systems {
-		if strings.EqualFold(s.Name, name) && (s.VMID != *vmid || s.Address != *address || s.Port != *port || s.Monitoring != *check) {
+		if strings.EqualFold(s.Name, name) && (s.VMID != *vmid || s.Address != *address || s.Port != *port || s.HomePort != *homePort || s.Monitoring != *check) {
 			return fmt.Errorf("system name %s already exists with a conflicting definition", name)
 		}
 	}
-	if *vmid <= 0 || *port < 1 || *port > 65535 {
+	if *homePort == 443 {
+		return errors.New("HOME publication port 443 is reserved for firewall management")
+	}
+	if *vmid <= 0 || *port < 1 || *port > 65535 || *homePort < 0 || *homePort > 65535 {
 		return errors.New("VMID and port are invalid")
 	}
 	ip := net.ParseIP(*address)
@@ -210,7 +222,7 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 	if mac == "" {
 		return errors.New("guest SERVERS NIC has no MAC")
 	}
-	s := clientservices.System{Name: name, VMID: *vmid, Kind: kind, GuestName: found.Name, MAC: mac, Address: *address, Port: *port, Monitoring: *check}
+	s := clientservices.System{Name: name, VMID: *vmid, Kind: kind, GuestName: found.Name, MAC: mac, Address: *address, Port: *port, HomePort: *homePort, Monitoring: *check}
 	if *vmid < model.UserGuestIDMin || *vmid > model.UserGuestIDMax {
 		return fmt.Errorf("VMID must be in the user-workload range %d-%d", model.UserGuestIDMin, model.UserGuestIDMax)
 	}
@@ -239,6 +251,9 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 		if old.VMID == s.VMID || strings.EqualFold(old.MAC, s.MAC) || old.Address == s.Address {
 			return errors.New("system identity conflicts with another registration")
 		}
+		if s.HomePort != 0 && old.HomePort == s.HomePort {
+			return fmt.Errorf("home publication port %d is already used by system %s", s.HomePort, old.Name)
+		}
 	}
 	proposed := c
 	if existingIndex >= 0 {
@@ -251,6 +266,9 @@ func registerSystem(args []string, input io.Reader, out io.Writer) error {
 		return e
 	}
 	fmt.Fprintf(out, "System %s\n  Guest %s VMID %d (%s)\n  Network SERVERS vmbr1:20 %s -> %s\n  Port %d\n", name, found.Name, *vmid, kind, mac, *address, *port)
+	if *homePort != 0 {
+		fmt.Fprintf(out, "  HOME publication TCP %d -> %s:%d\n", *homePort, *address, *port)
+	}
 	if *check {
 		fmt.Fprintln(out, "  Monitoring requested")
 	}

@@ -5,7 +5,7 @@ system. Proxmox remains the guest owner; Boetticher stores only identity and
 derived network policy.
 
 ```text
-boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--check] [--plan|--yes]
+boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--home-port PORT] [--check] [--plan|--yes]
 boetticher host list-systems
 boetticher host system-status NAME
 boetticher host unregister-system NAME --plan|--yes
@@ -21,6 +21,12 @@ guest.
 The entry drives one SERVERS DHCP reservation and one narrow TRUSTED to
 SERVERS TCP allow. `--check` adds a bounded observability TCP check. DHCP is
 the DNS source for the system name, so no duplicate A record is emitted.
+
+`--home-port` is optional. When present, Boetticher owns one IPv4 TCP DNAT
+redirect from the current HOME network to the registered SERVERS address and
+internal port, with reflection disabled. The external port must be unique
+among registrations and cannot be 443, which remains the firewall management
+port. Existing registrations without `--home-port` are unchanged.
 
 `--plan` is read-only. Mutations require `--yes`, save intent before provider
 reconciliation, and retain intent when application fails. Unregistration

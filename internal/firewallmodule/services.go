@@ -134,6 +134,7 @@ func ServiceStateFromModules(site model.Site, modules clientservices.Modules) (S
 	vpnEnabled := normalized.VPN != nil && clientservices.Enabled(normalized.VPN.Enabled)
 	state.Firewall = serviceFirewallSections(site, dnsEnabled, dhcpEnabled, vpnEnabled)
 	state.Firewall = append(state.Firewall, systemFirewallSections(normalized.Systems)...)
+	state.Firewall = append(state.Firewall, systemHomePublicationSections(site, normalized.Systems)...)
 	state.Firewall = append(state.Firewall, mediaMonitoringFirewallSections(normalized)...)
 	observabilityFirewall, err := observabilityFirewallSections(site, normalized)
 	if err != nil {
@@ -626,6 +627,26 @@ func systemFirewallSections(systems []clientservices.System) []Section {
 			}
 			sections = append(sections, Section{Name: "boetticher_system_" + id + "_" + item.name, Type: "rule", Options: options, Lists: map[string][]string{}})
 		}
+	}
+	return sections
+}
+
+func systemHomePublicationSections(site model.Site, systems []clientservices.System) []Section {
+	homeNetwork := site.Gateway.ManagementNetwork
+	if homeNetwork == "" {
+		homeNetwork = model.GatewayManagementNetwork
+	}
+	sections := make([]Section, 0, len(systems))
+	for _, system := range systems {
+		if system.HomePort == 0 {
+			continue
+		}
+		id := nativeIdentifier(strings.ToLower(system.Name))
+		sections = append(sections, Section{Name: "boetticher_system_" + id + "_home_publication", Type: "redirect", Options: map[string]string{
+			"name": "Boetticher system " + system.Name + " HOME publication", "src": "home_wan", "src_ip": homeNetwork,
+			"src_dport": strconv.Itoa(system.HomePort), "dest": "servers", "dest_ip": system.Address,
+			"dest_port": strconv.Itoa(system.Port), "target": "DNAT", "family": "ipv4", "reflection": "0",
+		}, Lists: map[string][]string{"proto": {"tcp"}}})
 	}
 	return sections
 }

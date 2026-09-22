@@ -33,6 +33,20 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 	for _, section := range desired {
 		wanted[section.Name] = section
 	}
+	for _, section := range desired {
+		if section.Type != "redirect" || section.Options["src"] != "home_wan" || section.Options["src_dport"] == "" {
+			continue
+		}
+		for name, observed := range current {
+			if name == section.Name || observed.Type != "redirect" || observed.Options["src"] != "home_wan" || observed.Options["src_dport"] != section.Options["src_dport"] {
+				continue
+			}
+			if managedStaleSection(name, observed) {
+				continue
+			}
+			return nil, fmt.Errorf("HOME publication port %s conflicts with provider redirect %s", section.Options["src_dport"], name)
+		}
+	}
 	mutations := make([]Mutation, 0)
 	for _, name := range sortedSectionNames(desired) {
 		section := wanted[name]
@@ -73,6 +87,14 @@ func DiffOwned(current map[string]openwrt.UCISection, desired []Section) ([]Muta
 }
 
 func managedStaleSection(name string, section openwrt.UCISection) bool {
+	if section.Type == "redirect" && strings.HasPrefix(name, "boetticher_system_") {
+		id := strings.TrimPrefix(name, "boetticher_system_")
+		if !strings.HasSuffix(id, "_home_publication") || section.Options["name"] == "" {
+			return false
+		}
+		label := strings.TrimSuffix(strings.TrimPrefix(section.Options["name"], "Boetticher system "), " HOME publication")
+		return homePublicationIdentity(name, section.Options, section.Lists) && label != ""
+	}
 	if section.Type == "route" && strings.HasPrefix(name, "boetticher_vpn_client_mtu_") {
 		address := section.Options["target"]
 		return address != "" && strings.HasPrefix(section.Options["interface"], "boetticher_iface_") && section.Options["netmask"] == "255.255.255.255" && name == nativeVPNClientMTUSectionName(address) && section.Options["mtu"] != ""
@@ -200,6 +222,9 @@ func managedRuleIdentity(name string, options map[string]string) bool {
 }
 
 func compatibleIdentity(name string, observed openwrt.UCISection, desired Section) bool {
+	if observed.Type == "redirect" && strings.HasPrefix(name, "boetticher_system_") && strings.HasSuffix(name, "_home_publication") {
+		return homePublicationIdentity(name, observed.Options, observed.Lists) && desired.Type == "redirect" && desired.Name == name
+	}
 	if observed.Type == "hostrecord" && strings.HasPrefix(name, "boetticher_observability_record_") {
 		return observed.Options["name"] == desired.Options["name"] && observed.Options["ip"] == "10.10.10.20"
 	}
@@ -226,6 +251,24 @@ func compatibleIdentity(name string, observed openwrt.UCISection, desired Sectio
 		return managedStaleSection(name, observed)
 	}
 	return true
+}
+
+func homePublicationIdentity(name string, options map[string]string, lists map[string][]string) bool {
+	if !strings.HasPrefix(name, "boetticher_system_") || !strings.HasSuffix(name, "_home_publication") {
+		return false
+	}
+	label := strings.TrimSuffix(strings.TrimPrefix(options["name"], "Boetticher system "), " HOME publication")
+	if label == "" || name != "boetticher_system_"+nativeIdentifier(strings.ToLower(label))+"_home_publication" {
+		return false
+	}
+	for key := range options {
+		switch key {
+		case "name", "src", "src_ip", "src_dport", "dest", "dest_ip", "dest_port", "target", "family", "reflection":
+		default:
+			return false
+		}
+	}
+	return len(options) == 10 && options["src"] == "home_wan" && options["src_ip"] != "" && options["src_dport"] != "" && options["dest"] == "servers" && options["dest_ip"] != "" && options["dest_port"] != "" && options["target"] == "DNAT" && options["family"] == "ipv4" && options["reflection"] == "0" && len(lists) == 1 && len(lists["proto"]) == 1 && lists["proto"][0] == "tcp"
 }
 
 func nativeResolverSectionName(address string) string {

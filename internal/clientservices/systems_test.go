@@ -56,3 +56,27 @@ func TestSystemsDerivedReservationsUseDHCPAndDNSValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestSystemsHomePublicationValidation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*Modules)
+	}{
+		{"management port", func(m *Modules) { m.Systems[0].HomePort = 443 }},
+		{"collision", func(m *Modules) {
+			m.Systems = append(m.Systems, System{Name: "other", VMID: 502, Kind: "lxc", GuestName: "other", MAC: "02:00:00:00:20:62", Address: "10.10.20.62", Port: 8080, HomePort: 8443})
+			m.Systems[0].HomePort = 8443
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := systemsModules()
+			test.mutate(&m)
+			if err := Validate(m, model.NewSite("lab", "local", model.GatewayModeManaged)); err == nil {
+				t.Fatal("accepted invalid HOME publication")
+			}
+		})
+	}
+	if err := Validate(systemsModules(), model.NewSite("lab", "local", model.GatewayModeManaged)); err != nil {
+		t.Fatalf("legacy registration changed: %v", err)
+	}
+}

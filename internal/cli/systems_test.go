@@ -65,7 +65,7 @@ func TestRunSystemsPlanAndRefusalNeverSaveIntent(t *testing.T) {
 	saves := 0
 	systemsSaveConfig = func(controllerhost.LabConfig) error { saves++; return nil }
 	for index, args := range [][]string{
-		{"register-system", "print", "--vmid", "501", "--address", "10.10.20.61", "--port", "631", "--plan"},
+		{"register-system", "print", "--vmid", "501", "--address", "10.10.20.61", "--port", "443", "--home-port", "8443", "--plan"},
 		{"register-system", "print", "--vmid", "501", "--address", "10.10.20.61", "--port", "631"},
 	} {
 		out := &strings.Builder{}
@@ -75,6 +75,9 @@ func TestRunSystemsPlanAndRefusalNeverSaveIntent(t *testing.T) {
 		}
 		if index == 1 && err == nil {
 			t.Fatalf("refusal unexpectedly succeeded")
+		}
+		if index == 0 && !strings.Contains(out.String(), "HOME publication TCP 8443 -> 10.10.20.61:443") {
+			t.Fatalf("plan omitted HOME publication: %s", out.String())
 		}
 	}
 	if saves != 0 || len(config.Modules.Systems) != 0 {
