@@ -643,7 +643,7 @@ func systemHomePublicationSections(site model.Site, systems []clientservices.Sys
 		}
 		id := nativeIdentifier(strings.ToLower(system.Name))
 		sections = append(sections, Section{Name: "boetticher_system_" + id + "_home_publication", Type: "redirect", Options: map[string]string{
-			"name": "Boetticher system " + system.Name + " HOME publication", "src": "home_wan", "src_net": homeNetwork,
+			"name": "Boetticher system " + system.Name + " HOME publication", "src": "home_wan", "src_ip": homeNetwork,
 			"src_dport": strconv.Itoa(system.HomePort), "dest": "servers", "dest_ip": system.Address,
 			"dest_port": strconv.Itoa(system.Port), "target": "DNAT", "family": "ipv4", "reflection": "0",
 		}, Lists: map[string][]string{"proto": {"tcp"}}})

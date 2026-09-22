@@ -263,12 +263,12 @@ func homePublicationIdentity(name string, options map[string]string, lists map[s
 	}
 	for key := range options {
 		switch key {
-		case "name", "src", "src_net", "src_dport", "dest", "dest_ip", "dest_port", "target", "family", "reflection":
+		case "name", "src", "src_ip", "src_dport", "dest", "dest_ip", "dest_port", "target", "family", "reflection":
 		default:
 			return false
 		}
 	}
-	return len(options) == 10 && options["src"] == "home_wan" && options["src_net"] != "" && options["src_dport"] != "" && options["dest"] == "servers" && options["dest_ip"] != "" && options["dest_port"] != "" && options["target"] == "DNAT" && options["family"] == "ipv4" && options["reflection"] == "0" && len(lists) == 1 && len(lists["proto"]) == 1 && lists["proto"][0] == "tcp"
+	return len(options) == 10 && options["src"] == "home_wan" && options["src_ip"] != "" && options["src_dport"] != "" && options["dest"] == "servers" && options["dest_ip"] != "" && options["dest_port"] != "" && options["target"] == "DNAT" && options["family"] == "ipv4" && options["reflection"] == "0" && len(lists) == 1 && len(lists["proto"]) == 1 && lists["proto"][0] == "tcp"
 }
 
 func nativeResolverSectionName(address string) string {
