@@ -94,7 +94,7 @@ func TestSystemHomePublicationProjectionIsExactAndOwned(t *testing.T) {
 		t.Fatalf("sections=%#v", sections)
 	}
 	section := sections[0]
-	if section.Type != "redirect" || section.Options["src"] != "home_wan" || section.Options["src_ip"] != site.Gateway.ManagementNetwork || section.Options["src_dport"] != "8443" || section.Options["dest"] != "servers" || section.Options["dest_ip"] != "10.10.20.61" || section.Options["dest_port"] != "443" || section.Options["family"] != "ipv4" || section.Options["reflection"] != "0" || section.Options["target"] != "DNAT" || len(section.Lists["proto"]) != 1 || section.Lists["proto"][0] != "tcp" {
+	if section.Type != "redirect" || section.Options["src"] != "home_wan" || section.Options["src_net"] != site.Gateway.ManagementNetwork || section.Options["src_ip"] != "" || section.Options["src_dport"] != "8443" || section.Options["dest"] != "servers" || section.Options["dest_ip"] != "10.10.20.61" || section.Options["dest_port"] != "443" || section.Options["family"] != "ipv4" || section.Options["reflection"] != "0" || section.Options["target"] != "DNAT" || len(section.Lists["proto"]) != 1 || section.Lists["proto"][0] != "tcp" {
 		t.Fatalf("unexpected HOME publication: %#v", section)
 	}
 	current := map[string]openwrt.UCISection{section.Name: {Type: section.Type, Options: section.Options, Lists: section.Lists}, "foreign": {Type: "redirect", Options: map[string]string{"src": "home_wan"}}}
@@ -109,7 +109,7 @@ func TestSystemHomePublicationProjectionIsExactAndOwned(t *testing.T) {
 	if _, err := DiffOwned(foreign, sections); err == nil || !strings.Contains(err.Error(), "conflicts") {
 		t.Fatalf("foreign HOME port collision was accepted: %v", err)
 	}
-	badSameName := map[string]openwrt.UCISection{section.Name: {Type: "redirect", Options: map[string]string{"name": "unrelated", "src": "home_wan", "src_ip": "192.168.4.0/22", "src_dport": "8443", "dest": "servers", "dest_ip": "10.10.20.99", "dest_port": "443", "target": "DNAT", "family": "ipv4", "reflection": "0", "extra": "foreign"}, Lists: map[string][]string{"proto": {"tcp"}}}}
+	badSameName := map[string]openwrt.UCISection{section.Name: {Type: "redirect", Options: map[string]string{"name": "unrelated", "src": "home_wan", "src_net": "192.168.4.0/22", "src_dport": "8443", "dest": "servers", "dest_ip": "10.10.20.99", "dest_port": "443", "target": "DNAT", "family": "ipv4", "reflection": "0", "extra": "foreign"}, Lists: map[string][]string{"proto": {"tcp"}}}}
 	if _, err := DiffOwned(badSameName, sections); err == nil || !strings.Contains(err.Error(), "conflicting managed identity") {
 		t.Fatalf("incompatible same-name redirect was accepted: %v", err)
 	}
