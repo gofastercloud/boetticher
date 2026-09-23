@@ -87,6 +87,75 @@ func TestSystemFirewallProjectionRegistersAndUpdatesMonitoringRule(t *testing.T)
 	}
 }
 
+func TestSystemHomePublicationProjectionIsExactAndOwned(t *testing.T) {
+	site := model.NewSite("lab", "local", model.GatewayModeManaged)
+	sections := systemHomePublicationSections(site, []clientservices.System{{Name: "web", Address: "10.10.20.61", Port: 443, HomePort: 8443}})
+	if len(sections) != 1 {
+		t.Fatalf("sections=%#v", sections)
+	}
+	section := sections[0]
+	if section.Type != "redirect" || section.Options["src"] != "home_wan" || section.Options["src_ip"] != site.Gateway.ManagementNetwork || section.Options["src_dport"] != "8443" || section.Options["dest"] != "servers" || section.Options["dest_ip"] != "10.10.20.61" || section.Options["dest_port"] != "443" || section.Options["family"] != "ipv4" || section.Options["reflection"] != "0" || section.Options["target"] != "DNAT" || len(section.Lists["proto"]) != 1 || section.Lists["proto"][0] != "tcp" {
+		t.Fatalf("unexpected HOME publication: %#v", section)
+	}
+	current := map[string]openwrt.UCISection{section.Name: {Type: section.Type, Options: section.Options, Lists: section.Lists}, "foreign": {Type: "redirect", Options: map[string]string{"src": "home_wan"}}}
+	changes, err := DiffOwned(current, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Kind != MutationDelete || changes[0].Section.Name != section.Name {
+		t.Fatalf("owned removal=%#v", changes)
+	}
+	foreign := map[string]openwrt.UCISection{"foreign_home": {Type: "redirect", Options: map[string]string{"src": "home_wan", "src_dport": "8443"}}}
+	if _, err := DiffOwned(foreign, sections); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("foreign HOME port collision was accepted: %v", err)
+	}
+	badSameName := map[string]openwrt.UCISection{section.Name: {Type: "redirect", Options: map[string]string{"name": "unrelated", "src": "home_wan", "src_ip": "192.168.4.0/22", "src_dport": "8443", "dest": "servers", "dest_ip": "10.10.20.99", "dest_port": "443", "target": "DNAT", "family": "ipv4", "reflection": "0", "extra": "foreign"}, Lists: map[string][]string{"proto": {"tcp"}}}}
+	if _, err := DiffOwned(badSameName, sections); err == nil || !strings.Contains(err.Error(), "conflicting managed identity") {
+		t.Fatalf("incompatible same-name redirect was accepted: %v", err)
+	}
+	nonTCP := map[string]openwrt.UCISection{section.Name: {Type: "redirect", Options: section.Options, Lists: map[string][]string{"proto": {"udp"}}}}
+	if changes, err := DiffOwned(nonTCP, nil); err != nil || len(changes) != 0 {
+		t.Fatalf("non-TCP redirect was treated as owned stale state: changes=%#v err=%v", changes, err)
+	}
+	replacement := []Section{section}
+	replacement[0].Options = map[string]string{}
+	for key, value := range section.Options {
+		replacement[0].Options[key] = value
+	}
+	replacement[0].Lists = map[string][]string{"proto": {"tcp"}}
+	replacement[0].Name = "boetticher_system_other_home_publication"
+	replacement[0].Options["name"] = "Boetticher system other HOME publication"
+	if changes, err := DiffOwned(map[string]openwrt.UCISection{section.Name: {Type: section.Type, Options: section.Options, Lists: section.Lists}}, replacement); err != nil || len(changes) != 2 {
+		t.Fatalf("owned stale HOME port was not reusable: changes=%#v err=%v", changes, err)
+	}
+}
+
+func TestSystemExternalDNSProjectionIsOwnedAndPreservesCanonicalTarget(t *testing.T) {
+	site := model.NewSite("lab", "local", model.GatewayModeManaged)
+	sections := systemDNSSections(site, []clientservices.System{{Name: "jupyter", DNSName: "jupyter.davebarton.cc"}})
+	if len(sections) != 1 || sections[0].Type != "cname" || sections[0].Options["cname"] != "jupyter.davebarton.cc" || sections[0].Options["target"] != "jupyter."+site.Network.Domain {
+		t.Fatalf("unexpected system DNS projection: %#v", sections)
+	}
+	if _, exists := sections[0].Options["ip"]; exists {
+		t.Fatal("system DNS projection created an A owner")
+	}
+	foreign := map[string]openwrt.UCISection{"foreign": {Type: "cname", Options: map[string]string{"cname": "jupyter.davebarton.cc", "target": "other.lab.home.arpa"}}}
+	if _, err := DiffOwned(foreign, sections); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("foreign same-name CNAME was accepted: %v", err)
+	}
+	foreignTarget := map[string]openwrt.UCISection{sections[0].Name: {Type: "cname", Options: map[string]string{"cname": "jupyter.davebarton.cc", "target": "other.lab.home.arpa"}}}
+	if _, err := DiffOwned(foreignTarget, sections); err == nil || !strings.Contains(err.Error(), "conflicting managed identity") {
+		t.Fatalf("same-name foreign-target CNAME was accepted: %v", err)
+	}
+	if changes, err := DiffOwned(foreignTarget, nil); err != nil || len(changes) != 0 {
+		t.Fatalf("same-name foreign-target CNAME was removed as stale: changes=%#v err=%v", changes, err)
+	}
+	changes, err := DiffOwned(map[string]openwrt.UCISection{sections[0].Name: {Type: sections[0].Type, Options: sections[0].Options}}, nil)
+	if err != nil || len(changes) != 1 || changes[0].Kind != MutationDelete {
+		t.Fatalf("owned system CNAME was not removed cleanly: changes=%#v err=%v", changes, err)
+	}
+}
+
 func TestMediaMonitoringFirewallProjectionAllowsGatusToMediaCaddy(t *testing.T) {
 	enabled := true
 	state, err := ServiceStateFromModules(model.NewSite("lab", "controller-local", model.GatewayModeManaged), clientservices.Modules{

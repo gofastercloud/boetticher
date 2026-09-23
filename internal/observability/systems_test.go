@@ -168,6 +168,9 @@ func TestReconcileGatusUsesAtomicOwnedReplacementAndReadback(t *testing.T) {
 		t.Fatalf("projection was not installed: writes=%d config=%s", runner.stdinCalls, runner.config)
 	}
 	command := strings.Join(runner.calls, "\n")
+	if !strings.Contains(command, "pct exec 120 -- sh -c '") || command == gatusReplaceCommand() {
+		t.Fatalf("Gatus replacement was not bounded inside observability guest: %s", command)
+	}
 	for _, required := range []string{"test ! -L", "mktemp \"$dir/.config.yaml.new", "chown root:gatus", "chmod 0640", "wait_health(){ for attempt in 1 2 3 4 5 6 7 8 9 10", "mv -f \"$tmp\" \"$target\"", "mv -f \"$old\" \"$target\"", "systemctl reload-or-restart gatus.service", "curl --fail"} {
 		if !strings.Contains(command, required) {
 			t.Errorf("atomic replacement omitted %q: %s", required, command)
@@ -175,6 +178,27 @@ func TestReconcileGatusUsesAtomicOwnedReplacementAndReadback(t *testing.T) {
 	}
 	if strings.Contains(command, "install -o root -g root -m 0640 /dev/stdin") {
 		t.Fatalf("unsafe direct install remained: %s", command)
+	}
+}
+
+func TestReconcileGatusPreservesCurrentMediaEndpointsWithMonitoredSystem(t *testing.T) {
+	modules := clientservices.Modules{Media: &clientservices.MediaConfig{
+		Enabled: true, ApplicationDomain: "example.com",
+		Aliases: clientservices.MediaAliases{Radarr: "radarr", Sonarr: "sonarr", Bazarr: "bazarr", Prowlarr: "prowlarr", Trailarr: "trailarr"},
+	}}
+	base, err := RenderGatusConfig([]byte("endpoints: []\n"), nil, modules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(base), "boetticher-media-ai-subtitle-translator") {
+		t.Fatal("media fixture omitted the reserved endpoint")
+	}
+	runner := &systemsRunner{config: string(base)}
+	if err := (HostClient{Transport: runner}).ReconcileGatus(context.Background(), base, []clientservices.System{monitoredSystem()}, modules); err != nil {
+		t.Fatalf("monitored system reconciliation rejected current media endpoints: %v", err)
+	}
+	if !strings.Contains(runner.config, "boetticher-media-ai-subtitle-translator") || !strings.Contains(runner.config, "boetticher-system-print") {
+		t.Fatalf("reconciliation did not retain both media and system projections: %s", runner.config)
 	}
 }
 

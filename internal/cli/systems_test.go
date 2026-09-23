@@ -65,7 +65,7 @@ func TestRunSystemsPlanAndRefusalNeverSaveIntent(t *testing.T) {
 	saves := 0
 	systemsSaveConfig = func(controllerhost.LabConfig) error { saves++; return nil }
 	for index, args := range [][]string{
-		{"register-system", "print", "--vmid", "501", "--address", "10.10.20.61", "--port", "631", "--plan"},
+		{"register-system", "print", "--vmid", "501", "--address", "10.10.20.61", "--port", "443", "--home-port", "8443", "--dns-name", "jupyter.davebarton.cc", "--plan"},
 		{"register-system", "print", "--vmid", "501", "--address", "10.10.20.61", "--port", "631"},
 	} {
 		out := &strings.Builder{}
@@ -76,12 +76,28 @@ func TestRunSystemsPlanAndRefusalNeverSaveIntent(t *testing.T) {
 		if index == 1 && err == nil {
 			t.Fatalf("refusal unexpectedly succeeded")
 		}
+		if index == 0 && !strings.Contains(out.String(), "HOME publication TCP 8443 -> 10.10.20.61:443") {
+			t.Fatalf("plan omitted HOME publication: %s", out.String())
+		}
+		if index == 0 && !strings.Contains(out.String(), "DNS name jupyter.davebarton.cc") {
+			t.Fatalf("plan omitted DNS name: %s", out.String())
+		}
 	}
 	if saves != 0 || len(config.Modules.Systems) != 0 {
 		t.Fatalf("plan/refusal mutated canonical intent: saves=%d systems=%#v", saves, config.Modules.Systems)
 	}
 	if *remoteCalls == 0 {
 		t.Fatal("command fixture did not exercise guest identity reads")
+	}
+}
+
+func TestRunSystemsAllowsDNSNameUpdateForUnchangedIdentity(t *testing.T) {
+	config, _ := systemsCommandFixture(t)
+	config.Modules.Systems = []clientservices.System{{Name: "print", VMID: 501, Kind: "lxc", GuestName: "print", MAC: "02:00:00:00:20:61", Address: "10.10.20.61", Port: 631, DNSName: "old.example.com"}}
+	out := &strings.Builder{}
+	err := runSystems([]string{"register-system", "print", "--vmid", "501", "--address", "10.10.20.61", "--port", "631", "--dns-name", "new.example.com", "--plan"}, strings.NewReader(""), out, &strings.Builder{})
+	if err != nil || !strings.Contains(out.String(), "DNS name new.example.com") {
+		t.Fatalf("unchanged identity DNS update was not accepted: err=%v output=%s", err, out.String())
 	}
 }
 
