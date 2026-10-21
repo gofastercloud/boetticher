@@ -21,6 +21,12 @@ being adopted.
 
 Recent changes:
 
+- Show each registered system's Proxmox power state and onboot flag in `host
+  list-systems` and `host system-status`, whose new `Result` line reports a
+  stopped guest as FAIL. Add `host start-system` and `host stop-system`
+  (`--plan|--yes`) to start or gracefully shut down a registered guest after
+  re-proving its identity; power state is the only guest property they change.
+  `host reboot --with-guests` names registered systems that did not return.
 - Add `host upgrade` (simulated preview, then a noninteractive Proxmox
   full-upgrade in a transient unit) and `host reboot --with-guests`, which
   relies on Proxmox's native guest shutdown and onboot ordering.

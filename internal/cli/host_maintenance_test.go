@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/clientservices"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 )
 
@@ -517,5 +518,24 @@ func TestHostRebootRetriesLaggingGuestStatus(t *testing.T) {
 	err := runHostRebootWith(deps, []string{"--with-guests", "--yes"}, &out)
 	if err == nil || !strings.Contains(err.Error(), "1 guest(s)") {
 		t.Fatalf("persistent stop err=%v", err)
+	}
+}
+
+func TestHostRebootNamesRegisteredSystemsThatDidNotReturn(t *testing.T) {
+	host := rebootHost(0)
+	deps := host.deps()
+	load := deps.loadConfig
+	deps.loadConfig = func() (controllerhost.LabConfig, error) {
+		config, err := load()
+		config.Modules.Systems = []clientservices.System{{Name: "jupyter", VMID: 502}, {Name: "monitor", VMID: 120}}
+		return config, err
+	}
+	var out bytes.Buffer
+	if err := runHostRebootWith(deps, []string{"--with-guests", "--yes"}, &out); err != nil {
+		t.Fatalf("reboot: %v\n%s", err, out.String())
+	}
+	text := out.String()
+	if !strings.Contains(text, "ATTENTION  registered system jupyter (VMID 502) is stopped; start it with: boetticher host start-system jupyter --plan") || strings.Contains(text, "registered system monitor") {
+		t.Fatalf("reboot output:\n%s", text)
 	}
 }

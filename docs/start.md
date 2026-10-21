@@ -172,7 +172,7 @@ Every `host reboot` mode refuses while a package upgrade is running or dpkg
 is locked. `host reboot --yes` still refuses while any guest exists. `--with-guests`
 reboots with guests present by relying on Proxmox's native `pve-guests.service`:
 guests stop in reverse startup order and guests with `onboot` enabled start in
-order afterwards. Boetticher never stops or starts guests itself. The preview
+order afterwards. The reboot itself never stops or starts guests. The preview
 (`--plan`) is read-only and shows each guest's onboot and startup order, warning
 about running guests that will not start again. The reboot is scheduled two seconds
 out so the request returns cleanly. A definite remote scheduling failure stops
@@ -181,7 +181,8 @@ counts. The Controller waits up to 20 minutes for that new boot, probing the nor
 then the HOME fallback read-only, because the firewall guest that routes the LAB
 path may still be starting. It then waits up to 10 minutes for guest startup and
 for the guest listing to settle, compares running guests with the state before the reboot, and reports whether the
-normal Host path has returned.
+normal Host path has returned. A [registered system](operator-systems.md) that
+did not come back is named with a pointer to `host start-system`.
 
 Reboot the Controller separately:
 

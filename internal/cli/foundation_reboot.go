@@ -125,10 +125,12 @@ func runHostRebootWith(deps hostMaintenanceDeps, args []string, out io.Writer) e
 	var rows []string
 	var failures int
 	var readErr error
+	var after []controllerhost.Guest
 	for {
-		after, err := controllerhost.ReadGuests(ctx, returned)
+		listing, err := controllerhost.ReadGuests(ctx, returned)
 		readErr = err
 		if err == nil {
+			after = listing
 			rows, failures = guestRecovery(policies, after)
 		}
 		if startErr != nil || (err == nil && failures == 0) || !deps.now().Before(deadline) {
@@ -145,6 +147,9 @@ func runHostRebootWith(deps hostMaintenanceDeps, args []string, out io.Writer) e
 	fmt.Fprintf(out, "    %-5s %-24s %-8s %-8s %s\n", "VMID", "NAME", "BEFORE", "AFTER", "RESULT")
 	for _, row := range rows {
 		fmt.Fprintln(out, row)
+	}
+	for _, line := range registeredSystemsNotReturned(config, policies, after) {
+		fmt.Fprintln(out, line)
 	}
 	pathErr := reportManagementPath(ctx, deps, config, address, out)
 	if startErr != nil {
@@ -265,6 +270,30 @@ func unsetDash(value int) string {
 		return "-"
 	}
 	return fmt.Sprint(value)
+}
+
+// registeredSystemsNotReturned names operator-managed registered systems
+// that were running before the reboot, or are set to start on boot, but are
+// not running afterwards, and points at the native start path.
+func registeredSystemsNotReturned(config controllerhost.LabConfig, policies []controllerhost.GuestBootPolicy, after []controllerhost.Guest) []string {
+	current := map[int]string{}
+	for _, guest := range after {
+		current[guest.VMID] = guest.Status
+	}
+	before := map[int]controllerhost.GuestBootPolicy{}
+	for _, policy := range policies {
+		before[policy.VMID] = policy
+	}
+	var lines []string
+	for _, system := range config.Modules.Systems {
+		policy, known := before[system.VMID]
+		status, present := current[system.VMID]
+		if !known || !present || status == "running" || (policy.Status != "running" && !policy.OnBoot) {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("  ATTENTION  registered system %s (VMID %d) is %s; start it with: boetticher host start-system %s --plan", system.Name, system.VMID, status, system.Name))
+	}
+	return lines
 }
 
 func guestRecovery(policies []controllerhost.GuestBootPolicy, after []controllerhost.Guest) ([]string, int) {
