@@ -25,7 +25,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 <section class="card-grid">
   <article class="card">
     <h3>A dependable backbone</h3>
-    <p>A fixed six-zone network, a Debian gateway when you want one, single-host DNS, DHCP, time, monitoring, and optional capabilities.</p>
+    <p>A fixed six-zone network behind an OpenWrt firewall appliance, single-host DNS, DHCP, time, VPN egress, Tailnet access, observability, and optional media.</p>
   </article>
   <article class="card">
     <h3>A small daily loop</h3>
@@ -50,16 +50,19 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 | --- | --- |
 | Build your first lab or learn the everyday rhythm | [Start here](start.html) |
 | See how the zones, guests, storage, access, and recovery fit together | [The lab](lab.html) |
-| Add observability, protected VPN egress, or an AI helper | [Modules](modules.html) |
-| Prepare the Controller | [Controller](controller.html) |
+| Add observability, protected VPN egress, Tailnet, media, or an AI helper | [Modules](modules.html) |
+| Register an existing VM or LXC you already run | [Operator-managed systems](operator-systems.html) |
+| Dig into the firewall, DNS/DHCP, or Tailnet contracts | [Firewall](networking/firewall-capability.html) · [Client services](networking/client-services.html) · [Tailnet](networking/tailnet.html) |
+| Enable hardware transcoding for the media guest | [Arrstack hardware transcoding](arrstack-hardware-transcoding.html) |
+| Prepare the Controller, its Blinkt/StreamDeck, or the lab snapshot portal | [Controller](controller.html) |
 | Look up a flag or browse the CLI menu | [Commands](commands.html) |
 
 <aside class="callout">
-  <p><strong>Good fit:</strong> a fresh, supported Proxmox VE host on amd64 hardware and a desire for a home lab with less plumbing homework. One Ethernet port is enough to begin; a second port and a VLAN-aware switch unlock a physical trunk or an external firewall later.</p>
+  <p><strong>Good fit:</strong> a fresh, supported Proxmox VE host on amd64 hardware and a desire for a home lab with less plumbing homework. One Ethernet port is enough to begin; a second port and a VLAN-aware switch unlock a physical LAB trunk later.</p>
 </aside>
 
 <aside class="callout">
-  <p><strong>The Host boundary:</strong> Host apply owns the Proxmox OS baseline and dedicated storage. A VLAN-aware <code>vmbr1</code> physical trunk is added only through the separately verified network journey.</p>
+  <p><strong>The Host boundary:</strong> Host apply owns the Proxmox OS baseline, dedicated storage, and the VLAN-aware <code>vmbr1</code> bridge. Its physical trunk member is added only when you name it with <code>host apply --physical-trunk</code>.</p>
 </aside>
 
 ## A quick glossary
@@ -76,3 +79,14 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 ## Built by a lot of clever people
 
 Boetticher is the small connector between a pile of fantastic open-source work. Huge thanks to the maintainers of [Proxmox VE](https://www.proxmox.com/), [Debian](https://www.debian.org/), [Ansible](https://www.ansible.com/), [OpenWrt](https://openwrt.org/), [Stubby](https://github.com/getdnsapi/stubby), [Quad9](https://quad9.net/), [WireGuard](https://www.wireguard.com/), and every project in the [third-party notices](https://github.com/gofastercloud/boetticher/blob/main/THIRD_PARTY_NOTICES.md). They did the hard work; this project is delighted to stand on it.
+
+## Engineering records
+
+These pages are retained as historical records of earlier spikes and reviews.
+They describe retired designs and are not current instructions:
+[OpenWrt provider spike](networking/openwrt-provider.html),
+[focused OpenWrt qualification](networking/openwrt-focused-provider.html),
+[OpenWrt AirVPN qualification](networking/openwrt-airvpn.html),
+[process review](process-review.html),
+[0.5.1 hardening](release-hardening-0.5.1.html), and
+[0.5.2 hardening](release-hardening-0.5.2.html).

@@ -7,6 +7,11 @@ description: Final real-AirVPN qualification for the OpenWrt provider.
 
 # OpenWrt AirVPN qualification
 
+> **Historical record.** This is a disposable-VM qualification run, retained
+> unchanged. The supported VPN capability is described in
+> [Modules: VPN](../modules.md#vpn); addresses and VMIDs below belong to the
+> spike, not the current lab.
+
 ## Final decision
 
 **OPENWRT GO**, with one explicit external prerequisite: AirVPN must provide a

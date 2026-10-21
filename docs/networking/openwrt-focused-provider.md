@@ -7,6 +7,12 @@ description: Focused follow-up qualification and final OpenWrt provider decision
 
 # Focused OpenWrt provider qualification
 
+> **Historical record.** This spike's NO-GO decision was superseded: OpenWrt
+> is the current provider for the firewall, DNS, DHCP, and VPN capabilities
+> (see [OpenWrt AirVPN qualification](openwrt-airvpn.md) and
+> [Client services](client-services.md)). The findings below are retained
+> unchanged as engineering history.
+
 ## Final decision
 
 **NO-GO** for OpenWrt as Boetticher's initial provider for `firewall`, `dhcp`,

@@ -39,6 +39,18 @@ private Ansible playbook and roles, the pinned Azlux public key, an installer,
 and `SHA256SUMS`. It contains no site, credential, appliance, or
 workstation-cache data.
 
+Build it from a checkout with the pinned Go 1.26.10 toolchain
+(`BOETTICHER_GO_BIN` selects it if `go` on `PATH` is another version) and the
+reviewed upstream arrstack source tarball:
+
+```sh
+ARRSTACK_SOURCE_ARCHIVE=/path/to/arrstack-source.tar.gz \
+  sh scripts/package-controller.sh BUILD_ID
+```
+
+The script writes `boetticher-controller-linux-arm64.tar.gz`, `install.sh`,
+and `SHA256SUMS` to `dist/controller/`. Copy that directory to the Pi.
+
 On the Pi, with the payload copied to `/home/pi/controller-release`:
 
 ```sh
@@ -87,28 +99,25 @@ The helper refuses symlinked or non-root-owned releases and never removes
 downloads can be reported with `--cache-root`; no live deletion happens without
 `--yes`. On a Mac, point `--cache-root` at the task-local controller cache.
 
-### Keeping the Mac workspace tidy
+### Keeping the build workspace tidy
 
-The local builder leaves generated output under `generated/`. Keep
-`generated/artifacts`, provenance, and evidence: those are the useful receipts
-for active work. The separate local helper only considers directly named stale
-trees (`artifacts-stale-*`, `boetticher-build-*`, and
-`boetticher-download-*`). It reports first and keeps the newest two trees:
+Packaging and image builds leave generated output under `generated/`. The
+local helper only considers directly named stale trees (`artifacts-stale-*`,
+`boetticher-build-*`, and `boetticher-download-*`). It reports first and keeps
+the newest two trees:
 
 ```sh
-make local-cleanup
+sh scripts/cleanup-local-storage.sh --root generated
 ```
 
-To approve removal after reviewing the report, choose the age and root
-explicitly:
+To approve removal after reviewing the report, choose the age explicitly:
 
 ```sh
 sh scripts/cleanup-local-storage.sh --root generated --keep 2 --max-age-days 30 --yes
 ```
 
-It refuses symlinks, unexpected names, and paths not owned by the current Mac
-user. This does not remove the existing `generated/artifacts` tree or anything
-outside the selected root.
+It refuses symlinks, unexpected names, and paths not owned by the current
+user, and never touches anything outside the selected root.
 
 ## Bootstrap and status
 
@@ -140,136 +149,161 @@ Next:
 After reconnecting with a fresh key-authenticated SSH session, rerun bootstrap
 and status. A successful final state reports `Controller readiness: PASS`.
 
-For a fresh or HOME recovery path, use `--home-recovery` on firewall, DNS, and
-DHCP operations until the Host LAB key is imported and the enrolled LAB SSH
-route is verified. Normal operation then uses the Controller-to-Host LAB SSH
-path (`10.10.99.5`) and the firewall MGMT gateway; HOME remains a recovery
-binding. Import the existing verified Host public key before enrollment and
-confirm the key-authenticated LAB alias before switching away from recovery.
+With readiness passing, continue with the Host journey in
+[Start here](start.html#first-host-journey). The HOME-recovery cutover
+(`--home-recovery` and `host authorize-controller`) is described in
+[Start here: Modules](start.html#modules).
 
-The supported Host cutover command is
-`boetticher host authorize-controller --home-recovery --plan`, followed by
-`boetticher host authorize-controller --home-recovery --yes`. It uses the
-existing verified Controller key, preserves HOME access, and grants only the
-restricted LAB source and firewall HTTPS tunnel. Import the verified Host key
-and then run `boetticher host enroll root@10.10.99.5` before normal LAB SSH use.
-The LAB authorization is stored in the separate Host-owned supplemental file
-`/etc/ssh/boetticher-controller-lab.authorized_keys`; the Proxmox-managed
-`/root/.ssh/authorized_keys` link and its cluster target remain untouched.
+## Verifying the Host key
 
-## Controller status LEDs
+Boetticher never accepts a Host key on first use. The Mac (or another machine
+with an existing strict SSH relationship to the Proxmox Host) is the trust
+bridge: verify the Host key there, then copy only that public key to the
+Controller for `host import-host-key`. Do not use `ssh-keyscan`, TOFU, or
+`StrictHostKeyChecking=no`.
 
-The Controller runs one local `boetticher-status.service` daemon. It is the
-exclusive owner of the Pimoroni Blinkt and its GPIO23/GPIO24 path; bootstrap and
-Host operations send best-effort progress events over its root-only Unix socket
-at `/run/boetticher/status.sock`. If the socket or hardware is unavailable,
-the operation continues normally.
+From the Mac, first verify the existing relationship without accepting a new
+key:
 
-Controller bootstrap always installs the status daemon and its packaged driver.
-Blinkt is optional hardware: if it is absent, the daemon remains installed and
-running without a display, and the GPIO check is reported as `NOT TESTED` rather
-than blocking Controller readiness. Host apply always installs the packaged
-Host speedtest helper; it does not depend on Blinkt or StreamDeck hardware.
-Host status and apply compare the installed helper's `--version` with the
-Controller release, so `host apply` reinstalls a stale helper.
-
-The current 4E status layout, viewed from the operator side, is:
-
-```text
-CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES
+```sh
+ssh -o StrictHostKeyChecking=yes root@192.168.4.5 'hostname; pveversion'
 ```
 
-DHCP/NTP and independent DNS detail remain available through the existing
-StreamDeck detail view and CLI status.
+For an un-hashed, unambiguous entry, copy the exact Ed25519 record from the
+Mac's trusted file:
+
+```sh
+awk '$1 == "192.168.4.5" && $2 == "ssh-ed25519" { print $2 " " $3; exit }' \
+  ~/.ssh/known_hosts
+```
+
+If the file is hashed or has multiple ambiguous records, stop and verify the
+record manually through the trusted Mac/console rather than guessing. To
+authorize the Controller, inspect the Host's effective `AuthorizedKeysFile`
+through the trusted Mac session and append the key printed by
+`host show-public-key` idempotently to that existing root key file; do not
+replace other recovery keys.
+
+`host enroll` then performs strict read-only checks with the persistent
+Controller identity and records only `/etc/boetticher/lab.yml` with the
+verified address, root user, node binding, and `no-subscription` repository
+policy. It does not create API tokens, application secrets, PKI, guests,
+storage, or networking. The Controller keeps the private key at
+`/var/lib/boetticher/controller/ssh/id_ed25519` with root-only permissions and
+the imported Host key at `known_hosts` in the same directory. Independent
+Mac/root access remains the recovery path.
+
+## Status daemon and peripherals
+
+This section is the canonical description of the Controller peripherals.
+Blinkt, StreamDeck, display, and kiosk hardware are Controller implementation
+details, never Module namespaces.
+
+The Controller runs one local `boetticher-status.service` daemon. It is the
+exclusive owner of the Pimoroni Blinkt and its GPIO23/GPIO24 path, and of an
+attached StreamDeck. Bootstrap and Host operations send best-effort progress
+events over its root-only Unix socket at `/run/boetticher/status.sock`. If the
+socket or hardware is unavailable, the operation continues normally.
+
+Controller bootstrap always installs the status daemon and its packaged
+driver; the old standalone Controller StreamDeck service is removed. Blinkt and
+StreamDeck are optional: if either is absent, the daemon keeps running, and the
+GPIO check is reported as `NOT TESTED` rather than blocking Controller
+readiness. Host apply always installs the packaged Host speedtest helper; it
+does not depend on either device. Host status and apply compare the installed
+helper's `--version` with the Controller release, so `host apply` reinstalls a
+stale helper.
+
+The display is a lightweight operator convenience, not authoritative
+monitoring or qualification. A green LED means only that its corresponding
+simple, read-only check passed. It does not depend on the observability
+runtime or an external monitoring API. Unconfigured capabilities are off,
+configured-but-unavailable capabilities are failed, and unknown is never
+healthy. The daemon runs with root privileges in the reference image because
+the GPIO device is root-owned; its systemd unit otherwise confines network,
+filesystem, and device access.
+
+### Blinkt
+
+The fixed eight-pixel layout, viewed from the operator side, is:
+
+```text
+CTL HOST NETWORK VPN TAILNET NET CTRL-UPDATES HOST-UPDATES
+```
 
 | Display | Meaning |
 | --- | --- |
 | Breathing green | The lightweight check is healthy |
-| Steady blue | Startup or checking |
+| Steady blue | Startup, checking, or configuration staged |
 | Pulsing amber | Attention or degraded operation |
-| Solid red | A meaningful health or operation failure |
+| Flashing red | A meaningful health or operation failure |
 | Off | Not configured or not applicable |
 
+- `CTL` is local Controller health and `HOST` is the enrolled Proxmox Host.
+- `NETWORK` is the aggregate of the Firewall, DNS, and DHCP/NTP capabilities'
+  native control-plane status. It does not run the packet-acceptance suite, so
+  red means desired/provider drift or a failed local predicate, not proof of a
+  network outage. The individual states are on the StreamDeck NETWORK view
+  and in `module firewall|dns|dhcp status`.
+- `VPN` is the integrated firewall-provider VPN status. A configured VPN with
+  unverified egress is distinct from a failed or unconfigured VPN, and VPN
+  availability does not prove protected-client enforcement.
+- `TAILNET` is the subnet router's native local status; it does not represent
+  remote packet qualification. A disconnected coordination service is
+  attention while existing approved routes may continue; policy drift is
+  failed.
+- `NET` runs a lightweight Host-side connectivity check every 60 seconds. It
+  is green when Host Internet connectivity works and the most recent hourly
+  speedtest download meets the configured threshold, amber when connectivity
+  works but the speedtest is below threshold or has no usable recent result,
+  and red only after connectivity fails twice consecutively. The hourly
+  speedtest runs on the Host using the release-built `showwin/speedtest-go`
+  helper on `vmbr0`, over the existing strict SSH relationship; the reference
+  threshold is 500 Mbps for an approximately 1000 Mbps service. It uses the
+  external speedtest.net service only for that explicit sample.
+- `CTRL-UPDATES` is green when no Controller updates are available, amber when
+  updates or the native `/var/run/reboot-required` marker need attention, and
+  blue while a Boetticher configuration-staged event is active.
+  `HOST-UPDATES` is green when no Proxmox package updates or Host reboot are
+  reported, and amber when either is. Both read existing local/cached APT state
+  only; they never install packages, refresh package lists, or reboot.
+
 Apply and test commands temporarily use dedicated operation modes. Apply shows
-the blue Knight Rider chase while it is running, then holds an all-green or
-all-red result briefly. Test shows one pixel per named test group: active tests
-active tests pulse blue, passed tests are solid green, and failed tests are solid red. The
-current firewall test uses five groups (gateway, Internet egress, inter-zone
-policy, HOME protection, and administration). The final result is held briefly
-before Standard status resumes. Display notifications remain best-effort and
-never affect the command result.
+the blue Knight Rider chase while it runs, then holds an all-green or all-red
+result briefly. Test shows one pixel per named test group: active tests pulse
+blue, passed tests are solid green, and failed tests are solid red. The
+firewall test uses five groups (gateway, Internet egress, inter-zone policy,
+HOME protection, and administration). The final result is held briefly before
+standard status resumes. Display notifications never affect the command
+result.
 
-`CTL` is local Controller health and `HOST` is the enrolled Proxmox Host.
-`FW` is the firewall capability's native status result; `DHCP/NTP` is the
-shared client-service native status result. `Tailnet` is the fixed
-subnet-router's native local status; it does not represent remote packet
-qualification. Amber means action
-required, blue means configuration staged or an operation is in progress, and
-green means healthy. These are operational display states, not packet
-qualification evidence.
-`CTRL-UPDATES` is green when no Controller updates are available, amber when
-updates or the native `/var/run/reboot-required` marker require attention, and
-blue when an explicit Boetticher configuration-staged event is active.
-`HOST-UPDATES` is green when no Proxmox package updates or Host reboot are
-reported, and amber when either is reported. Both update views are read-only;
-they do not run package installation, refresh package lists, or reboot.
+### StreamDeck
 
-`NET` runs a lightweight Host-side ping/connectivity check every 60 seconds.
-It is green when Host Internet connectivity is available and the most recent
-full speedtest download meets the configured threshold. It is amber when
-connectivity works but the speedtest is below the threshold or has no usable
-recent result, and red only after connectivity fails twice consecutively. The
-full speedtest runs from the Host approximately every hour using the
-release-built `showwin/speedtest-go` helper on `vmbr0`; the reference-lab
-threshold is 500 Mbps for its approximately 1000 Mbps service.
+The 15-key StreamDeck is a detailed, read-only view of the enrolled Host. The
+home screen rows are:
 
-The optional configuration keeps these defaults explicit without adding a
-status database or generated state:
-
-```yaml
-status:
-  interval: 30s
-  ping_interval: 60s
-  internet:
-    throughput_interval: 1h
-    healthy_mbps: 500
-  blinkt:
-    enabled: true
-    brightness: 0.3
-  streamdeck:
-    enabled: true
-    brightness: 0.5
-    telemetry_interval: 15s
+```text
+PVE      CPU      RAM      DATA     NET
+guest    guest    guest    guest    guest
+NETWORK  VPN      TAILNET  SCROLL   REFRESH
 ```
 
-The display is a lightweight operator convenience, not authoritative
-monitoring or qualification. A green LED means only that its corresponding
-simple, read-only check passed. It does not depend on the observability runtime
-or an external monitoring API. The hourly speedtest uses the external speedtest.net measurement service
-only for that explicit performance sample. The Controller daemon runs with
-root privileges in the reference image because the GPIO device is root-owned;
-its systemd unit otherwise confines network, filesystem, and device access.
-An external Companion's optional StreamDeck service is installed only when its
-capability is enabled and retries until the configured USB device is present;
-its absence does not block Companion setup.
+`PVE` shows the Host (or the step of a running operation); `DATA` follows
+fresh/stale Host telemetry; `NET` shows the latest hourly throughput. The
+middle row shows five VM/LXC guests sorted by VMID; each tile shows `VM<id>` or
+`CT<id>`, the hostname, and its runtime status, and `SCROLL` pages through
+guests five at a time. `NETWORK`, `VPN`, and `TAILNET` open their detail
+views; the VPN and Tailnet views show the capability state and its reported
+reason.
 
-When a StreamDeck is attached to the Controller, it is owned by the same
-`boetticher-status.service` daemon as Blinkt. The home screen is a detailed,
-read-only view of the enrolled Host. Its five-key rows are Proxmox health
-(`PVE`, CPU, RAM, DATA, NET), five VM/LXC guests sorted by VMID, and core
-services (`FW`, VPN, TAILNET, SCROLL, REFRESH). DATA follows fresh/stale Host
-telemetry; VPN reflects the bounded integrated firewall-provider status and its
-detail view preserves the reported reason. A red control-plane status is not
-packet-acceptance or outage proof. SCROLL cycles
-through guests five at a time. Each guest tile uses `VM<id>` or `CT<id>` on
-the first line, the hostname on the second, and its runtime status on the
-third.
-Host and guest detail views provide BACK and REFRESH only. Apart from the
-bounded NETWORK speedtest below, StreamDeck input cannot start, stop, reboot,
-deploy, or run shell commands. The old standalone Controller StreamDeck
-service is removed during Controller bootstrap.
+The Host detail view shows node, Proxmox version, uptime, CPU, RAM, DATA, Host
+updates, reboot-required state, and the `FW`, `DHCP`, `VPN`, `TAILNET`, and
+`DNS` capability states. The guest detail view shows identity, name, type,
+CPU, RAM, and uptime. Every detail view has BACK and REFRESH. Apart from the
+bounded `ST-LAB` speedtest below, StreamDeck input cannot start, stop, reboot,
+deploy, or run shell commands.
 
-The NETWORK detail view (home key `NETWORK`) uses this layout:
+The NETWORK detail view uses this layout:
 
 ```text
 NETWORK  FIREWALL  DNS     DHCP/NTP  DETAIL
@@ -280,18 +314,18 @@ SERVER   -         -       BACK      REFRESH
 `ST-LAB` runs one manual speedtest from inside the LAB through the firewall's
 ordinary WAN egress. The Host helper creates a temporary owned namespace
 (`bt4s-lab`, host veth `bt4s-lab-h`) as an access port on exactly the SERVERS
-VLAN (untagged, PVID, with the bridge default VLAN 1 removed) with an address from
-the reserved `.250-.254` probe space, which is outside the VPN-protected
+VLAN (untagged, PVID, with the bridge default VLAN 1 removed) with an address
+from the reserved `.250-.254` probe space, which is outside the VPN-protected
 `.224/28` range, and resolves names through the SERVERS gateway like any LAB
 client. It streams one progress line per phase over the strict Host SSH
-transport. While the test runs the key is blue and shows the phase or the
-live download/upload rate; PING, DOWN, UP, and SERVER show the split figures.
-The finished result stays on the keys, with its completion time, until the
-next run, including after navigating away; a failure shows `FAILED` and the
-reason scrolls on SERVER. A second press while running shows `BUSY`; a press
-during the hourly NET sample shows `HOURLY`, and with no firewall configured
-shows `NO FW`. The hourly sample waits while a manual run is active, manual
-results never feed the NET/Blinkt throughput figure, and the helper shares the
+transport. While the test runs the key is blue and shows the phase or the live
+download/upload rate; PING, DOWN, UP, and SERVER show the split figures. The
+finished result stays on the keys, with its completion time, until the next
+run, including after navigating away; a failure shows `FAILED` and the reason
+scrolls on SERVER. A second press while running shows `BUSY`; a press during
+the hourly NET sample shows `HOURLY`, and with no firewall configured shows
+`NO FW`. The hourly sample waits while a manual run is active, manual results
+never feed the NET/Blinkt throughput figure, and the helper shares the
 firewall packet-test lock so the two never run together. Each run removes its
 fixture with a fresh cleanup budget, removes an owned leftover from an
 interrupted run before starting (reported on SERVER), and reports a cleanup
@@ -311,13 +345,47 @@ reservations in the protected range, enforced by the firewall's source rules
 and VPN client set, so an honest VPN-path test needs a declared probe client
 rather than a temporary one.
 
-The Host detail view also shows `FW`, `DHCP`, and `TAILNET` using the same coarse
-component states as Blinkt. `FW` consumes the native `module firewall status`
-result; the client-service slot consumes `module dhcp status`, and TAILNET
-consumes `module tailnet status`. Unconfigured is off, while a configured
-service with failed local checks is failed. A disconnected Tailnet coordination
-service is attention when existing approved routes may continue; policy drift
-still reports failed.
+### Status configuration
+
+The optional `status` section of `/etc/boetticher/controller.yml` keeps these
+defaults explicit without adding a status database or generated state:
+
+```yaml
+status:
+  interval: 30s
+  ping_interval: 60s
+  internet:
+    throughput_interval: 1h
+    healthy_mbps: 500
+  blinkt:
+    enabled: true
+    brightness: 0.3
+  streamdeck:
+    enabled: true
+    brightness: 0.5
+    telemetry_interval: 15s
+```
+
+## Lab snapshot portal
+
+Controller bootstrap also installs the lab snapshot portal
+(`boetticher-labviewer.service`) and its five-minute refresh timer
+(`boetticher-lab-snapshot.timer`). The viewer listens on the Controller's
+SERVERS address (`10.10.20.10:8090`) and serves a human page at `/lab/`,
+machine data at `/lab/snapshot.json`, and the packaged Start, Lab, and Modules
+pages at `/lab/docs/`. When the observability runtime is applied, its Caddy
+frontend publishes the portal as `lab.<public domain>` and
+`labviewer.<public domain>`, and the managed firewall admits only that runtime
+to the portal port.
+
+The snapshot contains redacted desired intent, allowlisted live facts, source
+timestamps, explicit unknown/stale states, and links. It never publishes
+credentials, private keys, raw configuration, or arbitrary logs. Holmes reads
+the same bounded publication instead of receiving SSH or Proxmox credentials.
+The unit reads `/etc/boetticher/lab.yml` and the packaged docs read-only and
+writes only `/var/lib/boetticher/labviewer/snapshot`. See
+[labviewer/README.md](https://github.com/gofastercloud/boetticher/blob/main/labviewer/README.md)
+for running it locally and for optional `control_surfaces` links.
 
 ## Installed paths and maintenance
 
@@ -327,8 +395,10 @@ still reports failed.
 | `/opt/boetticher/current` | Active release symlink |
 | `/opt/boetticher/venv/` | Private Ansible environment |
 | `/opt/boetticher/toolchains/go1.26.10/` | Pinned Go toolchain |
-| `/etc/boetticher/controller.yml` | Minimal operator and Blinkt configuration |
-| `/var/lib/boetticher/controller/` | Controller state, including the log2ram boot marker |
+| `/etc/boetticher/controller.yml` | Controller-local operator and status settings |
+| `/etc/boetticher/lab.yml` | Host, LAB, and capability intent |
+| `/var/lib/boetticher/controller/` | Controller state, SSH identity, and the log2ram boot marker |
+| `/var/lib/boetticher/labviewer/` | Lab snapshot facts and publication |
 | `/run/boetticher/status.sock` | Root-only best-effort operation event socket |
 | `/var/cache/boetticher/` | Downloaded package/toolchain cache |
 | `/var/log/boetticher/bootstrap.log` | Bounded bootstrap output |
@@ -345,243 +415,21 @@ a sudden power loss can be lost. The native log2ram service and synchronization
 timer remain responsible for persistence; bootstrap never forces a live
 unmount or reboot.
 
-## Phase-one boundary
+Reboot the Controller explicitly; it never reboots the Host:
 
-This phase prepares the Controller and the Proxmox Host. Firewall,
-platform guests, physical trunks, and application modules belong to later
-phases. No alternate workstation, TUI, kiosk, or Companion bootstrap path is
-supported.
+```sh
+sudo boetticher controller reboot --yes
+```
+
+Host upgrades and reboots are covered in
+[Start here: Host maintenance](start.html#host-maintenance).
+
+## Pinned inputs
 
 The pinned inputs are [Raspberry Pi OS](https://www.raspberrypi.com/documentation/computers/os.html)
 Debian 13/Trixie ARM64, [Go 1.26.10](https://go.dev/dl/),
 [Ansible Core 2.19.11](https://pypi.org/project/ansible-core/2.19.11/), and
 [Azlux log2ram](https://github.com/azlux/log2ram). The Go archive checksum and
 Ansible pin are recorded in the repository; the Azlux archive key is shipped as
-a public runtime asset.
-
-## Phase two: Proxmox enrollment
-
-After controller readiness passes, Phase two establishes a dedicated root SSH
-identity for the existing Proxmox host. The Mac remains the trust bridge: verify
-the host key through the Mac's existing strict `known_hosts` relationship, then
-copy only that public host key to the Pi. Do not use `ssh-keyscan`, TOFU, or
-`StrictHostKeyChecking=no`.
-
-```sh
-sudo boetticher host create-identity
-sudo boetticher host show-public-key
-sudo boetticher host import-host-key --address 192.168.4.5 --key 'ssh-ed25519 VERIFIED_HOST_KEY'
-sudo boetticher host enroll root@192.168.4.5
-sudo boetticher host status --details
-```
-
-From the Mac, first verify the existing relationship without accepting a new
-key:
-
-```sh
-ssh -o StrictHostKeyChecking=yes root@192.168.4.5 'hostname; pveversion'
-```
-
-For an un-hashed, unambiguous entry, copy the exact Ed25519 record from the
-Mac's trusted file (do not run `ssh-keyscan`):
-
-```sh
-awk '$1 == "192.168.4.5" && $2 == "ssh-ed25519" { print $2 " " $3; exit }' \\
-  ~/.ssh/known_hosts
-```
-
-If the file is hashed or has multiple ambiguous records, stop and verify the
-record manually through the trusted Mac/console rather than guessing. Then
-pass only the verified public host key to `host import-host-key`. To authorize the
-Pi, inspect the host's effective `AuthorizedKeysFile` through the trusted Mac
-session and append the printed controller public key idempotently to that
-existing root key file; do not replace other recovery keys.
-
-`host enroll` performs strict read-only checks with the persistent controller
-identity and records only `/etc/boetticher/lab.yml` with the verified address,
-root user, node binding, and `no-subscription` repository policy. It does not
-create API tokens, application secrets, PKI, guests, storage, or networking.
-
-`host status` is read-only. `--details` shows existing guests as operator-owned,
-Proxmox storage, stable `/dev/disk/by-id` identities, LVM, mounts, and network
-facts. It does not adopt or mutate discovered objects. A working but unprepared
-host is reported as requiring preparation, not as unhealthy.
-
-`host apply` displays its bounded Host change set and requires confirmation (or
-`--yes`). Its dedicated Ansible role only configures the known Proxmox
-no-subscription repository policy, required host prerequisites, and headless
-power behavior, and the signed release-built Host speedtest helper. It never
-formats disks, changes guests, storage, bridges, addresses, routes, firewall, or
-recovery access. Re-running it is safe; it does not upgrade or reboot Proxmox.
-Package upgrades and reboots use `host upgrade` and `host reboot`; see
-[Host maintenance](start.md#host-maintenance).
-The required Proxmox services (`pve-cluster`, `pvedaemon`, `pvestatd`, and
-`pveproxy`) are explicitly enabled and started by the same Host setup role so
-they return after reboot.
-
-The controller keeps the private key at
-`/var/lib/boetticher/controller/ssh/id_ed25519` with root-only permissions and
-the imported host key at `known_hosts` in the same directory. Independent
-Mac/root access remains the recovery path. This phase inventories the dual-disk
-host only; disk initialization belongs to a later, explicitly authorized phase.
-
-## Phase 3A: dedicated data storage
-
-Storage initialization is a separate destructive boundary. Start with both
-controller and host readiness passing, then review the read-only plan:
-
-```sh
-sudo boetticher host plan-storage
-```
-
-The plan traces the running Proxmox root/LVM stack to protect the boot disk and
-identifies candidates only through stable `/dev/disk/by-id` paths. Capacity,
-enumeration order, and `/dev/sdX` names are not identity. An empty, uniquely
-identified Timetec disk is eligible; mounted, partitioned, LVM-backed,
-guest-used, Proxmox-used, changed, or ambiguous state fails closed.
-
-First initialization requires the exact freshly rediscovered stable path and
-explicit confirmation:
-
-```sh
-sudo boetticher host apply \
-  --data-disk /dev/disk/by-id/<exact-data-disk-id> \
-  --yes
-```
-
-The operation creates only one LVM PV, `boetticher-vg`, thin pool `data`, and
-the Proxmox `boetticher-data` `lvmthin` store with `images,rootdir` content. It
-does not create a filesystem or mount, move guests, alter existing storage,
-change networking, or begin Phase 3B. The selected stable identity is written
-to `/etc/boetticher/lab.yml` only after successful verification.
-
-`host status` is read-only. Repeating `host apply --yes` on the
-exact healthy layout reports that no changes are required; conflicting or
-partial layouts are never wiped automatically. During live acceptance, run a
-small reversible Proxmox allocation smoke test without creating a guest.
-Rebooting Proxmox is a separate explicit approval gate, followed by rechecking
-the PV, VG, thin pool, storage registration, guests, and management network.
-Independent Mac/root access remains the recovery path if a storage step fails.
-
-## Phase 3B: Host virtual networking
-
-Phase 3B adds only the internal virtual bridge. It preserves the proven HOME
-management path and does not configure a physical trunk or any routing policy:
-
-```text
-HOME
-  |
-  +-- physical HOME NIC
-         |
-       vmbr0
-         |
-         +-- Proxmox 192.168.4.5
-
-Virtual LAB
-  |
-  +-- vmbr1   VLAN-aware, nic1 tagged member (VLAN 5/10/20/30/40/99)
-       |
-       +-- VLAN 5   TRANSIT
-       +-- VLAN 10  INFRA
-       +-- VLAN 20  SERVERS
-       +-- VLAN 30  TRUSTED
-       +-- VLAN 40  SANDBOX
-       +-- VLAN 99  MGMT
-```
-
-Review the protected path before configuration:
-
-```sh
-sudo boetticher host apply --adopt-existing-network --yes
-sudo boetticher host status
-```
-
-`host status` is read-only. `host apply` adds an absent `vmbr1` stanza with VLAN
-awareness and no untagged address or gateway. The accepted physical binding is
-the verified `nic1` MAC `a0:ce:c8:a2:b2:10`, restricted to tagged VLANs
-5/10/20/30/40/99 with untagged ingress rejected. Host management uses tagged
-`vmbr1.99` at `10.10.99.5/24`, with LAB return routes via `10.10.99.1`. It
-never rewrites `vmbr0`, changes `192.168.4.5`, changes the default route,
-enables forwarding,
-or configures DHCP, DNS, firewall, guests, or switches. An unknown or
-conflicting `vmbr1` or physical binding is reported and not adopted.
-
-A compatible existing bridge requires explicit adoption:
-
-```sh
-sudo boetticher host apply --adopt-existing-network --yes
-```
-
-The command displays the protected HOME path and runtime addresses before
-asking for confirmation (or accepts `--yes` for deliberate scripted use).
-Adoption requires a VLAN-aware bridge with no configured addresses,
-gateway, or unknown interface directives. Runtime IPv6 link-local addresses
-alone are compatible; configured link-local, global IPv6, IPv4, and gateway
-routes remain conflicts.
-
-Boetticher owns `/etc/sysctl.d/70-boetticher-vmbr1.conf`, setting
-`net.ipv6.conf.vmbr1.disable_ipv6=1`, and a vmbr1-only
-`/etc/network/if-up.d/boetticher-vmbr1` hook. The hook reapplies suppression
-after bridge creation, including at boot; configuration requires ifupdown2
-script support to be enabled. Existing unrelated files at either path are
-rejected. This disables host IPv6 participation on vmbr1 without adding any
-Ethernet filtering or globally disabling IPv6.
-
-After configuration and again after an explicitly authorized Proxmox reboot,
-verify:
-
-```sh
-ip -6 addr show dev vmbr1
-sysctl net.ipv6.conf.vmbr1.disable_ipv6
-```
-
-There must be no IPv6 address and the sysctl must equal `1`. Verify fresh
-Pi-to-Proxmox SSH, unchanged vmbr0/nic0/192.168.4.5/default route, no vmbr1 host
-IPv4 or physical ports, VLAN awareness, repeat configure with no changes, and
-`host status` PASS. The current reference architecture is IPv4-only; guest IPv6
-forwarding is not a Host acceptance claim. The retained guest bridge regression
-is internal to vmbr1, while IPv6 forwarding and security policy belong to
-explicit future firewall/network Module work.
-
-The six VLAN numbers remain logical desired configuration for later guest
-deployment. They do not claim zone isolation in this phase. Configuration is
-revalidated through a fresh strict Controller SSH session, and repeat runs on
-an exact bridge report that no changes are required. Proxmox reboot is a
-separate explicit gate; the independent Mac/root path is the recovery method
-if management verification fails. Phase 3B stops before firewall deployment.
-
-## Host teardown and rebuild
-
-Host configuration has a bounded inverse for qualification and recovery:
-
-```sh
-sudo boetticher host teardown --plan
-sudo boetticher host teardown \
-  --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
-```
-
-The plan preserves the Controller identity, trusted Proxmox host key,
-Proxmox installation, boot storage, and HOME management. It removes only exact
-Boetticher-owned vmbr1, its host IPv6 suppression, the `boetticher-data`
-registration and LVM layout, safely removable host-baseline files, and the
-enrollment, storage, and network selections in `lab.yml`. Shared packages,
-unknown repository or power settings, guests, and unrelated storage stop the
-operation.
-
-Teardown is ordered from dependent Host configuration to its prerequisites and is retryable by rerunning
-the same command. The exact Timetec stable path is required for disk
-destruction; `--yes` confirms only non-destructive prompts. After remote work
-succeeds, `lab.yml` retains the Proxmox address and user but omits the enrolled
-node, storage, and network selections. `host status` then reports the
-intentional trust-only state and `host apply` directs the operator to
-`host enroll`.
-
-Approved reboot rehearsals are also Controller operations. With guests
-present, the Host reboot requires `--with-guests` (see
-[Host maintenance](start.md#host-maintenance)):
-
-```sh
-sudo boetticher host reboot --yes
-sudo boetticher host reboot --with-guests --yes
-sudo boetticher controller reboot --yes
-```
+a public runtime asset. No alternate workstation, TUI, kiosk, or external
+Companion bootstrap path is supported.

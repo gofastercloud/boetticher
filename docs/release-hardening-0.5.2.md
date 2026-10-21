@@ -90,13 +90,13 @@ remaining certificate path has an explicit endpoint owner and threat-model
 reason; the controller no longer carries a generic endpoint certificate cache
 or endpoint CSR signer.
 
-The current normal clean-install path is approximately:
+At the time, the normal clean-install path (since retired) was approximately:
 
 ```text
 init -> bundle import/update -> enroll -> plan -> deploy -> status
 ```
 
-The target operator path is:
+The then-target operator path (also retired) was:
 
 ```text
 init -> enroll -> update -> deploy -> status

@@ -2,12 +2,13 @@
 layout: default
 title: Firewall capability
 section: lab
-description: Phase 4A firewall capability contract and boundaries.
+description: The firewall capability contract and boundaries.
 ---
 
-# Firewall capability — Phase 4A
+# Firewall capability
 
-Phase 4A delivers the first production Module capability:
+The firewall is the first Module capability and creates the shared appliance
+that DNS, DHCP, and VPN use:
 
 ```text
 boetticher module firewall plan [--management-address IPv4] [--home-recovery]
@@ -61,8 +62,9 @@ provider migration so a failed reload can be recovered by a later apply.
 
 The provider receives one HOME NIC on `vmbr0` and one untagged LAB trunk NIC
 on `vmbr1`. It creates gateway interfaces at `.1` for VLANs 5, 10, 20, 30, 40,
-and 99. The capability is IPv4-only. Provider-side DHCP and DNS are disabled
-in Phase 4A.
+and 99. The capability is IPv4-only. Provider-side DHCP and DNS stay disabled until
+the peer `module dns` and `module dhcp` capabilities are applied; see
+[Client services](client-services.html).
 
 The Proxmox Host management address is `10.10.99.5/32` on MGMT. The firewall
 allows Host SSH from TRUSTED `10.10.30.0/24`, the Tailnet router
@@ -89,18 +91,19 @@ operational view, not qualification evidence; it verifies provider
 identity/running state, authenticated API reachability, six gateway interfaces,
 active firewall runtime, and an IPv4 HOME default route. `teardown` requires
 explicit approval and removes only the exact owned provider identity and
-Controller state. A failed first apply leaves understandable provider state
-for the next apply to inspect and continue.
+Controller state; it refuses while DNS or DHCP is enabled. `teardown --plan`
+describes the exact provider, disk, and Controller-local credential/trust state
+that would be removed. A failed first apply leaves understandable provider
+state for the next apply to inspect and continue.
 
-This source implementation is not live qualification evidence. The required
-packet journeys, provider reboot, teardown/rebuild rehearsal, and final
-clean-install gate remain **NOT TESTED** until run against the enrolled
-reference Host. Local tests prove deterministic generation and ownership
-boundaries only.
+Local tests prove deterministic generation and ownership boundaries only;
+packet journeys, provider reboot, and teardown/rebuild need the enrolled
+reference Host.
 
-## Phase 4A closeout state
+## Acceptance record (historical)
 
-The final enrolled-lab closeout run established fresh apply, semantic no-op,
+This records the original firewall closeout run; it is not evidence for later
+changes. That enrolled-lab closeout run established fresh apply, semantic no-op,
 provider reboot/recovery, independent routed-IPv4 packet acceptance, bounded
 interruption cleanup, teardown, and preservation of the Controller and Host.
 The run ended with no firewall deployed; absent status is expected and returns
@@ -145,7 +148,7 @@ failures or unproven results, never successful blocks.
 `test --plan` creates nothing. A normal run always attempts bounded cleanup
 with a fresh cleanup context, including after interruption. Failed cleanup is a
 failed test; `test --cleanup-only --yes` is the supported recovery and refuses
-ambiguous ownership. This suite validates routed IPv4 policy only; it does not
+ambiguous ownership. `--plan --yes` is rejected. This suite validates routed IPv4 policy only; it does not
 claim same-VLAN, physical-switch, Wi-Fi, guest-firewall, or IPv6 isolation.
 
 The Controller StreamDeck `ST-LAB` speedtest (described in the Controller
@@ -154,10 +157,11 @@ and holds the same Host test lock, so a packet test started during a manual
 speedtest is refused as already running until that bounded run finishes. `test --cleanup-only --yes` also
 removes an owned leftover `bt4s-lab` fixture from an interrupted speedtest.
 
-The existing Controller status monitor represents the firewall check on the
-`FW` Blinkt slot and the StreamDeck Host-detail view. Phase 4B adds peer
-`module dns` and `module dhcp` operations on this same appliance; DHCP-derived
-DNS and client-facing NTP are supporting functions, not standalone modules.
-Their status facts use the same polling/debounce model without a status
-database or repair loop. Physical trunking and external switching remain out
-of scope.
+The Controller status daemon folds the firewall status into the `NETWORK`
+aggregate with DNS and DHCP/NTP, and shows it individually on the StreamDeck
+NETWORK and Host detail views; see the
+[Controller guide](../controller.html#status-daemon-and-peripherals). The
+peer `module dns` and `module dhcp` capabilities share this appliance;
+DHCP-derived DNS and client-facing NTP are supporting functions, not
+standalone modules. Physical trunking is Host configuration; external switch
+management is not implemented.

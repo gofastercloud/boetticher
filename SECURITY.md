@@ -17,7 +17,7 @@ The most helpful report includes:
 - a safe reproduction path; and
 - the likely impact or a mitigation idea, if you have one.
 
-Please leave out secrets, private keys, live addresses, private site files,
+Please leave out secrets, private keys, live addresses, private lab configuration,
 and exploit payloads. If a command printed a credential, stop using that
 credential and rotate or revoke it through the supported recovery path.
 
@@ -28,10 +28,9 @@ details are published. This is a small project without a formal supported
 release matrix, so reports against the latest release or current main branch
 are especially useful.
 
-Problems in Proxmox, Debian, nftables, Kea, VictoriaMetrics, VictoriaLogs,
-Grafana, Gatus, Ansible, SOPS, age, PowerDNS, or another upstream should also
-go through that project's security
-process. Those maintainers know their software best.
+Problems in Proxmox, Debian, OpenWrt, dnsmasq, Stubby, WireGuard, Tailscale,
+Caddy, VictoriaMetrics, VictoriaLogs, Grafana, Gatus, Ansible, or another
+upstream should also go through that project's security process. Those maintainers know their software best.
 
 ## In scope
 

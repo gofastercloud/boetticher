@@ -1,5 +1,10 @@
 # Boetticher process review
 
+> **Historical record.** This review describes the retired site/bundle/deploy
+> architecture at commit `8030c60` (0.4.2). Its command paths, counts, and
+> recommendations are not current instructions. The supported workflow is in
+> [Start here](start.md).
+
 ## Scope and conclusion
 
 This is a source-forensic review of the `process-review` branch at commit

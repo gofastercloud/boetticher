@@ -10,6 +10,19 @@ description: The fixed Tailnet subnet-router contract.
 `boetticher module tailnet` manages one unprivileged LXC, `lab-tailnet-01`
 (VMID 200), on `vmbr1` VLAN 5. Its exact TRANSIT address is `10.10.5.10`
 with MAC `02:00:00:00:05:10`; it advertises `10.10.0.0/16` and applies SNAT.
+Exit-node, accept-routes, accept-DNS, and Tailscale SSH are disabled.
+
+```text
+boetticher module tailnet plan
+boetticher module tailnet apply --auth-key-file /secure/path/key --yes
+boetticher module tailnet status
+boetticher module tailnet test --plan|--yes
+boetticher module tailnet teardown --plan|--yes
+```
+
+Apply requires enabled DNS and DHCP, the exact Host substrate, and the pinned
+Host-native image builder. Repeating apply after native runtime, provider, and
+intent agreement is a no-op.
 
 Apply reads an auth key only after confirmation, from the operator supplied
 `--auth-key-file`. The file must be a private regular non-symlink and is
@@ -32,12 +45,11 @@ and IPv6. Tailscale coordination uses its encrypted TCP 80 transport with TCP
 Native status verifies the loaded policy, TUN, exact preferences,
 route approval, package version, and persistent runtime files.
 
-The current Controller native test passes local runtime and DNS TCP/UDP checks.
-The exact CT200 identity was retained through an identity-preserving daemon
-restart after a coordination map-poll timeout; native status is healthy again.
-This status is local evidence. It does not prove remote peer reachability,
+The bounded `module tailnet test --yes` checks local runtime and DNS TCP/UDP
+reachability. Native status is local evidence. It does not prove remote peer reachability,
 manual split-DNS grants, packet journeys through the physical network, or
 same-VLAN/Wi-Fi isolation. The bounded module test reports those acceptance
 dimensions separately as `NOT TESTED`. Key expiry and machine approval are
-recovery conditions handled by a subsequent approved apply. Phase 4D is a
-rebase point for 4E integration and recovery, not a qualified rollout.
+recovery conditions handled by a subsequent approved apply with a current
+operator-approved key. A disconnected coordination service is reported as
+attention while existing approved routes may continue; policy drift is failed.

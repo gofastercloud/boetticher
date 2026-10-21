@@ -18,7 +18,9 @@ There is no separate base or foundation object.
 
 ## First Host journey
 
-Run these commands on the Controller after installing the supported release:
+This page is the canonical operator journey. Run these commands on the
+Controller after installing the Controller payload (see
+[Install from a local payload](controller.html#install-from-a-local-payload)):
 
 ```sh
 sudo boetticher controller bootstrap --operator pi --confirm-key-login
@@ -36,8 +38,9 @@ sudo boetticher host apply \
 sudo boetticher host status --details
 ```
 
-The Host key must be verified independently before `import-host-key`. Boetticher
-never accepts a new key automatically. The Controller keeps its Ed25519 identity
+The Host key must be verified independently before `import-host-key`; the
+[Controller guide](controller.html#verifying-the-host-key) shows the Mac-side
+check. Boetticher never accepts a new key automatically. The Controller keeps its Ed25519 identity
 and known-hosts file under `/var/lib/boetticher/controller/ssh/`.
 
 `host apply` is declarative and idempotent. It inspects native state and then:
@@ -86,7 +89,8 @@ stable disks, LVM, mounts, interfaces, bridges, and routes.
 
 The protected HOME path remains separate from the internal bridge. The current
 reference topology is `vmbr0` for management and a VLAN-aware `vmbr1` for VLANs
-5, 10, 20, 30, 40, and 99. Physical LAB networking is later Host configuration;
+5, 10, 20, 30, 40, and 99. Physical LAB networking is Host configuration
+(`host apply --physical-trunk`, described in [The lab](lab.html#fixed-physical-topology));
 it is not a Module.
 
 For existing user guests, see [operator-managed systems](operator-systems.md)
@@ -215,6 +219,7 @@ use the LAB route after enrollment.
 The LAB key entry lives in `/etc/ssh/boetticher-controller-lab.authorized_keys`,
 leaving the Proxmox-managed `/root/.ssh/authorized_keys` link and cluster key
 file unchanged.
+Each capability is described in [Modules](modules.html).
 Provider software, appliance names, daemons, guests, and Controller
 peripherals are not Module namespaces. Use the bounded resource commands under
 `module dhcp` and `module dns`; arbitrary provider configuration is not part of

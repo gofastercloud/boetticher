@@ -5,9 +5,9 @@ think a homelab should feel powerful without becoming a second full-time job.
 Good contributions make the lab more useful, more understandable, or simply
 more fun to run.
 
-Start with [the lab guide](https://gofastercloud.github.io/boetticher/lab.html),
-then skim [Modules](https://gofastercloud.github.io/boetticher/modules.html) if
-your change touches an appliance, image, network, or companion.
+Start with [the lab guide](https://lab.davebarton.cc/lab.html), then skim
+[Modules](https://lab.davebarton.cc/modules.html) if your change touches a
+capability, appliance image, network, or Controller peripheral.
 
 ## Keep the shape small
 
@@ -23,20 +23,28 @@ those less clear just to shorten a code path.
 
 ## A good development loop
 
+Work on a feature branch and run the full local gate on Linux before opening a
+pull request:
+
 ```sh
+git switch -c my-change
 gofmt -w cmd internal
 make ci
 ```
 
-Use the Go version in `go.mod`. Add a focused regression test for a behavioural
-or security fix. The public guide source lives in `docs/` and is published as a
-GitHub Pages site. Keep generated files generated: the command page comes from
-`internal/cli/commands.go`, so run `make command-docs` rather than editing
-`docs/commands.md` by hand.
+Use the Go version in `go.mod`. Some tests are Linux-only, so a cross-build on
+another OS is not a substitute for `make ci` on Linux. GitHub Actions only
+publishes the documentation site; there is no hosted test or release workflow.
 
-Never commit a secret, age identity, cache, bootstrap credential, or live site
-directory. If you think one slipped into a change, stop and deal with that
-before opening a pull request.
+Add a focused regression test for a behavioural or security fix. The public
+guide source lives in `docs/` and is published as a GitHub Pages site. Keep
+generated files generated: the command page comes from
+`internal/cli/commands.go`, so run `make command-docs` rather than editing
+`docs/commands.md` by hand, and update the help text and the guide together.
+
+Never commit a secret, API key, auth key, private key, cache, bootstrap
+credential, or a copy of `/etc/boetticher/`. If you think one slipped into a
+change, stop and deal with that before opening a pull request.
 
 ## Pull requests
 
@@ -53,37 +61,27 @@ before opening a pull request.
 If you are unsure whether an idea belongs here, open an issue or draft pull
 request early. A small conversation is cheaper than a heroic rebase.
 
-## Rehearse the release workflow
+## Trying a change on a Controller
 
-The first supported platform and base release is `0.1.0`; module appliances
-retain their independent `1.0.0` versions. Keep `boetticher/v3`, schema 3, and
-the bundle and artifact ABIs separate from that release label.
-
-After a release change reaches `main`, run the complete hosted build without
-publishing:
+There is no signed release bundle or tagged release ceremony. After the pull
+request is reviewed, build the Controller payload from the branch and install
+it on the Controller with the local installer:
 
 ```sh
-gh workflow run release.yml --ref main -f release_version=0.1.0
-gh run list --workflow release.yml --event workflow_dispatch --limit 1
-gh run watch RUN_ID --exit-status
+ARRSTACK_SOURCE_ARCHIVE=/path/to/arrstack-source.tar.gz \
+  sh scripts/package-controller.sh BUILD_ID
+# copy dist/controller/ to the Pi, then on the Pi:
+sudo sh /home/pi/controller-release/install.sh \
+  --from-dir /home/pi/controller-release --operator pi --confirm-key-login
 ```
 
-The repository must have `BOETTICHER_RELEASE_KEY_ID`,
-`BOETTICHER_RELEASE_SIGNING_KEY`, and `BOETTICHER_RELEASE_TRUSTED_KEYS`
-configured as Actions secrets. A manual rehearsal uses those values only on
-the ephemeral runner, builds and qualifies all 13 artifacts, assembles and
-imports the signed bundle with its matching controller, then uploads a
-short-lived rehearsal artifact containing only the controller and bundle. It
-must not create a GitHub Release.
-
-Only a pushed, exact `v0.1.x` tag uploads the validated outputs and enters the
-approval-protected `release` environment. Run the manual rehearsal before
-creating a tag. While the tagged publish job waits, download and inspect that
-run's exact controller and bundle, complete the clean-install acceptance, and
-approve publication only if those bytes pass.
+The [Controller guide](https://lab.davebarton.cc/controller.html#install-from-a-local-payload)
+describes the payload and installer. Exercise the change through the installed
+CLI, not a checkout, and report source checks, deployment, packet journeys, and
+physical checks separately; an untested gate stays `NOT TESTED`.
 
 ## Reporting security issues
 
-Please do not put credentials, private keys, live addresses, private site
+Please do not put credentials, private keys, live addresses, private lab
 configuration, or exploit steps in a public issue. [SECURITY.md](SECURITY.md)
 explains the private reporting route.

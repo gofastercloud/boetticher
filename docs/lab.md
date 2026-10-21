@@ -38,31 +38,19 @@ Proxmox Host
 
 The Controller runs Boetticher, keeps the persistent administrative identity,
 stores `/etc/boetticher/controller.yml`, and owns its attached peripherals.
-The current reference implementation is a Raspberry Pi. Blinkt, StreamDeck,
-display, and kiosk behavior remain Controller implementation details; none is a
-Host Module namespace.
+The current reference implementation is a Raspberry Pi.
 
 The Controller does not need a Host selector in the supported single-Host UX.
-Multi-Host support is deliberately not implemented in this phase.
+Multi-Host support is deliberately not implemented.
 
-The Controller's fixed Blinkt layout is
-`CTL HOST FW VPN TAILNET NET CTRL-UPDATES HOST-UPDATES`.
-It is rendered by the local status daemon as a lightweight convenience; it is
-not a monitoring or qualification system. Blinkt, StreamDeck, display, and
-kiosk behavior remain Controller implementation details rather than Module
-namespaces.
-
-The Controller performs its 60-second Internet connectivity check and its
-hourly full speedtest from the enrolled Proxmox Host over the existing strict
-SSH relationship. The speedtest helper is a one-shot Host binary installed by
-Host apply; the status daemon never installs packages or changes Host state.
-Controller and Host update indicators inspect existing local/cached APT state
-read-only. Controller reboot-required state remains separate from Host reboot
-state. The Controller status daemon and Host helper are always installed by
-their standard setup flows; Blinkt and StreamDeck remain optional peripherals
-whose absence does not block setup.
-If a StreamDeck is present on the Controller, the shared status daemon owns it
-alongside Blinkt and exposes detailed read-only Host and guest telemetry.
+The Controller's local status daemon owns the optional Blinkt and StreamDeck
+and renders shared capability facts as a lightweight convenience, not a
+monitoring or qualification system. Its connectivity and speedtest checks run
+from the enrolled Host over the existing strict SSH relationship and never
+change Host state. The layouts and states are described once, in the
+[Controller guide](controller.html#status-daemon-and-peripherals). Blinkt,
+StreamDeck, display, and kiosk behavior remain Controller implementation
+details rather than Module namespaces.
 
 ## Host configuration
 
@@ -82,6 +70,13 @@ Each concern inspects native state first. Exact state is a no-op, safely absent
 state can be created, recognized Boetticher-owned partial state can be resumed,
 and conflicting or ambiguous state stops without mutation.
 
+The baseline configures only the known Proxmox `no-subscription` repository
+policy, required Host prerequisites, headless power behavior, and the
+release-built Host speedtest helper. The same role explicitly enables and
+starts the required Proxmox services (`pve-cluster`, `pvedaemon`, `pvestatd`,
+and `pveproxy`) so they return after reboot. It never upgrades or reboots
+Proxmox; see [Host maintenance](start.html#host-maintenance).
+
 ## Fixed physical topology
 
 HOME management remains on `vmbr0`. The current Host binding uses a
@@ -100,7 +95,7 @@ semantic VLANs are:
 | 40 | SANDBOX | Isolated test/client traffic |
 | 99 | MGMT | Management traffic |
 
-The six VLAN numbers are Host configuration. The Phase 4A firewall capability
+The six VLAN numbers are Host configuration. The firewall capability
 consumes this substrate and provides the virtual gateways and IPv4 policy; it
 does not create or repair `vmbr1`.
 Physical LAB networking is Host-owned and remains outside the Module namespace.
@@ -113,6 +108,34 @@ The reference topology includes a Controller on SERVERS and a client on
 SANDBOX. Addresses, hostnames, MACs, and leases belong in private acceptance
 records; public documentation deliberately leaves those site-specific values
 out.
+
+The physical member is an explicit Host binding. Select it once, by
+interface name, and Host apply records its permanent MAC:
+
+```sh
+sudo boetticher host apply --physical-trunk nic1 --adopt-existing-network --yes
+```
+
+A later `--physical-trunk` that does not match the persisted binding is
+refused. `host apply` adds an absent `vmbr1` stanza with VLAN awareness and no
+untagged address or gateway, and adds the tagged `vmbr1.99` management
+interface with LAB return routes via `10.10.99.1`. It never rewrites `vmbr0`,
+changes the HOME address or default route, enables forwarding, or configures
+DHCP, DNS, firewall, guests, or switches. A compatible existing bridge needs
+`--adopt-existing-network`: it must be VLAN-aware with no configured
+addresses, gateway, or unknown interface directives. Runtime IPv6 link-local
+addresses alone are compatible; configured link-local, global IPv6, IPv4, and
+gateway routes remain conflicts.
+
+Boetticher owns `/etc/sysctl.d/70-boetticher-vmbr1.conf`, setting
+`net.ipv6.conf.vmbr1.disable_ipv6=1`, and a vmbr1-only
+`/etc/network/if-up.d/boetticher-vmbr1` hook that reapplies suppression after
+bridge creation, including at boot (ifupdown2 script support must be enabled).
+Existing unrelated files at either path are rejected. This disables Host IPv6
+participation on vmbr1 without adding Ethernet filtering or globally disabling
+IPv6. After configuration, and again after an approved Proxmox reboot,
+`ip -6 addr show dev vmbr1` shows no address and
+`sysctl net.ipv6.conf.vmbr1.disable_ipv6` equals `1`.
 
 For the read-only `host status` health check, `vmbr1` is healthy when the link is
 up, VLAN-aware, correctly configured, and has no Host L3 address or gateway.
@@ -134,8 +157,22 @@ creates only the owned LVM-thin layout:
 
 `boetticher host plan-storage` is read-only. `host apply` requires the exact
 stable `--data-disk` binding and `--yes` before erasing an eligible candidate.
-The boot disk, mounted or guest-used disks, foreign LVM, and ambiguous layouts
-are protected or rejected.
+The plan traces the running Proxmox root/LVM stack to protect the boot disk
+and identifies candidates only through stable `/dev/disk/by-id` paths;
+capacity, enumeration order, and `/dev/sdX` names are not identity. Only an
+empty, uniquely identified disk is eligible. Mounted, partitioned,
+LVM-backed, guest-used, Proxmox-used, changed, or ambiguous state fails
+closed. Apply creates no filesystem or mount, moves no guests, and writes the
+selected stable identity to `/etc/boetticher/lab.yml` only after successful
+verification. A conflicting or partial layout is never wiped automatically.
+Proxmox registers `boetticher-data` as an `lvmthin` store with
+`images,rootdir` content.
+
+During acceptance, run a small reversible Proxmox allocation smoke test on
+`boetticher-data` without creating a guest. A Proxmox reboot is a separate
+explicit approval; afterwards recheck the PV, VG, thin pool, storage
+registration, guests, and management network. Independent Mac/root access
+remains the recovery path if a storage step fails.
 
 ## Host status and recovery
 
@@ -157,7 +194,15 @@ repairs state.
 requires `--data-disk` matching the configured stable identity and `--yes`.
 Teardown preserves Controller configuration, Controller SSH identity, imported
 Host trust, Proxmox installation, boot disk, HOME management, and independent
-recovery access. Rebuild uses `host enroll`, `host apply`, and `host status`.
+recovery access. It removes, from dependent configuration to prerequisites,
+only the exact Boetticher-owned vmbr1, its Host IPv6 suppression, the
+`boetticher-data` registration and LVM layout, safely removable Host-baseline
+files, and the enrollment, storage, and network selections in `lab.yml`.
+Shared packages, unknown repository or power settings, guests, and unrelated
+storage stop the operation. Afterwards `lab.yml` keeps the Proxmox address and
+user, `host status` reports the intentional trust-only state, and `host apply`
+directs the operator to `host enroll`. The operator journey is in
+[Start here](start.html#host-teardown-and-rebuild).
 
 ## Modules: capability, provider, runtime
 
@@ -167,9 +212,9 @@ They are separate concepts:
 
 | Concept | Example |
 | --- | --- |
-| Capability | `firewall`, `dhcp`, `dns`, `vpn`, `monitoring`, `statuspage` |
-| Provider | gateway appliance, DNS resolver, monitoring service, status-page server |
-| Runtime | gateway VM, monitoring VM/LXC, or the Controller |
+| Capability | `firewall`, `dns`, `dhcp`, `vpn`, `tailnet`, `observability`, `monitoring`, `logging`, `statuspage`, `media` |
+| Provider | gateway appliance, DNS resolver, subnet router, monitoring service, status-page server |
+| Runtime | gateway VM, Tailnet LXC, monitoring LXC, media VM, or the Controller |
 
 The public grammar is capability-first:
 
@@ -177,22 +222,18 @@ The public grammar is capability-first:
 boetticher module <capability> <action> [flags]
 ```
 
-Phase 4A operator actions are `module firewall plan`, `apply`, `status`,
-`reboot`, `test`, and `teardown`. OpenWrt implements this capability but remains
-an internal provider detail. `test --plan` is read-only; `test --yes` runs the
-fixed routed IPv4 suite against the existing provider; and
-`test --cleanup-only --yes` removes only recognised temporary namespace/veth
-leftovers without provider credentials. The suite is operational acceptance,
-not `status`: it uses six temporary LAB namespaces and fixed gateway, egress,
-inter-zone, HOME, and administration journeys, then requires exact cleanup.
-The existing status monitor consumes the same native capability status facts
-for the fixed `FW`, `VPN`, and `TAILNET` slots. Unconfigured client services
-are off rather than permanent faults; configured-but-unavailable services are
-failed. `NETWORK` is the control-plane aggregate of Firewall, DNS, and DHCP/NTP
-status; it does not run the packet-acceptance suite. A red aggregate therefore
-indicates desired/provider drift or a failed local predicate, not proof of a
-network or VPN outage. VPN, physical trunking, and
-external-switch management are later phases.
+The firewall capability creates the shared gateway appliance and its six
+virtual gateways; DNS, DHCP, and VPN are peer capabilities on that appliance.
+Tailnet, observability, and media each own one fixed guest. Each capability's
+ownership and lifecycle is described in [Modules](modules.html); the firewall
+contract and packet suite are in
+[Firewall capability](networking/firewall-capability.html), and the DNS/DHCP
+contract is in [Client services](networking/client-services.html). Capability
+status feeds the Controller display; see the
+[Controller guide](controller.html#status-daemon-and-peripherals).
+
+Physical trunking is Host configuration (`host apply --physical-trunk`), not a
+Module. External-switch management is not implemented.
 
 Proxmox owns operator workloads. Boetticher never adopts, imports, or deletes
 unknown guests, volumes, or network devices merely because a name or address
