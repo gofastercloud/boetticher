@@ -155,8 +155,9 @@ required: the reboot marker, a changed package that needs a reboot (kernel,
 firmware, microcode, libc6, systemd), or a running kernel other than the
 `proxmox-boot-tool` pinned kernel, or the newest installed kernel when none is
 pinned. It never reboots. If the session is lost, the command reports the unit's
-live state; the log ends with `BOETTICHER_UPGRADE_RESULT=success` or `=failed`
-when the upgrade finishes:
+live state. Each run prints a run ID, and the log ends with
+`BOETTICHER_UPGRADE_RESULT=<run ID>:success` or `:failed` when that run
+finishes; markers from other runs are ignored:
 
 ```sh
 systemctl status boetticher-host-upgrade
@@ -170,7 +171,8 @@ guests stop in reverse startup order and guests with `onboot` enabled start in
 order afterwards. Boetticher never stops or starts guests itself. The preview
 (`--plan`) is read-only and shows each guest's onboot and startup order, warning
 about running guests that will not start again. The reboot is scheduled two seconds
-out so the request returns cleanly; whatever it returns, only a new Host boot ID
+out so the request returns cleanly. A definite remote scheduling failure stops
+at once; after an SSH drop, a killed client, or a timeout only a new Host boot ID
 counts. The Controller waits up to 20 minutes for that new boot, probing the normal connection and
 then the HOME fallback read-only, because the firewall guest that routes the LAB
 path may still be starting. It then waits up to 10 minutes for guest startup and

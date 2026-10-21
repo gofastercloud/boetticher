@@ -217,22 +217,45 @@ func CheckRepositoryPolicy(state RepositoryState) ([]AptSource, error) {
 // Package update commands. The refresh is the only change a plan makes; the
 // simulation and snapshots are read-only.
 const (
-	AptRefreshCommand  = "LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -q -o DPkg::Lock::Timeout=300 update 2>&1"
-	AptSimulateCommand = "LC_ALL=C apt-get -s -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade 2>&1"
-	PackageSnapshotCmd = "dpkg-query -W -f='${db:Status-Abbrev}\\t${Package}\\t${Version}\\n'"
-	RebootStateCommand = "printf 'BOETTICHER_RUNNING_KERNEL=%s\\n' \"$(uname -r)\"; printf 'BOETTICHER_PINNED_KERNEL=%s\\n' \"$(cat /etc/kernel/next-boot-pin 2>/dev/null || cat /etc/kernel/proxmox-boot-pin 2>/dev/null || true)\"; printf 'BOETTICHER_NEWEST_KERNEL=%s\\n' \"$(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#^/boot/vmlinuz-##' | sort -V | tail -n 1)\"; if test -e /var/run/reboot-required; then echo BOETTICHER_REBOOT_REQUIRED=1; else echo BOETTICHER_REBOOT_REQUIRED=0; fi"
-	UpgradeUnit        = "boetticher-host-upgrade"
-	UpgradeLog         = "/var/log/boetticher-host-upgrade.log"
-	// The full-upgrade runs in a transient systemd unit so that an SSH drop
-	// (for example while networking packages restart) cannot interrupt dpkg.
-	// The unit appends a result marker to its log so the outcome stays
-	// inspectable after --collect unloads it. The script contains no "$" or
-	// "%" so systemd performs no expansion on it.
-	AptUpgradeCommand   = "systemd-run --quiet --unit=" + UpgradeUnit + " --wait --collect --service-type=exec --property=StandardOutput=truncate:" + UpgradeLog + " --property=StandardError=inherit --setenv=DEBIAN_FRONTEND=noninteractive --setenv=APT_LISTCHANGES_FRONTEND=none --setenv=LC_ALL=C /bin/sh -c '/usr/bin/apt-get -y -q -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade && echo " + UpgradeResultMarker + "success || { echo " + UpgradeResultMarker + "failed; exit 1; }'"
+	AptRefreshCommand   = "LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -q -o DPkg::Lock::Timeout=300 update 2>&1"
+	AptSimulateCommand  = "LC_ALL=C apt-get -s -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade 2>&1"
+	PackageSnapshotCmd  = "dpkg-query -W -f='${db:Status-Abbrev}\\t${Package}\\t${Version}\\n'"
+	RebootStateCommand  = "printf 'BOETTICHER_RUNNING_KERNEL=%s\\n' \"$(uname -r)\"; printf 'BOETTICHER_PINNED_KERNEL=%s\\n' \"$(cat /etc/kernel/next-boot-pin 2>/dev/null || cat /etc/kernel/proxmox-boot-pin 2>/dev/null || true)\"; printf 'BOETTICHER_NEWEST_KERNEL=%s\\n' \"$(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#^/boot/vmlinuz-##' | sort -V | tail -n 1)\"; if test -e /var/run/reboot-required; then echo BOETTICHER_REBOOT_REQUIRED=1; else echo BOETTICHER_REBOOT_REQUIRED=0; fi"
+	UpgradeUnit         = "boetticher-host-upgrade"
+	UpgradeLog          = "/var/log/boetticher-host-upgrade.log"
 	UpgradeResultMarker = "BOETTICHER_UPGRADE_RESULT="
 	// UpgradeOutcomeCommand reads the unit's live state and the log tail.
 	UpgradeOutcomeCommand = "printf 'BOETTICHER_UPGRADE_UNIT=%s\\n' \"$(systemctl is-active " + UpgradeUnit + ".service 2>/dev/null || true)\"; tail -n 40 " + UpgradeLog + " 2>/dev/null || true"
 )
+
+// AptUpgradeCommand runs the full-upgrade in a transient systemd unit so
+// that an SSH drop (for example while networking packages restart) cannot
+// interrupt dpkg. The unit appends a result marker carrying this run's
+// Controller-generated ID to its log, so the outcome stays inspectable after
+// --collect unloads it and a previous run's marker is never mistaken for this
+// one. The script contains no "$" or "%", so systemd performs no expansion.
+func AptUpgradeCommand(runID string) (string, error) {
+	if !upgradeRunID.MatchString(runID) {
+		return "", errors.New("upgrade run ID must be 16-64 lowercase hex characters")
+	}
+	marker := UpgradeResultMarker + runID + ":"
+	return "systemd-run --quiet --unit=" + UpgradeUnit + " --wait --collect --service-type=exec --property=StandardOutput=truncate:" + UpgradeLog + " --property=StandardError=inherit --setenv=DEBIAN_FRONTEND=noninteractive --setenv=APT_LISTCHANGES_FRONTEND=none --setenv=LC_ALL=C /bin/sh -c '/usr/bin/apt-get -y -q -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade && echo " + marker + "success || { echo " + marker + "failed; exit 1; }'", nil
+}
+
+var upgradeRunID = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
+
+// UpgradeResult returns this run's marker value ("success" or "failed") from
+// the log tail; markers from other runs are ignored.
+func UpgradeResult(output []byte, runID string) string {
+	result := ""
+	prefix := UpgradeResultMarker + runID + ":"
+	for _, line := range strings.Split(string(output), "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			result = value
+		}
+	}
+	return result
+}
 
 // RefreshProblems returns apt update lines that make the refreshed indexes
 // untrustworthy for planning.
@@ -280,6 +303,9 @@ func ParseSimulatedUpgrade(output []byte) UpgradePlan {
 }
 
 func IsKernelPackage(name string) bool {
+	if strings.HasSuffix(name, "-helper") {
+		return false
+	}
 	for _, prefix := range []string{"proxmox-kernel-", "pve-kernel-", "linux-image-"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
@@ -466,7 +492,7 @@ func CheckPackageSystemIdle(output []byte) error {
 const (
 	// RebootCommand schedules the reboot two seconds out so the SSH call
 	// returns cleanly before the Host goes down.
-	RebootCommand          = "systemd-run --quiet --on-active=2 --timer-property=AccuracySec=100ms --unit=boetticher-host-reboot /usr/bin/systemctl reboot"
+	RebootCommand          = "systemd-run --quiet --collect --on-active=2 --timer-property=AccuracySec=100ms --unit=boetticher-host-reboot /usr/bin/systemctl reboot"
 	BootIDCommand          = "cat /proc/sys/kernel/random/boot_id"
 	GuestsServiceCommand   = "systemctl is-enabled pve-guests.service 2>/dev/null || true"
 	GuestsServiceActiveCmd = "systemctl is-active pve-guests.service 2>/dev/null || true"

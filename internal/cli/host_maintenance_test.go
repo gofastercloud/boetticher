@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -39,10 +40,21 @@ type fakeHost struct {
 	// rebootErr is returned by the reboot request; rebootIgnored keeps the
 	// previous boot (the request never took effect).
 	rebootErr     error
+	rebootExit    int
 	rebootIgnored bool
 	// guestLag is how many post-reboot listings still show 280 stopped.
 	guestLag int
 }
+
+const testRunID = "0123456789abcdef0123456789abcdef"
+
+var testUpgradeCommand = func() string {
+	command, err := controllerhost.AptUpgradeCommand(testRunID)
+	if err != nil {
+		panic(err)
+	}
+	return command
+}()
 
 const idlePackages = "BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_DPKG_LOCK=free\n"
 
@@ -90,7 +102,8 @@ func (h *fakeHost) deps() hostMaintenanceDeps {
 			}
 			return fakeHostPath{h, "lab"}, "10.10.99.5", nil
 		},
-		now: func() time.Time { return h.clock },
+		now:   func() time.Time { return h.clock },
+		runID: func() (string, error) { return testRunID, nil },
 		sleep: func(_ context.Context, duration time.Duration) error {
 			h.clock = h.clock.Add(duration)
 			return nil
@@ -133,7 +146,7 @@ func upgradeHost(sources, simulation string) *fakeHost {
 				return controllerhost.Result{ExitCode: 255}, host.outcomeErr
 			}
 			return out(host.outcome)
-		case controllerhost.AptUpgradeCommand:
+		case testUpgradeCommand:
 			if host.upgradeErr != nil {
 				return controllerhost.Result{ExitCode: 255}, host.upgradeErr
 			}
@@ -195,11 +208,11 @@ func TestHostUpgradeYesReportsChangedPackagesAndNeverReboots(t *testing.T) {
 	if err := runHostUpgradeWith(host.deps(), []string{"--yes"}, nil, &out); err != nil {
 		t.Fatalf("upgrade: %v\n%s", err, out.String())
 	}
-	if host.count(controllerhost.AptUpgradeCommand) != 1 || host.count(controllerhost.RebootCommand) != 0 {
+	if host.count(testUpgradeCommand) != 1 || host.count(controllerhost.RebootCommand) != 0 {
 		t.Fatalf("commands=%v", host.commands)
 	}
 	for _, fragment := range []string{"DEBIAN_FRONTEND=noninteractive", "--force-confdef", "--force-confold", "full-upgrade"} {
-		if !strings.Contains(controllerhost.AptUpgradeCommand, fragment) {
+		if !strings.Contains(testUpgradeCommand, fragment) {
 			t.Fatalf("upgrade command lacks %s", fragment)
 		}
 	}
@@ -288,7 +301,7 @@ func rebootHost(returnAfterPolls int) *fakeHost {
 			host.rebooted = true
 			host.labDown = !host.rebootIgnored
 			if host.rebootErr != nil {
-				return controllerhost.Result{ExitCode: -1}, host.rebootErr
+				return controllerhost.Result{ExitCode: host.rebootExit}, host.rebootErr
 			}
 			return out("")
 		}
@@ -388,7 +401,7 @@ func TestHostUpgradeRefusesWhilePackageSystemBusy(t *testing.T) {
 			host := upgradeHost(testSources, testSimulation)
 			host.busy = busy
 			err := runHostUpgradeWith(host.deps(), args, nil, &bytes.Buffer{})
-			if err == nil || host.count(controllerhost.AptRefreshCommand) != 0 || host.count(controllerhost.AptUpgradeCommand) != 0 {
+			if err == nil || host.count(controllerhost.AptRefreshCommand) != 0 || host.count(testUpgradeCommand) != 0 {
 				t.Fatalf("%s %v: err=%v commands=%v", name, args, err, host.commands)
 			}
 		}
@@ -405,9 +418,10 @@ func TestHostUpgradeReportsLiveUnitStateAfterSSHDropOrSystemdRunFailure(t *testi
 		reject     string
 	}{
 		"still running":   {timeout, "BOETTICHER_UPGRADE_UNIT=active\nUnpacking pve-manager ...\n", nil, []string{"still running", "is active", "systemctl status boetticher-host-upgrade"}, "Host upgrade: PASS"},
-		"finished":        {timeout, "BOETTICHER_UPGRADE_UNIT=inactive\nSetting up pve-manager\nBOETTICHER_UPGRADE_RESULT=success\n", nil, []string{"finished on the Host", "changed packages were not reported"}, "still running"},
-		"failed":          {timeout, "BOETTICHER_UPGRADE_UNIT=inactive\nE: Sub-process /usr/bin/dpkg returned an error code (1)\nBOETTICHER_UPGRADE_RESULT=failed\n", nil, []string{"Host full-upgrade failed", "dpkg returned an error"}, "still running"},
+		"finished":        {timeout, "BOETTICHER_UPGRADE_UNIT=inactive\nSetting up pve-manager\nBOETTICHER_UPGRADE_RESULT=" + testRunID + ":success\n", nil, []string{"finished on the Host", "changed packages were not reported"}, "still running"},
+		"failed":          {timeout, "BOETTICHER_UPGRADE_UNIT=inactive\nE: Sub-process /usr/bin/dpkg returned an error code (1)\nBOETTICHER_UPGRADE_RESULT=" + testRunID + ":failed\n", nil, []string{"Host full-upgrade failed", "dpkg returned an error"}, "still running"},
 		"unreadable":      {timeout, "", errors.New("exit status 255: connect timed out"), []string{"outcome is unknown", "could not be read", "grep BOETTICHER_UPGRADE_RESULT="}, "still running"},
+		"stale marker":    {errors.New("Proxmox SSH command failed: exit status 1: Failed to connect to bus"), "BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_UPGRADE_RESULT=ffffffffffffffff:success\nBOETTICHER_UPGRADE_RESULT=success\n", nil, []string{"outcome is unknown", "no result marker for run " + testRunID, "previous run"}, "finished on the Host"},
 		"no marker":       {errors.New("Proxmox SSH command failed: exit status 1"), "BOETTICHER_UPGRADE_UNIT=inactive\n", nil, []string{"outcome is unknown", "no result marker"}, "still running"},
 		"unit exists":     {errors.New("Proxmox SSH command failed: exit status 1: Failed to start transient service unit: Unit boetticher-host-upgrade.service was already loaded or has a fragment file."), "", nil, []string{"did not start", "already exists from another run"}, "still running"},
 		"unit exists alt": {errors.New("Proxmox SSH command failed: exit status 1: Unit boetticher-host-upgrade.service already exists."), "", nil, []string{"did not start"}, "continues"},
@@ -424,7 +438,7 @@ func TestHostUpgradeReportsLiveUnitStateAfterSSHDropOrSystemdRunFailure(t *testi
 				t.Errorf("%s: error lacks %q: %v", name, want, err)
 			}
 		}
-		if strings.Contains(err.Error()+out.String(), tc.reject) || host.count(controllerhost.AptUpgradeCommand) != 1 || host.count(controllerhost.RebootCommand) != 0 {
+		if strings.Contains(err.Error()+out.String(), tc.reject) || host.count(testUpgradeCommand) != 1 || host.count(controllerhost.RebootCommand) != 0 {
 			t.Errorf("%s: err=%v commands=%v\n%s", name, err, host.commands, out.String())
 		}
 		if strings.HasPrefix(name, "unit exists") && host.count(controllerhost.UpgradeOutcomeCommand) != 0 {
@@ -446,15 +460,17 @@ func TestHostRebootRefusedWhileUpgradeRunsOrDpkgLocked(t *testing.T) {
 	}
 }
 
-func TestHostRebootRequestErrorStillWaitsForNewBoot(t *testing.T) {
-	for name, requestErr := range map[string]error{
-		"timeout":   errors.New("Proxmox SSH command timed out: context deadline exceeded"),
-		"exit 1":    errors.New("Proxmox SSH command failed: exit status 1"),
-		"exit 255":  errors.New("Proxmox SSH command failed: exit status 255"),
-		"killed -1": errors.New("Proxmox SSH command failed: signal: killed"),
+func TestHostRebootRequestErrorWaitsOnlyWhenRebootMayHaveStarted(t *testing.T) {
+	for name, tc := range map[string]struct {
+		exit int
+		err  error
+	}{
+		"timeout":  {-1, fmt.Errorf("Proxmox SSH command timed out: %w", context.DeadlineExceeded)},
+		"exit 255": {255, errors.New("Proxmox SSH command failed: exit status 255")},
+		"killed":   {-1, errors.New("Proxmox SSH command failed: signal: killed")},
 	} {
 		host := rebootHost(2)
-		host.rebootErr = requestErr
+		host.rebootErr, host.rebootExit = tc.err, tc.exit
 		var out bytes.Buffer
 		if err := runHostRebootWith(host.deps(), []string{"--with-guests", "--yes"}, &out); err != nil {
 			t.Fatalf("%s: %v\n%s", name, err, out.String())
@@ -464,13 +480,23 @@ func TestHostRebootRequestErrorStillWaitsForNewBoot(t *testing.T) {
 		}
 	}
 	host := rebootHost(0)
-	host.rebootErr = errors.New("Proxmox SSH command failed: exit status 1: Failed to start transient timer unit")
-	host.rebootIgnored = true
+	host.rebootErr, host.rebootExit, host.rebootIgnored = errors.New("Proxmox SSH command failed: exit status 1: Failed to start transient timer unit"), 1, true
+	definite := host.deps()
+	start := host.clock
+	err := runHostRebootWith(definite, []string{"--with-guests", "--yes"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "reboot was not scheduled") || host.clock != start || host.count(controllerhost.BootIDCommand) != 1 {
+		t.Fatalf("definite failure err=%v waited=%s commands=%v", err, host.clock.Sub(start), host.commands)
+	}
+	host = rebootHost(0)
+	host.rebootErr, host.rebootExit, host.rebootIgnored = errors.New("Proxmox SSH command failed: exit status 255"), 255, true
 	deps := host.deps()
 	deps.rebootReturnBudget = time.Minute
-	err := runHostRebootWith(deps, []string{"--with-guests", "--yes"}, &bytes.Buffer{})
+	err = runHostRebootWith(deps, []string{"--with-guests", "--yes"}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "did not return within 1m0s") || !strings.Contains(err.Error(), "still running the previous boot") {
 		t.Fatalf("unchanged boot err=%v", err)
+	}
+	if !strings.Contains(controllerhost.RebootCommand, "--collect") {
+		t.Fatal("reboot unit must be collected")
 	}
 }
 

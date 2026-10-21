@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +25,8 @@ type hostMaintenanceDeps struct {
 	runner func(config controllerhost.LabConfig, home bool, timeout time.Duration) (controllerhost.Runner, string, error)
 	now    func() time.Time
 	sleep  func(context.Context, time.Duration) error
+	// runID returns a fresh lowercase-hex ID for one upgrade run.
+	runID func() (string, error)
 
 	pollInterval       time.Duration
 	rebootReturnBudget time.Duration
@@ -58,6 +62,13 @@ var hostMaintenance = hostMaintenanceDeps{
 		return transport, transport.Address, nil
 	},
 	now: time.Now,
+	runID: func() (string, error) {
+		value := make([]byte, 16)
+		if _, err := rand.Read(value); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(value), nil
+	},
 	sleep: func(ctx context.Context, duration time.Duration) error {
 		timer := time.NewTimer(duration)
 		defer timer.Stop()
@@ -205,10 +216,18 @@ func runHostUpgradeWith(deps hostMaintenanceDeps, args []string, input io.Reader
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "\nUpgrading Proxmox Host packages (noninteractive full-upgrade, existing configuration files kept)...")
+	runID, err := deps.runID()
+	if err != nil {
+		return fmt.Errorf("generate upgrade run ID: %w", err)
+	}
+	command, err := controllerhost.AptUpgradeCommand(runID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "\nUpgrading Proxmox Host packages (noninteractive full-upgrade, existing configuration files kept; run %s)...\n", runID)
 	started := deps.now()
-	if _, err := upgradeRunner.Run(ctx, controllerhost.AptUpgradeCommand); err != nil {
-		return describeUpgradeFailure(ctx, runner, err)
+	if _, err := upgradeRunner.Run(ctx, command); err != nil {
+		return describeUpgradeFailure(ctx, runner, err, runID)
 	}
 	elapsed := deps.now().Sub(started).Round(time.Second)
 	snapshot, err = runner.Run(ctx, controllerhost.PackageSnapshotCmd)
@@ -243,7 +262,7 @@ var upgradeCheckHint = "Check on the Host: systemctl status " + controllerhost.U
 // describeUpgradeFailure reports the upgrade unit's live state after the
 // Controller's wait failed, so an SSH drop or timeout is not mistaken for a
 // failed (or finished) upgrade.
-func describeUpgradeFailure(ctx context.Context, runner controllerhost.Runner, runErr error) error {
+func describeUpgradeFailure(ctx context.Context, runner controllerhost.Runner, runErr error, runID string) error {
 	if text := runErr.Error(); strings.Contains(text, "already loaded") || strings.Contains(text, "already exists") {
 		return fmt.Errorf("Host full-upgrade did not start: a %s unit already exists from another run: %w. %s", controllerhost.UpgradeUnit, runErr, upgradeCheckHint)
 	}
@@ -251,16 +270,13 @@ func describeUpgradeFailure(ctx context.Context, runner controllerhost.Runner, r
 	if err != nil {
 		return fmt.Errorf("Host full-upgrade outcome is unknown: the Controller wait ended (%v) and the unit state could not be read (%v). %s", runErr, err, upgradeCheckHint)
 	}
-	unit, result := "unknown", ""
+	unit := "unknown"
 	for _, line := range strings.Split(string(output.Stdout), "\n") {
-		line = strings.TrimSpace(line)
-		if value, ok := strings.CutPrefix(line, "BOETTICHER_UPGRADE_UNIT="); ok {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "BOETTICHER_UPGRADE_UNIT="); ok {
 			unit = value
 		}
-		if value, ok := strings.CutPrefix(line, controllerhost.UpgradeResultMarker); ok {
-			result = value
-		}
 	}
+	result := controllerhost.UpgradeResult(output.Stdout, runID)
 	tail := outputTail(output.Stdout)
 	switch {
 	case unit == "active" || unit == "activating":
@@ -270,7 +286,7 @@ func describeUpgradeFailure(ctx context.Context, runner controllerhost.Runner, r
 	case result == "failed":
 		return fmt.Errorf("Host full-upgrade failed: %w%s\n%s", runErr, tail, upgradeCheckHint)
 	}
-	return fmt.Errorf("Host full-upgrade outcome is unknown: %w (%s.service is %s, no result marker in the log)%s\n%s", runErr, controllerhost.UpgradeUnit, unit, tail, upgradeCheckHint)
+	return fmt.Errorf("Host full-upgrade outcome is unknown: %w (%s.service is %s, no result marker for run %s in the log; any earlier log content belongs to a previous run)%s\n%s", runErr, controllerhost.UpgradeUnit, unit, runID, tail, upgradeCheckHint)
 }
 
 func readRebootState(ctx context.Context, runner controllerhost.Runner) (controllerhost.RebootState, error) {

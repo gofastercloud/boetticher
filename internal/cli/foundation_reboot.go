@@ -98,10 +98,13 @@ func runHostRebootWith(deps hostMaintenanceDeps, args []string, out io.Writer) e
 		return nil
 	}
 	requested := deps.now()
-	if _, err := runner.Run(ctx, controllerhost.RebootCommand); err != nil {
-		// The reply may be lost (SSH drop, hang killed by the timeout) even
-		// though the reboot was scheduled. A new boot ID is the only proof
-		// either way, so keep waiting; an unchanged one gives the failure.
+	if result, err := runner.Run(ctx, controllerhost.RebootCommand); err != nil {
+		// A definite remote non-zero exit means scheduling failed. An SSH
+		// failure (255), a killed client (-1), or a timeout may have lost
+		// the reply of a scheduled reboot; only a new boot ID decides.
+		if result.ExitCode != 255 && result.ExitCode != -1 && !errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("Proxmox reboot was not scheduled: %w", err)
+		}
 		fmt.Fprintf(out, "\nProxmox reboot request returned an error (%v); waiting for a new Host boot to confirm.\n", err)
 	} else {
 		fmt.Fprintln(out, "\nProxmox reboot requested.")

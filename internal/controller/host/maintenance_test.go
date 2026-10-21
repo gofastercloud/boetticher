@@ -85,6 +85,12 @@ Conf pve-manager (9.2.22 Proxmox:9.2/stable [all])
 	if reasons := plan.RebootReasons(); strings.Join(reasons, ",") != "libc6,proxmox-kernel-7.0.15-1-pve-signed" {
 		t.Fatalf("reasons=%v", reasons)
 	}
+	if IsKernelPackage("proxmox-kernel-helper") || IsKernelPackage("pve-kernel-helper") || !IsKernelPackage("proxmox-kernel-7.0.15-1-pve-signed") {
+		t.Fatal("kernel helper packages are not kernels")
+	}
+	if reasons := ParseSimulatedUpgrade([]byte("Inst proxmox-kernel-helper [9.0.3] (9.0.4 Proxmox:9.2/stable [all])\n")).RebootReasons(); len(reasons) != 0 {
+		t.Fatalf("helper predicted a reboot: %v", reasons)
+	}
 	if len(plan.ProtectedRemovals()) != 0 || len(ParseSimulatedUpgrade([]byte("Remv proxmox-ve [9.1]\n")).ProtectedRemovals()) != 1 {
 		t.Fatal("protected removal classification")
 	}
@@ -195,7 +201,17 @@ func TestCheckPackageSystemIdle(t *testing.T) {
 			t.Errorf("%q: err=%v", output, err)
 		}
 	}
-	if !strings.Contains(AptUpgradeCommand, UpgradeResultMarker+"success") || strings.ContainsAny(AptUpgradeCommand[strings.Index(AptUpgradeCommand, "/bin/sh"):], "$%") {
-		t.Fatal("upgrade unit script must carry a result marker and no systemd-expanded characters")
+	command, err := AptUpgradeCommand("0123456789abcdef")
+	if err != nil || !strings.Contains(command, UpgradeResultMarker+"0123456789abcdef:success") || strings.ContainsAny(command[strings.Index(command, "/bin/sh"):], "$%") {
+		t.Fatalf("upgrade unit script must carry this run's marker and no systemd-expanded characters: %q %v", command, err)
+	}
+	for _, bad := range []string{"", "short", "0123456789ABCDEF", "0123456789abcdef$x", "0123456789abcdef'"} {
+		if _, err := AptUpgradeCommand(bad); err == nil {
+			t.Errorf("run ID %q was accepted", bad)
+		}
+	}
+	log := []byte("BOETTICHER_UPGRADE_RESULT=success\nBOETTICHER_UPGRADE_RESULT=ffffffffffffffff:success\nBOETTICHER_UPGRADE_RESULT=0123456789abcdef:failed\n")
+	if UpgradeResult(log, "0123456789abcdef") != "failed" || UpgradeResult(log, "1111111111111111") != "" {
+		t.Fatal("result marker must match only this run")
 	}
 }
