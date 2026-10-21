@@ -23,6 +23,10 @@ const (
 	ProviderNIC0  = "virtio,bridge=vmbr0,firewall=1,macaddr=02:00:00:04:00:01"
 	ProviderNIC1  = "virtio,bridge=vmbr1,firewall=1,macaddr=02:00:00:04:00:02"
 	ProviderImage = "openwrt-25.12.5-x86-64-generic-ext4-combined.img"
+	// ProviderStartup makes the LAB gateway the first guest Proxmox starts
+	// after a Host boot (and, by reverse order, the last it shuts down), so
+	// ordered LAB guests such as Tailnet (order=20) find their gateway up.
+	ProviderStartup = "order=1"
 )
 
 var zoneOrder = []model.ZoneType{

@@ -29,6 +29,17 @@ type Status struct {
 	NetworkShapeOK  bool
 	StorageIdentity bool
 	OwnershipProven bool
+	// Startup is the observed Proxmox startup property ("unset" when absent).
+	// Drift is reported for apply to reconcile; it does not fail health.
+	Startup string
+}
+
+// StartupLabel renders the provider's start-order state for status output.
+func (s Status) StartupLabel() string {
+	if ProviderStartupOrdered(s.Startup) {
+		return s.Startup
+	}
+	return "drift (observed " + s.Startup + ", expected " + ProviderStartup + "); run boetticher module firewall apply"
 }
 
 // ValidateHostSubstrate proves the small read-only Host boundary required by
@@ -110,6 +121,12 @@ func EnsureProvider(ctx context.Context, client *proxmox.Client, node, storage s
 			}
 			changed = true
 		}
+		if startup, _ := current["startup"].(string); !ProviderStartupOrdered(startup) {
+			if err := client.SetVMConfig(ctx, node, ProviderVMID, url.Values{"startup": {ProviderStartup}}); err != nil {
+				return ApplyResult{}, fmt.Errorf("set firewall provider startup order: %w", err)
+			}
+			changed = true
+		}
 	}
 	if err := client.EnsureVMRunning(ctx, node, ProviderVMID); err != nil {
 		return ApplyResult{}, fmt.Errorf("start firewall provider: %w", err)
@@ -124,6 +141,7 @@ func providerVMParams() url.Values {
 		"cores":   {"2"},
 		"ostype":  {"l26"},
 		"onboot":  {"1"},
+		"startup": {ProviderStartup},
 		"agent":   {"1"},
 		"boot":    {"order=scsi0;net0"},
 		"scsihw":  {"virtio-scsi-single"},
@@ -199,6 +217,10 @@ func ReadStatus(ctx context.Context, client *proxmox.Client, node string, desire
 		return status, err
 	}
 	status.Name, _ = current["name"].(string)
+	status.Startup = "unset"
+	if startup, _ := current["startup"].(string); startup != "" {
+		status.Startup = startup
+	}
 	status.OwnershipProven = hasTag(fmt.Sprint(current["tags"]), providerOwnerTag)
 	net0, _ := current["net0"].(string)
 	net1, _ := current["net1"].(string)
