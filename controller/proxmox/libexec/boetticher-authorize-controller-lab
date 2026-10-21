@@ -10,6 +10,8 @@ OWNER_UID=0
 OWNER_GID=0
 TMPROOT='/etc/ssh'
 LOCKPATH='/run/lock/boetticher-authorize-controller-lab.lock'
+# Ancestors above which parent ownership is not inspected (macOS fixture root).
+GUARD_STOP=('/private/tmp',)
 _last_post={}
 def die(s): raise RuntimeError(s)
 @contextmanager
@@ -63,7 +65,7 @@ def _guard_parent(path, uid=None):
     if uid is None: uid=OWNER_UID
     parent=os.path.dirname(path) or '/'
     while parent and parent != '/':
-        if parent == '/private/tmp': break
+        if parent in GUARD_STOP: break
         st=os.lstat(parent)
         if not os.path.isdir(parent) or os.path.islink(parent) or st.st_uid != uid or st.st_mode & 0o022: die('unsafe parent '+parent)
         parent=os.path.dirname(parent)

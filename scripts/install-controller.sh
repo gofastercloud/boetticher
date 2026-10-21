@@ -17,7 +17,9 @@ validate_platform() {
   [ -r /etc/os-release ] || die 'cannot read /etc/os-release'
   # shellcheck disable=SC1091
   . /etc/os-release
-  [ "${ID:-}" = 'debian' ] && [ "${VERSION_CODENAME:-}" = 'trixie' ] || die 'controller bootstrap requires Debian 13/Trixie'
+  if [ "${ID:-}" != 'debian' ] || [ "${VERSION_CODENAME:-}" != 'trixie' ]; then
+    die 'controller bootstrap requires Debian 13/Trixie'
+  fi
   [ "$(dpkg --print-architecture 2>/dev/null)" = 'arm64' ] || die 'controller bootstrap requires an ARM64 userspace'
   [ "$(uname -m)" = 'aarch64' ] || die 'controller bootstrap requires an aarch64 kernel'
   [ -r /proc/device-tree/model ] || die 'controller bootstrap requires Raspberry Pi hardware'

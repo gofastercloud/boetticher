@@ -5,11 +5,11 @@ mod=importlib.machinery.SourceFileLoader('auth','controller/proxmox/libexec/boet
 
 class SafeIO(unittest.TestCase):
  def setUp(self):
-  self.old=(mod.AK,mod.MAIN,mod.DROP,mod.OWNER_GID)
-  self.d=tempfile.TemporaryDirectory(); self.uid=os.getuid(); self.p=os.path.join(self.d.name,'x')
+  self.old=(mod.AK,mod.MAIN,mod.DROP,mod.OWNER_GID,mod.GUARD_STOP)
+  self.d=tempfile.TemporaryDirectory(); self.uid=os.getuid(); self.p=os.path.join(self.d.name,'x'); mod.GUARD_STOP=(os.path.dirname(self.d.name),)
   with open(self.p,'wb') as f: f.write(b'old')
   os.chmod(self.p,0o600); os.chown(self.p,os.getuid(),os.getgid()); mod.AK=self.p; mod.OWNER_GID=os.getgid()
- def tearDown(self): mod.AK,mod.MAIN,mod.DROP,mod.OWNER_GID=self.old; self.d.cleanup()
+ def tearDown(self): mod.AK,mod.MAIN,mod.DROP,mod.OWNER_GID,mod.GUARD_STOP=self.old; self.d.cleanup()
  def test_atomic_and_freshness(self):
   s=mod.snapshot(self.p,self.uid); mod.atomic(self.p,b'new',0o600,s,self.uid); self.assertEqual(mod.snapshot(self.p,self.uid)[5],b'new')
   s=mod.snapshot(self.p,self.uid)
@@ -33,13 +33,13 @@ class HelperMain(unittest.TestCase):
    else: result.append(None)
   return result
  def setUp(self):
-  self.d=tempfile.TemporaryDirectory(); self.old=(mod.PATHS.copy(),mod.OWNER_UID,mod.OWNER_GID,mod.TMPROOT,mod.LOCKPATH,mod.expected_mode)
+  self.d=tempfile.TemporaryDirectory(); self.old=(mod.PATHS.copy(),mod.OWNER_UID,mod.OWNER_GID,mod.TMPROOT,mod.LOCKPATH,mod.expected_mode,mod.GUARD_STOP); mod.GUARD_STOP=(os.path.dirname(self.d.name),)
   ak=os.path.join(self.d.name,'authorized_keys'); main=os.path.join(self.d.name,'sshd_config'); drop=os.path.join(self.d.name,'drop')
   key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
   with open(ak,'w') as f: f.write('from="192.168.4.6",restrict '+key+' home\nunrelated ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\n')
   with open(main,'w') as f: f.write('Include /etc/ssh/sshd_config.d/*.conf\nPermitRootLogin yes\n')
   os.chmod(ak,0o600); os.chmod(main,0o644); os.chown(ak,os.getuid(),os.getgid()); os.chown(main,os.getuid(),os.getgid()); mod.PATHS={'authorized_keys':ak,'main':main,'drop':drop}; mod.AK,mod.MAIN,mod.DROP=ak,main,drop; mod.expected_mode=lambda path: 0o600 if path in (ak,drop) else 0o644; mod.OWNER_UID=os.getuid(); mod.OWNER_GID=os.getgid(); mod.TMPROOT=self.d.name; mod.LOCKPATH=os.path.join(self.d.name,'lock'); self.key=key
- def tearDown(self): mod.PATHS,mod.OWNER_UID,mod.OWNER_GID,mod.TMPROOT,mod.LOCKPATH,mod.expected_mode=self.old; self.d.cleanup()
+ def tearDown(self): mod.PATHS,mod.OWNER_UID,mod.OWNER_GID,mod.TMPROOT,mod.LOCKPATH,mod.expected_mode,mod.GUARD_STOP=self.old; self.d.cleanup()
  def call(self,action,fail=False,mismatch=False,reloadfail=False,keyfail=False,extra=False,baseline=None):
   req={'action':action,'lab_address':'10.10.20.10','lab_mac':'6c:1f:f7:d2:5d:97','public_key':self.key}; before=self.contents()
   calls=[]

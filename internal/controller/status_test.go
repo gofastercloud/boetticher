@@ -17,8 +17,8 @@ func TestEvaluateSnapshotReportsEveryControllerCheck(t *testing.T) {
 		}
 	}
 	for _, check := range checks {
-		if check.Name == "Go" && check.Detail != "1.26.6" {
-			t.Fatalf("Go status detail = %q, want 1.26.6", check.Detail)
+		if check.Name == "Go" && check.Detail != "1.26.10" {
+			t.Fatalf("Go status detail = %q, want 1.26.10", check.Detail)
 		}
 	}
 	checks = EvaluateSnapshot(StatusSnapshot{Platform: true})

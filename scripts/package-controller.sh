@@ -21,8 +21,11 @@ main() {
   esac
 
   go_bin=${BOETTICHER_GO_BIN:-$(command -v go || true)}
-  [ -n "$go_bin" ] && [ -x "$go_bin" ] || { echo 'Go toolchain is unavailable; set BOETTICHER_GO_BIN to Go 1.26.6' >&2; exit 1; }
-  "$go_bin" version | grep -Eq 'go1\.26\.6([[:space:]]|$)' || { echo 'Controller packaging requires Go 1.26.6; set BOETTICHER_GO_BIN' >&2; exit 1; }
+  if [ -z "$go_bin" ] || [ ! -x "$go_bin" ]; then
+    echo 'Go toolchain is unavailable; set BOETTICHER_GO_BIN to Go 1.26.10' >&2
+    exit 1
+  fi
+  "$go_bin" version | grep -Eq 'go1\.26\.10([[:space:]]|$)' || { echo 'Controller packaging requires Go 1.26.10; set BOETTICHER_GO_BIN' >&2; exit 1; }
   export GOCACHE="${GOCACHE:-$($go_bin env GOCACHE)}" GOMODCACHE="${GOMODCACHE:-$($go_bin env GOMODCACHE)}"
 
   stage="$BOETTICHER_BUILD_TEMP_DIR/controller-package"
@@ -30,13 +33,13 @@ main() {
   mkdir -p "$stage/bin" "dist/controller"
 
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go build -trimpath -o "$stage/bin/boetticher" ./cmd/boetticher
+    "$go_bin" build -trimpath -o "$stage/bin/boetticher" ./cmd/boetticher
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
+    "$go_bin" build -trimpath -o "$stage/bin/boetticher-status" ./cmd/boetticher-status
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go build -trimpath -o "$stage/bin/boetticher-lab-snapshot" ./cmd/boetticher-lab-snapshot
+    "$go_bin" build -trimpath -o "$stage/bin/boetticher-lab-snapshot" ./cmd/boetticher-lab-snapshot
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go build -trimpath -o "$stage/bin/boetticher-labviewer" ./labviewer
+    "$go_bin" build -trimpath -o "$stage/bin/boetticher-labviewer" ./labviewer
   chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status" "$stage/bin/boetticher-lab-snapshot" "$stage/bin/boetticher-labviewer"
   ARRSTACK_SOURCE_ARCHIVE=${ARRSTACK_SOURCE_ARCHIVE:?ARRSTACK_SOURCE_ARCHIVE must point to the reviewed upstream tarball} \
     sh scripts/build-arrstack.sh "$stage/bin/arrstack"
@@ -106,9 +109,9 @@ main() {
   mkdir -p "$stage/controller/observability/base"
   cp images/base/debian.yaml "$stage/controller/observability/base/debian.yaml"
 	GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-	  go build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-host-speedtest" ./cmd/boetticher-host-speedtest
+	  "$go_bin" build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-host-speedtest" ./cmd/boetticher-host-speedtest
 	GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-	  go build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-firewall-test-host" ./cmd/boetticher-firewall-test-host
+	  "$go_bin" build -trimpath -o "$stage/controller/proxmox/libexec/boetticher-firewall-test-host" ./cmd/boetticher-firewall-test-host
 	chmod 0755 "$stage/controller/proxmox/libexec/boetticher-host-speedtest" "$stage/controller/proxmox/libexec/boetticher-firewall-test-host"
   printf '%s\n' "$build_id" >"$stage/BUILD_ID"
 
