@@ -69,6 +69,11 @@ VM and disk, its six virtual IPv4 gateways, its reference firewall policy, and
 ordinary Internet NAT. The current provider implementation is OpenWrt, but
 OpenWrt is not a public Module namespace. The provider consumes the Host-owned
 VLAN-aware `vmbr1`; it never creates, repairs, or re-owns that bridge.
+The provider VM is the LAB gateway, so it is created with `onboot` and Proxmox
+startup `order=1`: after a Host boot Proxmox starts it before ordered LAB
+guests and, in reverse, shuts it down after them. `apply` restores a missing or
+different start order on the existing VM; `plan` lists it as a change and
+`status` reports the drift without failing health.
 `teardown --yes` removes only the exact firewall provider and Controller-local
 provider credential/trust, and refuses while DNS or DHCP is enabled.
 

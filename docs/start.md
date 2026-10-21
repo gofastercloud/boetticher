@@ -174,7 +174,9 @@ reboots with guests present by relying on Proxmox's native `pve-guests.service`:
 guests stop in reverse startup order and guests with `onboot` enabled start in
 order afterwards. The reboot itself never stops or starts guests. The preview
 (`--plan`) is read-only and shows each guest's onboot and startup order, warning
-about running guests that will not start again. The reboot is scheduled two seconds
+about running guests that will not start again and about a LAB gateway guest
+(`lab-firewall-01`) that Proxmox would not start first; `module firewall apply`
+restores its start order. The reboot is scheduled two seconds
 out so the request returns cleanly. A definite remote scheduling failure stops
 at once; after an SSH drop, a killed client, or a timeout only a new Host boot ID
 counts. The Controller waits up to 20 minutes for that new boot, probing the normal connection and

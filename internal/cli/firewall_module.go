@@ -199,7 +199,8 @@ func runFirewallPlan(args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if len(changes) == 0 && provider.Running && strings.Contains(provider.Config, "scsi0:") {
+		startupOrdered := firewallmodule.ProviderStartupOrdered(firewallmodule.ProviderStartupObserved(provider))
+		if len(changes) == 0 && provider.Running && strings.Contains(provider.Config, "scsi0:") && startupOrdered {
 			fmt.Fprintln(out, "\nNo changes required.")
 		} else {
 			fmt.Fprintln(out, "\nChanges:")
@@ -208,6 +209,9 @@ func runFirewallPlan(args []string, out io.Writer) error {
 			}
 			if !strings.Contains(provider.Config, "scsi0:") {
 				fmt.Fprintln(out, "  attach owned provider disk")
+			}
+			if !startupOrdered {
+				fmt.Fprintf(out, "  set provider Proxmox startup %s (observed %s)\n", firewallmodule.ProviderStartup, firewallmodule.ProviderStartupObserved(provider))
 			}
 			for _, change := range changes {
 				fmt.Fprintf(out, "  %s %s\n", change.Kind, change.Section.Name)
@@ -619,9 +623,12 @@ func runFirewallStatus(args []string, out io.Writer) error {
 	}
 	if !health.Healthy() {
 		fmt.Fprintf(out, "Firewall: FAIL\nProvider: %s\n%s\n", firewallmodule.ProviderSummary(health.Provider), health.Detail())
+		if health.Provider.Exists {
+			fmt.Fprintf(out, "Startup: %s\n", health.Provider.StartupLabel())
+		}
 		return errors.New("firewall provider health check failed")
 	}
-	fmt.Fprintf(out, "Firewall: PASS\nProvider: %s\nManagement: reachable\nGateways: %d/%d present\nFirewall: active\nInternet route: active\n", firewallmodule.ProviderSummary(health.Provider), health.GatewaysPresent, health.GatewaysExpected)
+	fmt.Fprintf(out, "Firewall: PASS\nProvider: %s\nStartup: %s\nManagement: reachable\nGateways: %d/%d present\nFirewall: active\nInternet route: active\n", firewallmodule.ProviderSummary(health.Provider), health.Provider.StartupLabel(), health.GatewaysPresent, health.GatewaysExpected)
 	return nil
 }
 

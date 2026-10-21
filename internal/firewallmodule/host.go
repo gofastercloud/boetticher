@@ -461,7 +461,7 @@ func EnsureHostProvider(ctx context.Context, host HostClient, storage string, im
 		if err := host.Copy(ctx, image.Path, hostImagePath); err != nil {
 			return HostApplyResult{}, err
 		}
-		create := "set -eu; image=" + shellQuote(hostImagePath) + "; trap 'rm -f \"$image\"' EXIT HUP INT TERM; qm create " + itoa(ProviderVMID) + " --name " + shellQuote(ProviderName) + " --memory 2048 --cores 2 --ostype l26 --onboot 1 --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0;net0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+providerOwnerTag) + " --net0 " + shellQuote(hostNIC(ProviderNIC0, "vmbr0")) + " --net1 " + shellQuote(hostNIC(ProviderNIC1, "vmbr1")) + "; import_output=$(qm importdisk " + itoa(ProviderVMID) + " \"$image\" " + shellQuote(storage) + " --format raw); disk=$(printf '%s\\n' \"$import_output\" | awk -F\"'\" '/imported disk/ { print $2; exit }'); if [ -z \"$disk\" ]; then disk=$(printf '%s\\n' \"$import_output\" | awk -F': ' '/unused0:/ { print $2; exit }'); fi; test -n \"$disk\"; case \"$disk\" in " + shellQuote(storage+":") + "*) ;; *) echo 'imported firewall disk has an unexpected storage identity' >&2; exit 1 ;; esac; qm set " + itoa(ProviderVMID) + " --scsi0 \"$disk\"; qm start " + itoa(ProviderVMID)
+		create := "set -eu; image=" + shellQuote(hostImagePath) + "; trap 'rm -f \"$image\"' EXIT HUP INT TERM; qm create " + itoa(ProviderVMID) + " --name " + shellQuote(ProviderName) + " --memory 2048 --cores 2 --ostype l26 --onboot 1 --startup " + shellQuote(ProviderStartup) + " --agent 1 --scsihw virtio-scsi-single --boot " + shellQuote("order=scsi0;net0") + " --serial0 socket --tags " + shellQuote("boetticher;managed;module;"+providerOwnerTag) + " --net0 " + shellQuote(hostNIC(ProviderNIC0, "vmbr0")) + " --net1 " + shellQuote(hostNIC(ProviderNIC1, "vmbr1")) + "; import_output=$(qm importdisk " + itoa(ProviderVMID) + " \"$image\" " + shellQuote(storage) + " --format raw); disk=$(printf '%s\\n' \"$import_output\" | awk -F\"'\" '/imported disk/ { print $2; exit }'); if [ -z \"$disk\" ]; then disk=$(printf '%s\\n' \"$import_output\" | awk -F': ' '/unused0:/ { print $2; exit }'); fi; test -n \"$disk\"; case \"$disk\" in " + shellQuote(storage+":") + "*) ;; *) echo 'imported firewall disk has an unexpected storage identity' >&2; exit 1 ;; esac; qm set " + itoa(ProviderVMID) + " --scsi0 \"$disk\"; qm start " + itoa(ProviderVMID)
 		if _, err := host.Run(ctx, create); err != nil {
 			return HostApplyResult{}, fmt.Errorf("create firewall provider %s: %w", ProviderName, err)
 		}
@@ -471,6 +471,9 @@ func EnsureHostProvider(ctx context.Context, host HostClient, storage string, im
 		}
 		if err := validateHostProvider(post, storage); err != nil {
 			return HostApplyResult{}, err
+		}
+		if !ProviderStartupOrdered(configLine(post.Config, "startup")) {
+			return HostApplyResult{}, errors.New("firewall provider startup order did not persist after creation")
 		}
 		return HostApplyResult{Created: true, Changed: true, Running: post.Running}, nil
 	}
@@ -500,6 +503,12 @@ func EnsureHostProvider(ctx context.Context, host HostClient, storage string, im
 		}
 		changed = true
 	}
+	if !ProviderStartupOrdered(configLine(status.Config, "startup")) {
+		if _, err := host.Run(ctx, ProviderStartupCommand()); err != nil {
+			return HostApplyResult{}, fmt.Errorf("set firewall provider startup order: %w", err)
+		}
+		changed = true
+	}
 	if !status.Running {
 		if _, err := host.Run(ctx, "qm start "+itoa(ProviderVMID)); err != nil {
 			return HostApplyResult{}, fmt.Errorf("start firewall provider: %w", err)
@@ -513,7 +522,39 @@ func EnsureHostProvider(ctx context.Context, host HostClient, storage string, im
 	if err := validateHostProvider(post, storage); err != nil {
 		return HostApplyResult{}, err
 	}
+	if !ProviderStartupOrdered(configLine(post.Config, "startup")) {
+		return HostApplyResult{}, errors.New("firewall provider startup order did not persist")
+	}
 	return HostApplyResult{Changed: changed, Running: post.Running}, nil
+}
+
+// ProviderStartupCommand sets only the owned provider's Proxmox start order.
+func ProviderStartupCommand() string {
+	return "qm set " + itoa(ProviderVMID) + " --startup " + shellQuote(ProviderStartup)
+}
+
+// ProviderStartupOrdered reports whether a Proxmox startup property places
+// the provider first. Up=/down= delays alongside order=1 are accepted.
+func ProviderStartupOrdered(startup string) bool {
+	for _, part := range strings.Split(startup, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			key, value = "order", key
+		}
+		if key == "order" {
+			return strings.TrimSpace(value) == "1"
+		}
+	}
+	return false
+}
+
+// ProviderStartupObserved renders the provider's current startup property
+// from a Host inspection for plan and status drift reporting.
+func ProviderStartupObserved(status HostProviderStatus) string {
+	if startup := configLine(status.Config, "startup"); startup != "" {
+		return startup
+	}
+	return "unset"
 }
 
 // RebootHostProvider performs the provider lifecycle rehearsal through the

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
+	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 )
 
 func runHostReboot(args []string, out io.Writer) error {
@@ -255,6 +256,7 @@ func renderGuestBootPolicies(out io.Writer, policies []controllerhost.GuestBootP
 	for _, policy := range policies {
 		fmt.Fprintf(out, "    %-5d %-24s %-4s %-8s %-6s %-5s %-4s %-4s\n", policy.VMID, policy.Name, policy.Type, policy.Status, map[bool]string{true: "yes", false: "no"}[policy.OnBoot], unsetDash(policy.Order), unsetDash(policy.Up), unsetDash(policy.Down))
 	}
+	warnGatewayStartOrder(out, policies)
 	for _, policy := range policies {
 		switch {
 		case policy.Status == "running" && !policy.OnBoot:
@@ -262,6 +264,31 @@ func renderGuestBootPolicies(out io.Writer, policies []controllerhost.GuestBootP
 		case policy.Status != "running" && policy.OnBoot:
 			fmt.Fprintf(out, "  NOTE     %d %s is %s but onboot is enabled; it will start after the reboot\n", policy.VMID, policy.Name, policy.Status)
 		}
+	}
+}
+
+// warnGatewayStartOrder flags the owned LAB gateway guest when Proxmox would
+// not start it first: LAB guests that start before it come up without a
+// gateway. module firewall apply reconciles the order.
+func warnGatewayStartOrder(out io.Writer, policies []controllerhost.GuestBootPolicy) {
+	var earlier []string
+	for _, policy := range policies {
+		if policy.VMID != firewallmodule.ProviderVMID || policy.Name != firewallmodule.ProviderName {
+			if policy.OnBoot {
+				earlier = append(earlier, fmt.Sprint(policy.VMID))
+			}
+			continue
+		}
+		if !policy.OnBoot {
+			return
+		}
+		switch {
+		case policy.Order == 0:
+			fmt.Fprintf(out, "  WARNING  %d %s is the LAB gateway but has no Proxmox startup order; ordered guests start before it. Run boetticher module firewall apply to set startup %s\n", policy.VMID, policy.Name, firewallmodule.ProviderStartup)
+		case len(earlier) > 0:
+			fmt.Fprintf(out, "  WARNING  %d %s is the LAB gateway but starts after guest(s) %s. Run boetticher module firewall apply to set startup %s\n", policy.VMID, policy.Name, strings.Join(earlier, ", "), firewallmodule.ProviderStartup)
+		}
+		return
 	}
 }
 

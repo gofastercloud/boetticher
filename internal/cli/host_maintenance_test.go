@@ -539,3 +539,31 @@ func TestHostRebootNamesRegisteredSystemsThatDidNotReturn(t *testing.T) {
 		t.Fatalf("reboot output:\n%s", text)
 	}
 }
+
+func TestHostRebootPlanWarnsWhenGatewayHasNoStartOrder(t *testing.T) {
+	host := rebootHost(0)
+	ordered := host.handle
+	host.handle = func(path, command string) (controllerhost.Result, error) {
+		if strings.HasSuffix(command, "/qemu/280/config --output-format json") {
+			return controllerhost.Result{Stdout: []byte(`{"onboot":1}`)}, nil
+		}
+		return ordered(path, command)
+	}
+	var out bytes.Buffer
+	if err := runHostRebootWith(host.deps(), []string{"--with-guests", "--plan"}, &out); err != nil {
+		t.Fatalf("plan: %v\n%s", err, out.String())
+	}
+	text := out.String()
+	if !strings.Contains(text, "WARNING  280 lab-firewall-01 is the LAB gateway but has no Proxmox startup order") || !strings.Contains(text, "boetticher module firewall apply") {
+		t.Fatalf("missing gateway start-order warning:\n%s", text)
+	}
+	if strings.Index(text, "120   lab-monitor-01") > strings.Index(text, "280   lab-firewall-01") {
+		t.Fatalf("unordered gateway should sort after ordered guests:\n%s", text)
+	}
+
+	host = rebootHost(0)
+	out.Reset()
+	if err := runHostRebootWith(host.deps(), []string{"--with-guests", "--plan"}, &out); err != nil || strings.Contains(out.String(), "LAB gateway") {
+		t.Fatalf("ordered gateway warned: err=%v\n%s", err, out.String())
+	}
+}

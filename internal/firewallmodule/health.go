@@ -48,7 +48,7 @@ func CheckHealthViaSSH(ctx context.Context, host HostClient, desired DesiredStat
 	if err := validateHostProvider(observed, "boetticher-data"); err != nil {
 		return health, err
 	}
-	health.Provider = Status{Exists: true, Running: observed.Running, Name: ProviderName, OwnershipProven: true, NetworkShapeOK: true, StorageIdentity: true}
+	health.Provider = Status{Exists: true, Running: observed.Running, Name: ProviderName, OwnershipProven: true, NetworkShapeOK: true, StorageIdentity: true, Startup: ProviderStartupObserved(observed)}
 	if provider == nil {
 		return health, errors.New("provider client is required for firewall health")
 	}
