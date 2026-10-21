@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/clientservices"
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
@@ -20,11 +21,18 @@ func systemsCommandFixture(t *testing.T) (*controllerhost.LabConfig, *int) {
 	oldLoad, oldSave := systemsLoadConfig, systemsSaveConfig
 	oldTransport, oldCollect, oldInspect := systemsTransportFor, systemsCollect, systemsInspectGuest
 	oldLeases, oldContext, oldLock := systemsReadNativeDHCPLeases, systemsLoadClientServiceContext, systemsAcquireLock
+	oldRun, oldSleep := systemsRun, systemsSleep
 	t.Cleanup(func() {
 		systemsLoadConfig, systemsSaveConfig = oldLoad, oldSave
 		systemsTransportFor, systemsCollect, systemsInspectGuest = oldTransport, oldCollect, oldInspect
 		systemsReadNativeDHCPLeases, systemsLoadClientServiceContext, systemsAcquireLock = oldLeases, oldContext, oldLock
+		systemsRun, systemsSleep = oldRun, oldSleep
 	})
+	systemsRun = func(_ context.Context, _ controllerhost.Transport, command string) (controllerhost.Result, error) {
+		t.Errorf("unexpected Host command %q", command)
+		return controllerhost.Result{ExitCode: 1}, errors.New("unexpected command")
+	}
+	systemsSleep = func(context.Context, time.Duration) error { return nil }
 	systemsLoadConfig = func() (controllerhost.LabConfig, error) { return *config, nil }
 	systemsTransportFor = func(controllerhost.LabConfig) (controllerhost.Transport, error) {
 		return controllerhost.Transport{}, nil

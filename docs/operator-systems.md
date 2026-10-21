@@ -2,12 +2,15 @@
 
 Boetticher registers an existing Proxmox VM or Linux Container as a user
 system. Proxmox remains the guest owner; Boetticher stores only identity and
-derived network policy.
+derived network policy, and can observe, start, and stop the guest. Power
+state is the only guest property it changes.
 
 ```text
 boetticher host register-system NAME --vmid VMID --address IPv4 --port PORT [--home-port PORT] [--dns-name FQDN] [--check] [--plan|--yes]
 boetticher host list-systems
 boetticher host system-status NAME
+boetticher host start-system NAME --plan|--yes
+boetticher host stop-system NAME --plan|--yes
 boetticher host unregister-system NAME --plan|--yes
 ```
 
@@ -15,8 +18,8 @@ Registration requires one existing guest with one NIC on `vmbr1`, SERVERS
 VLAN tag 20. It discovers kind, name, and MAC and refuses ambiguity,
 product-owned guests, conflicting identities, and VMIDs outside the user range
 500-899. DNS, DHCP, and the firewall capability must already be enabled; add
-`--check` only when observability is enabled as well. It never manages the
-guest.
+`--check` only when observability is enabled as well. Registration never
+starts, stops, or reconfigures the guest.
 
 The entry drives one SERVERS DHCP reservation and one narrow TRUSTED to
 SERVERS TCP allow. `--check` adds a bounded observability TCP check. DHCP is
@@ -41,8 +44,34 @@ reconciliation, and retain intent when application fails. Unregistration
 removes only owned network policy and works if the guest is absent.
 
 The MVP supports IPv4 DHCP identity, one TCP port, and SERVERS only. It does
-not install software, provision certificates, manage guest lifecycle, support
-static addressing, arbitrary URLs, or provide a general monitoring language.
+not install software, provision certificates, support static addressing,
+arbitrary URLs, or provide a general monitoring language.
+
+## Power state
+
+`host list-systems` adds each guest's Proxmox power state and `onboot` flag
+from a bounded Proxmox read (`power=unavailable` when the Host cannot be read; it
+does not re-prove identity). `host system-status` re-proves the identity and
+shows `Power` and a `Result` line: `PASS` needs a matching, running guest
+with current provider and monitoring evidence; a stopped guest, identity
+drift, or provider/monitoring drift is `FAIL`, and an unreadable Host is
+`UNKNOWN`. Both are read-only, and `system-status` still exits zero when its
+result is not `PASS`.
+
+`host start-system` runs `pct start` or `qm start` for a stopped guest;
+`host stop-system` runs `pct shutdown` or `qm shutdown` with a 60-second
+Proxmox timeout for a running guest and never escalates to a forced stop.
+Before either acts, the saved VMID, kind, guest name, MAC, and single SERVERS
+NIC must still match, the VMID must be in the user range, and product-owned
+guests are refused. A guest already in the requested state is a read-only
+no-op; any other state, such as a paused VM, is refused. `--plan` shows the
+identity, current state, and exact action and never mutates; `--yes` takes
+the shared mutation lock, runs the action, and waits up to 60 seconds for the
+guest's native status to report the requested state. Neither command changes
+`onboot` or startup order, so a stopped `onboot` guest starts again at the
+next Host boot. After `host reboot --with-guests`, a registered system that
+was running or set to start on boot but did not return is named with a
+pointer to `host start-system`.
 
 ## Example: print server
 
@@ -60,8 +89,9 @@ boetticher host unregister-system print-server --plan
 boetticher host unregister-system print-server --yes
 ```
 
-Boetticher permanently excludes guest creation, deletion, updates, application
-installation, USB assignment, and backup ownership. A TCP check proves only
+Boetticher permanently excludes guest creation, deletion, reconfiguration,
+updates, application installation, USB assignment, and backup ownership; it
+changes only power state, and only when asked. A TCP check proves only
 that the port answers; it does not prove printing, same-VLAN reachability, or
 IPv6 behavior. Omitting `--check` does not create monitoring. The operator
 must renew the DHCP lease in the guest after registration when it uses DHCP.

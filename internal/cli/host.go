@@ -45,7 +45,7 @@ func runHost(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runHostUpgrade(args[1:], input, out)
 	case "reboot":
 		return runHostReboot(args[1:], out)
-	case "register-system", "list-systems", "system-status", "unregister-system":
+	case "register-system", "list-systems", "system-status", "unregister-system", "start-system", "stop-system":
 		return runSystems(args, input, out, errOut)
 	default:
 		return fmt.Errorf("unknown host command %q", args[0])
