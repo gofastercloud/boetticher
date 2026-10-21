@@ -288,6 +288,59 @@ func TestDaemonDisablesFailedDriverWithoutReturningHardwareError(t *testing.T) {
 	}
 }
 
+func TestDaemonReopensBlinktAfterTransientFailureWithBackoff(t *testing.T) {
+	now := time.Unix(1000, 0)
+	broken := &fakeDriver{err: context.DeadlineExceeded}
+	daemon := NewDaemon(DefaultSettings(), broken)
+	daemon.Now = func() time.Time { return now }
+	opened := 0
+	var replacement *fakeDriver
+	failOpen := true
+	daemon.DriverFactory = func() (Driver, error) {
+		opened++
+		if failOpen {
+			return nil, errors.New("helper did not start")
+		}
+		replacement = &fakeDriver{}
+		return replacement, nil
+	}
+
+	daemon.render(context.Background())
+	if !daemon.driverBroken || daemon.driverBackoff != driverRetryInitial {
+		t.Fatalf("slow frame: broken=%t backoff=%s", daemon.driverBroken, daemon.driverBackoff)
+	}
+	now = now.Add(driverRetryInitial - time.Second)
+	daemon.render(context.Background())
+	if opened != 0 {
+		t.Fatalf("reopened before backoff elapsed: %d", opened)
+	}
+	now = now.Add(time.Second)
+	daemon.render(context.Background())
+	if opened != 1 || !daemon.driverBroken || daemon.driverBackoff != 2*driverRetryInitial {
+		t.Fatalf("failed reopen: opened=%d broken=%t backoff=%s", opened, daemon.driverBroken, daemon.driverBackoff)
+	}
+	failOpen = false
+	now = now.Add(2 * driverRetryInitial)
+	daemon.render(context.Background())
+	if opened != 2 || daemon.driverBroken || daemon.Driver != Driver(replacement) || daemon.driverBackoff != 0 {
+		t.Fatalf("reopen: opened=%d broken=%t backoff=%s", opened, daemon.driverBroken, daemon.driverBackoff)
+	}
+	if len(replacement.frames) != 1 {
+		t.Fatalf("reopened Blinkt got %d frames, want the current frame", len(replacement.frames))
+	}
+}
+
+func TestDaemonBlinktBackoffIsCapped(t *testing.T) {
+	daemon := NewDaemon(DefaultSettings(), &fakeDriver{})
+	daemon.Now = func() time.Time { return time.Unix(0, 0) }
+	for i := 0; i < 20; i++ {
+		daemon.driverFailed(errors.New("still busy"))
+	}
+	if daemon.driverBackoff != driverRetryMax {
+		t.Fatalf("backoff = %s, want cap %s", daemon.driverBackoff, driverRetryMax)
+	}
+}
+
 func TestNewSnapshotLeavesUnconfiguredCapabilitiesOff(t *testing.T) {
 	snapshot := NewSnapshot(false)
 	for _, component := range []Component{snapshot.Firewall, snapshot.Tailnet, snapshot.DHCPNTP, snapshot.Host} {

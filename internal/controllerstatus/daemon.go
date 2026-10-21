@@ -18,8 +18,12 @@ import (
 )
 
 type Daemon struct {
-	Settings          Settings
-	Driver            Driver
+	Settings Settings
+	Driver   Driver
+	// DriverFactory reopens the Blinkt after a failure. A slow frame under
+	// load is not a missing device, so a broken driver is retried with
+	// backoff instead of staying dark until the service restarts.
+	DriverFactory     func() (Driver, error)
 	Logger            *log.Logger
 	Controller        func(context.Context) CheckResult
 	Host              func(context.Context) CheckResult
@@ -68,6 +72,49 @@ type Daemon struct {
 	speedtestUpdates      chan speedtestUpdate
 	previous              StatusSnapshot
 	driverBroken          bool
+	driverRetryAt         time.Time
+	driverBackoff         time.Duration
+}
+
+const (
+	driverRetryInitial = 10 * time.Second
+	driverRetryMax     = 5 * time.Minute
+)
+
+// driverFailed closes the current Blinkt driver and schedules a reopen.
+func (d *Daemon) driverFailed(err error) {
+	if d.Driver != nil {
+		_ = d.Driver.Close()
+	}
+	d.driverBroken = true
+	if d.driverBackoff <= 0 {
+		d.driverBackoff = driverRetryInitial
+	} else if d.driverBackoff *= 2; d.driverBackoff > driverRetryMax {
+		d.driverBackoff = driverRetryMax
+	}
+	d.driverRetryAt = d.Now().Add(d.driverBackoff)
+	if d.DriverFactory != nil {
+		d.Logger.Printf("Blinkt unavailable; continuing without display, retrying in %s: %v", d.driverBackoff, err)
+	} else {
+		d.Logger.Printf("Blinkt unavailable; continuing without display: %v", err)
+	}
+}
+
+// reopenDriver retries a broken or missing Blinkt once its backoff has passed.
+func (d *Daemon) reopenDriver(now time.Time) {
+	if d.DriverFactory == nil || (d.Driver != nil && !d.driverBroken) || now.Before(d.driverRetryAt) {
+		return
+	}
+	driver, err := d.DriverFactory()
+	if err != nil {
+		d.Driver = nil
+		d.driverFailed(err)
+		return
+	}
+	d.Driver = driver
+	d.driverBroken = false
+	d.driverBackoff = 0
+	d.Logger.Printf("Blinkt reconnected")
 }
 
 type operationDisplay struct {
@@ -655,6 +702,7 @@ func (d *Daemon) render(ctx context.Context) {
 		d.operation = nil
 		d.streamdeckDirty = true
 	}
+	d.reopenDriver(now)
 	if d.Driver != nil && !d.driverBroken {
 		var frame []Pixel
 		if d.operation != nil {
@@ -673,9 +721,7 @@ func (d *Daemon) render(ctx context.Context) {
 		err := d.Driver.Show(showCtx, frame)
 		cancel()
 		if err != nil {
-			d.driverBroken = true
-			d.Logger.Printf("Blinkt unavailable; continuing without display: %v", err)
-			_ = d.Driver.Close()
+			d.driverFailed(err)
 		}
 	}
 	if d.labSpeedtest.Notice != "" && !now.Before(d.labSpeedtest.NoticeUntil) {
@@ -763,8 +809,7 @@ func (d *Daemon) show(ctx context.Context, frame []Pixel) {
 	}
 	showCtx, cancel := context.WithTimeout(ctx, time.Second)
 	if err := d.Driver.Show(showCtx, frame); err != nil {
-		d.driverBroken = true
-		d.Logger.Printf("Blinkt unavailable; continuing without display: %v", err)
+		d.driverFailed(err)
 	}
 	cancel()
 }
