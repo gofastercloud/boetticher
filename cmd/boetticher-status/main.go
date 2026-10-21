@@ -30,13 +30,23 @@ func main() {
 		settings.GPIOChip = *chip
 	}
 	var driver controllerstatus.Driver
+	var openDriver func() (controllerstatus.Driver, error)
 	if settings.BlinktEnabled {
-		driver, err = controllerstatus.NewProcessDriver("/usr/bin/python3", settings.DriverPath, settings.GPIOChip)
+		openDriver = func() (controllerstatus.Driver, error) {
+			process, err := controllerstatus.NewProcessDriver("/usr/bin/python3", settings.DriverPath, settings.GPIOChip)
+			if err != nil {
+				return nil, err
+			}
+			return process, nil
+		}
+		driver, err = openDriver()
 		if err != nil {
 			logger.Printf("Blinkt unavailable; health checks continue: %v", err)
+			driver = nil
 		}
 	}
 	daemon := controllerstatus.NewDaemon(settings, driver)
+	daemon.DriverFactory = openDriver
 	daemon.Logger = logger
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
