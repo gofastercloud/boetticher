@@ -2,31 +2,63 @@
 
 This is the short, human-readable history of the project: the things likely to
 matter when you run or contribute to a lab. It is not a tutorial; the current
-guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github.io/boetticher/).
+guide lives at [lab.davebarton.cc](https://lab.davebarton.cc/).
 
-## 0.1.0 — Unreleased
+## Unreleased
 
-This is the first supported Boetticher release. Earlier prototype through 0.5.x
-labels were internal development milestones and were never published as
-supported GitHub Releases.
+The supported workflow is now Controller → one Proxmox Host → capability
+Modules: `boetticher controller bootstrap`, `boetticher host
+enroll|apply|status`, and `boetticher module <capability> <action>`. The
+earlier site directory, signed release bundle, live plan digest, and `deploy`
+transaction are retired (see [Start here](docs/start.md)). The Controller is
+installed from a locally built payload with `install.sh --from-dir`.
 
-- Build the fixed firewall, DNS/NTP, and monitoring foundation from an
-  authenticated signed release bundle.
-- Keep desired-state changes separate from the exact live plan and bounded
-  deployment transaction that applies them.
-- Use endpoint-owned Smallstep certificate issuance while retaining deliberate
-  mTLS identities for browser, logging, and bounded service integrations.
+Current capabilities are firewall, DNS, DHCP, and AirVPN egress on one OpenWrt
+appliance; a Tailnet subnet router; the integrated observability runtime with
+its monitoring, logging, and status-page facets; and the media application.
+Existing user guests can be registered as operator-managed systems without
+being adopted.
+
+Recent changes:
+
+- Add `host upgrade` (simulated preview, then a noninteractive Proxmox
+  full-upgrade in a transient unit) and `host reboot --with-guests`, which
+  relies on Proxmox's native guest shutdown and onboot ordering.
+- Add the manual `ST-LAB` speedtest to the StreamDeck NETWORK view, run from a
+  temporary SERVERS namespace through the firewall's ordinary egress. `ST-VPN`
+  stays deferred.
+- Bound observability, logging, monitoring, and status-page `status` within one
+  30-second read budget, and report a spent budget as undetermined rather than
+  unhealthy.
+- Move the Controller toolchain to Go 1.26.10 and update vulnerable Go
+  dependencies in the CLI and Caddy modules.
+- Refresh the guide: one canonical home for Controller peripherals, a VPN
+  client section, the lab snapshot portal, `--home-recovery` in DNS/DHCP help,
+  and clearly labelled historical records.
+
+## 0.1.0 — planned, superseded
+
+This label was planned as the first supported release and was never
+published. Earlier prototype through 0.5.x labels were internal development
+milestones. The items below record what was planned; those marked *retired*
+are no longer part of the project.
+
+- *Retired:* build the fixed firewall, DNS/NTP, and monitoring foundation from
+  an authenticated signed release bundle.
+- *Retired:* keep desired-state changes separate from an exact live plan and a
+  bounded deployment transaction. Capability `plan`/`apply` replaced both.
+- *Retired from the supported workflow:* endpoint-owned Smallstep certificate
+  issuance. Observability uses public DNS-01 certificates and system trust.
 - Offer the unified observability runtime, nested Monitoring operations,
-  Tailnet routing, live firewall-integrated AirVPN, and media capabilities
-  without adopting user workloads. Operator-managed OctoPrint remains a
-  registered user system, not a product-owned module.
-- Add the external Companion after core setup through a MAC-bound SERVERS
-  reservation and restricted Proxmox bastion route.
+  Tailnet routing, firewall-integrated AirVPN, and media capabilities without
+  adopting user workloads. These continue as Modules. Operator-managed
+  OctoPrint remains a registered user system, not a product-owned module.
+- *Retired:* the external Companion Pi. StreamDeck and Blinkt are owned by the
+  Controller's status daemon.
 
-The platform and base appliance are versioned `0.1.0`. Module appliances retain
-their independent `1.0.0` versions and remain bound to exact signed content
-digests. The site API remains `boetticher/v3`, schema 3; this release renumber
-does not reset or weaken those compatibility identities.
+The planned `0.1.0` platform label, independent `1.0.0` module appliance
+versions, and the `boetticher/v3` schema 3 site API belonged to the retired
+bundle design and no longer apply.
 
 ## Pre-release development history
 

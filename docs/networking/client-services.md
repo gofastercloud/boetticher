@@ -2,13 +2,13 @@
 layout: default
 title: Client services
 section: networking
-description: Phase 4B DHCP, local naming, encrypted DNS, and client-facing time.
+description: DHCP, local naming, encrypted DNS, and client-facing time.
 ---
 
 # Client services
 
-Phase 4B adds two peer capabilities to the existing OpenWrt firewall
-appliance:
+DNS and DHCP are two peer capabilities on the existing OpenWrt firewall
+appliance, applied in this order:
 
 ```text
 module firewall apply
@@ -47,8 +47,9 @@ includes `0.0.0.0/0` via the same gateway because clients that understand
 classless routes ignore option 3; this preserves ordinary default routing.
 This is client forwarding metadata only and does not alter AirVPN policy
 routing, Tailnet route approval, or their fail-closed firewall rules. The
-Companion Pi remains dual-homed with HOME on `eth0` as its default route and
-LAB on `eth1` with `ipv4.never-default=true`.
+dual-homed Controller keeps HOME as its default route and its LAB connection
+`never-default`; see
+[Dual-homed Controller DNS](../controller.html#dual-homed-controller-dns).
 
 ## Supported commands
 
@@ -72,8 +73,13 @@ boetticher module dhcp test [--plan|--yes|--cleanup-only --yes]
 boetticher module dhcp add-reservation NAME --zone ZONE --mac MAC --address IPv4 [--yes]
 boetticher module dhcp remove-reservation NAME [--yes]
 boetticher module dhcp list-reservations
-boetticher module dhcp list-leases
+boetticher module dhcp list-leases [--details]
 ```
+
+On a fresh or HOME recovery path, every command above except
+`list-records`, `list-reservations`, and `list-leases` accepts
+`--home-recovery` to use the HOME bootstrap path before the LAB route is
+enrolled; see [Start here](../start.html#modules).
 
 Resource additions are desired-state mutations and reconcile immediately.
 Identical definitions are no-ops; conflicting definitions fail before any

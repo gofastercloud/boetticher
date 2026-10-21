@@ -27,12 +27,13 @@ boetticher host create-identity|show-public-key|import-host-key|authorize-contro
 boetticher host register-system|list-systems|system-status|unregister-system ...
 boetticher module <capability> <action> [flags]
 boetticher module firewall plan|apply|status|reboot|test|teardown [flags]
-boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [flags]
-boetticher module dhcp plan|apply|status|teardown|test|add-reservation|remove-reservation|list-reservations|list-leases [flags]
+boetticher module dns plan|apply|status|teardown|test|add-record|remove-record|list-records [--home-recovery] [flags]
+boetticher module dhcp plan|apply|status|teardown|test|add-reservation|remove-reservation|list-reservations|list-leases [--home-recovery] [flags]
 boetticher module observability plan|apply|status|test|teardown|secrets [--yes] [--public-domain DOMAIN] [--holmes-model MODEL]
 boetticher module observability alerts pushover apply|status|test|remove [flags]
 boetticher module logging query|status [flags]
 boetticher module monitoring status|ask QUESTION|incidents list|show|investigate [ID] [--json]
+boetticher module statuspage status
 boetticher module vpn plan|apply|status|teardown|add-client|remove-client [--location SELECTOR] [flags]
 boetticher module tailnet plan|apply|status|test|teardown [flags]
 boetticher module media plan|apply|status|test|teardown [--plan|--yes] [--cloudflare-token-file FILE]

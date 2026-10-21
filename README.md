@@ -1,11 +1,11 @@
 # Boetticher
 
 <p align="center">
-  <a href="https://gofastercloud.github.io/boetticher/"><img src="docs/images/boetticher-cover.jpg" alt="Boetticher: automated homelab builder" width="360"></a>
+  <a href="https://lab.davebarton.cc/"><img src="docs/images/boetticher-cover.jpg" alt="Boetticher: automated homelab builder" width="360"></a>
 </p>
 
 > Turn a clean Proxmox host into a proper little homelab—with networking, DNS,
-> monitoring, backups, and the good bits already wired together.
+> monitoring, VPN egress, and the good bits already wired together.
 
 Boetticher is a small, opinionated builder for a single-node Proxmox lab. You
 describe the lab once, then use one friendly command-line tool to build it and
@@ -17,8 +17,8 @@ more *breaking out the good gear*.
 
 The supported lifecycle is Controller-driven: bootstrap the Controller, enroll
 the Proxmox Host, apply its OS baseline, storage, and virtual network, then
-inspect the Host. Modules are later operator capabilities; they are not part
-of Host apply.
+inspect the Host. Modules are operator capabilities applied afterwards; they
+are not part of Host apply.
 
 ## Start here
 
@@ -28,9 +28,10 @@ menu. The [source remains on GitHub](https://github.com/gofastercloud/boetticher
 
 ## Quickstart
 
-On the Controller, use the following sequence. Replace the Proxmox address and
-the verified host-key material with the values from the independent Mac trust
-ceremony:
+After installing the Controller payload, run this sequence on the Controller.
+Replace the Proxmox address and the host-key material with values verified
+independently (the [Controller guide](docs/controller.md#verifying-the-host-key)
+shows how):
 
 ```text
 boetticher controller bootstrap --operator pi --confirm-key-login
@@ -44,10 +45,10 @@ boetticher host apply --data-disk /dev/disk/by-id/EXACT_DATA_DISK --yes
 boetticher host status
 ```
 
-If a compatible unowned internal bridge is found, review the plan and repeat
-Host apply with `--adopt-existing-network --yes`. Host apply repeats native
-inspection and reports `No changes required.` once the Host is configured. It
-never accepts Host trust or erases a disk without the exact operator approval.
+Host apply is idempotent, reports `No changes required.` once the Host is
+configured, and never accepts Host trust or erases a disk without exact
+operator approval. [Start here](docs/start.md) is the canonical journey,
+including approval boundaries, maintenance, teardown, and the Module order.
 
 ## Built with a lot of excellent open source
 

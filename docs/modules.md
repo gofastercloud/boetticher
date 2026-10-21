@@ -19,7 +19,7 @@ The public Module grammar has one normal third-level namespace:
 boetticher module <capability> <action> [flags]
 ```
 
-Implemented Phase 4 capability examples are:
+Implemented capabilities include:
 
 ```text
 boetticher module firewall plan
@@ -28,44 +28,241 @@ boetticher module dhcp status
 boetticher module dhcp add-reservation
 boetticher module dns status
 boetticher module dns add-record
+boetticher module vpn status
+boetticher module vpn add-client
 boetticher module tailnet status
 boetticher module tailnet apply --auth-key-file /secure/path/key --yes
-boetticher module vpn status
+boetticher module observability status
 boetticher module monitoring status
+boetticher module logging status
 boetticher module statuspage status
+boetticher module media status
 ```
 
+The full flag list for each is in the generated [command reference](commands.html).
 DHCP-derived DNS and client-facing NTP are supporting behaviour of the peer
-`dhcp` and `dns` capabilities, not standalone capabilities. VPN dispatch,
-provider reconciliation, fail-closed policy, and Controller-daemon observation
-are implemented; remote and physical acceptance remain separate gates. VPN
-provider reboot and teardown inspect the enrolled Host's complete VM inventory
-and each running guest NIC before stopping protection; malformed or unavailable
-inventory refuses the mutation, while stopped guests do not block it. This is
-source and local-runtime behavior; it does not claim deployment or packet
-acceptance.
+`dhcp` and `dns` capabilities, not standalone capabilities. On a fresh or HOME
+recovery path, firewall, DNS, and DHCP accept `--home-recovery`; the order is in
+[Start here](start.html#modules).
 
-## Phase 4D Tailnet capability
+Capability status feeds the Controller status daemon through ordinary internal
+calls; module collection is single-flight off its event loop and bounded. How
+the Blinkt and StreamDeck present those facts is described once, in the
+[Controller guide](controller.html#status-daemon-and-peripherals).
+
+## Firewall
+
+```text
+boetticher module firewall plan
+boetticher module firewall apply
+boetticher module firewall status
+boetticher module firewall reboot --yes
+boetticher module firewall test --plan
+boetticher module firewall test --yes
+boetticher module firewall test --cleanup-only --yes
+boetticher module firewall teardown --plan
+boetticher module firewall teardown --yes
+```
+
+The capability owns one provider appliance named `lab-firewall-01`, its exact
+VM and disk, its six virtual IPv4 gateways, its reference firewall policy, and
+ordinary Internet NAT. The current provider implementation is OpenWrt, but
+OpenWrt is not a public Module namespace. The provider consumes the Host-owned
+VLAN-aware `vmbr1`; it never creates, repairs, or re-owns that bridge.
+`teardown --yes` removes only the exact firewall provider and Controller-local
+provider credential/trust, and refuses while DNS or DHCP is enabled.
+
+`module firewall test` exercises the firewall already present with a fixed
+routed-IPv4 packet suite; it never applies, repairs, reboots, or tears it
+down. Ownership, policy, the packet suite, and its limits are described in
+[Firewall capability](networking/firewall-capability.html).
+
+## DNS and DHCP
+
+`module dns` and `module dhcp` are peer capabilities on the firewall
+appliance. Enable DNS before DHCP; remove DHCP before DNS. Reservations and
+records are desired state in `/etc/boetticher/lab.yml`; leases are observed
+runtime state. Scopes, naming, encrypted upstream DNS, time, tests, and
+teardown rules are described in
+[Client services](networking/client-services.html).
+
+## VPN
+
+`module vpn` manages one retained AirVPN WireGuard connection on the firewall
+appliance and VPN-only egress for declared protected clients. There is no
+separate VPN-router guest, and the provider name is not a Module namespace.
+
+```text
+boetticher module vpn plan
+boetticher module vpn apply --api-key-stdin --yes
+boetticher module vpn apply --location Sydney --api-key-stdin --yes
+boetticher module vpn apply --yes
+boetticher module vpn status --details
+boetticher module vpn add-client RESERVATION --yes
+boetticher module vpn remove-client RESERVATION --yes
+boetticher module vpn teardown --plan
+boetticher module vpn teardown --yes
+```
+
+First provisioning, or an explicit change of the `--location` selector (a
+named server, country, or region; the default is `europe`), reads the AirVPN
+account API key once from stdin with `--api-key-stdin --yes`. The key is never
+stored in `lab.yml` or arguments. An ordinary reapply uses the retained
+root-only tunnel material without account access and refuses a selector
+mismatch.
+
+### VPN clients
+
+A VPN client is an existing DHCP reservation in the protected `.224-.239`
+address class of its zone. `add-client RESERVATION --yes` declares it VPN-only
+and reconciles its source policy; the reservation is never copied or
+renumbered. A protected client cannot fall back to ordinary WAN, and the shared
+DNS/NTP exceptions stay explicit. `remove-client` refuses while a port forward
+still depends on the client, and removing a client never grants ordinary-WAN
+fallback because the address-class guard stays in force. Clients and forwards
+are recorded under `modules.vpn` in `lab.yml` (see [Media](#media) for an
+example forward).
+
+`status` reports the connection and protected-client enforcement separately;
+a missing or unusable connection is reported as blocked or unavailable and is
+never repaired by status. Provider reboot and VPN teardown inspect the enrolled
+Host's complete VM inventory and each running guest NIC before stopping
+protection; malformed or unavailable inventory refuses the mutation, while
+stopped guests do not block it. Teardown retains client intent, protected
+ranges, and reusable account material, leaving protected clients blocked while
+disconnected. These are source and local-runtime safeguards; the disposable
+protected VPN-client packet journey remains a separate acceptance gate.
+
+## Tailnet
 
 `module tailnet` owns the single fixed subnet-router guest `lab-tailnet-01`
-(VMID 200) and its exact TRANSIT reservation (`10.10.5.10`, MAC
-`02:00:00:00:05:10`). Apply requires enabled DNS and DHCP, the exact Host
-substrate, and the pinned Host-native image builder. An auth key is read only
-after approval from the private regular file supplied with `--auth-key-file`;
-it is streamed to the guest and never saved in intent or logs. Repeating apply
-after native runtime, provider, and intent agreement is a no-op.
+(VMID 200) on TRANSIT. Apply requires enabled DNS and DHCP and reads the auth
+key only after approval, from the private file given with `--auth-key-file`.
+Repeating apply after native runtime, provider, and intent agreement is a
+no-op. Tailnet status is local runtime evidence; remote peer reachability,
+split-DNS grants, packet journeys, and physical isolation require separate
+acceptance. The guest, route, policy, and recovery contract is described in
+[Tailnet](networking/tailnet.html).
 
-The guest advertises `10.10.0.0/16` with SNAT enabled, disables exit-node,
-accept-routes, accept-DNS, and SSH, and applies a fail-closed nftables policy.
-Native status verifies TUN, backend state, exact preferences, route approval,
-package version, persistent assets, and the loaded policy. Tailnet status is
-local runtime evidence; remote peer reachability, split-DNS grants, packet
-journeys, and physical isolation require separate acceptance. Key expiry or
-machine approval attention is recoverable by rerunning apply with a current
-operator-approved key. Phase 4D local runtime is qualified; remote and physical
-acceptance remain separate gates.
+## Observability
 
-## Media application capability
+The installed Controller owns one atomic observability runtime through the
+same single-Host path:
+
+```text
+boetticher module observability plan|apply|status|test|teardown|secrets
+boetticher module logging query|status
+boetticher module monitoring status
+boetticher module statuspage status
+boetticher module monitoring ask QUESTION
+boetticher module monitoring incidents list|show|investigate [ID]
+boetticher module observability alerts pushover apply|status|test|remove
+```
+
+`module observability` creates and reconciles the exact unprivileged
+`lab-monitor-01` LXC (VMID 120, VLAN 10) with retained metrics, logs, and
+observability state volumes. It owns VictoriaMetrics, VictoriaLogs, Grafana,
+Gatus, and the optional explicitly configured Bifrost/Holmes route. Monitoring,
+logging, and status page remain read-only facets; they have no independent
+lifecycle or runtime ownership. Holmes is configured under Monitoring, and
+`module monitoring ask` is the explicit nested monitoring operation.
+Teardown stops the whole owned guest and retains its data for a later apply.
+Apply provisions the public Caddy frontend and native collection paths. Live
+Controller/Host acceptance of that path remains `NOT TESTED`.
+Journal upload uses system trust and no client certificate; metrics use
+authenticated HTTPS paths through the fixed internal Caddy address. Ingest
+accepts only POST `/upload` from the three resolved collection sources and
+does not trust forwarded headers. Metrics paths are fixed per target and use
+Basic Auth; arbitrary upstream paths are denied.
+
+`status` for observability, logging, monitoring, and status page shares one
+30-second read budget. It verifies guest ownership once, reads the guest state,
+then checks each required unit (`systemctl is-active`) and, for active units,
+its loopback health endpoint in one batched guest command; every unit query and
+health request has its own 5-second bound. A unit that is not active or an
+endpoint that fails is reported as unhealthy with its own detail. A spent budget
+is reported as `status budget of 30s ran out during <check>; health not
+determined`, never as an unhealthy provider. `plan` runs the same check over the
+full required service set and prints what it checked (for example `7/7 required
+services active with healthy endpoints`) before proposing to preserve or
+reconcile the runtime; apply still compares the configuration digest before it
+skips work.
+
+When Holmes is enabled under Monitoring intent, the same LXC runs the pinned Holmes
+0.40 runner and the bounded incident service. Holmes can use only the local
+Prometheus-compatible VictoriaMetrics endpoint and VictoriaLogs endpoint.
+Bifrost is the sole model route at `127.0.0.1:4000/v1`; its separate
+`holmes-client-token` is the only credential Holmes and incident intake receive,
+and upstream provider keys remain Bifrost-only. Gatus alerts are accepted only
+on the loopback incident webhook; the private report UI is exposed through the
+existing Grafana session via Caddy forward-auth. `module monitoring incidents`
+lists, shows, and triggers one bounded read-only investigation. The queue is
+SQLite-backed, deduplicated, restart-recoverable, retained for 30 days, and
+capped at 100 terminal/current records. Each investigation is limited to one
+attempt, six tool rounds, five minutes, and the configured model alias.
+`module monitoring ask QUESTION` still requires normal operator approval before
+a model request that may incur charges. The runner is unprivileged and bounded,
+uses pinned localhost routes, and does not save transcripts. Kernel-level LXC
+egress containment remains `NOT TESTED`.
+
+Pushover is an optional alert contact. `module observability alerts pushover
+apply` records the enabled state, title, and priority and may import a bounded
+`--credentials-file` containing `user:API`; its credential remains
+in the Controller secret store and activation is applied with the atomic
+observability lifecycle. `status` never prints keys. `test` accepts a local
+`user:API` file, requires approval unless `--yes` is supplied, validates the
+account, and sends one clearly labelled normal-priority message without retry.
+Disabled or unconfigured Pushover remains inert.
+
+For a fresh apply, provide the operator secrets before creating the guest;
+the command reports every missing name without starting a partial runtime:
+
+```text
+boetticher module observability secrets set grafana-admin-password
+boetticher module observability secrets set cloudflare-dns-token
+boetticher module observability apply --public-domain example.com --yes
+```
+
+The Gatus status page uses HTTPS without a password prompt inside the existing
+network access boundary. Grafana sign-in and private metrics authentication
+remain enabled; no status-page password is required for a fresh deployment.
+
+To opt into Holmes/Bifrost, also set `holmes-client-token` and
+`openrouter-api-key`, then apply with an explicitly qualified provider model
+(DeepSeek V4.1 Flash is the current candidate; the V4 Flash route remains an
+explicit fallback, never an implicit downgrade):
+
+```text
+boetticher module observability secrets set holmes-client-token
+boetticher module observability secrets set openrouter-api-key
+boetticher module observability apply --public-domain example.com --holmes-model deepseek/deepseek-v4.1-flash --yes
+```
+
+To import existing operator-held provider material, use stdin or a
+credentials file; the filenames are the only values that belong in shell history:
+
+```text
+boetticher module observability secrets set openrouter-api-key < ~/.secrets/btcr-openrouter.key
+boetticher module observability alerts pushover apply --credentials-file ~/.secrets/btcr-pushover.key --yes
+```
+
+The Monitoring intent may cap the paid path explicitly. Defaults are the
+approved V1 limits: `daily_budget_usd: 2`, `investigation_budget_usd: 0.25`,
+`max_rounds: 6`, `max_queue: 100`, `investigation_deadline_seconds: 300`, and
+`retention_days: 30`. The incident service reserves the maximum per-call
+budget before invoking a model and fails closed when the daily reservation is
+exhausted.
+
+Apply creates only an absent exact guest, refuses foreign or mismatched
+identity, uploads the installed provider payload, and verifies the active
+provider units and local endpoints. Repeating a healthy apply is a no-op.
+`--yes` approves mutation, while an interactive affirmative answer is required
+otherwise. Source, package, and offline checks are available locally; live
+Controller/Host rollout and live acceptance remain `NOT TESTED`.
+Gatus currently checks the shared provider health endpoints; broader lab
+outcome checks remain deferred.
+
+## Media
 
 The media application lifecycle uses one fixed amd64 QEMU VM, `lab-media-01`
 (VMID 290, `10.10.20.230`, SERVERS VLAN 20), with a 32 GiB root disk and a
@@ -136,236 +333,26 @@ peer packet journeys, physical VLAN isolation, and live public acceptance remain
 `NOT TESTED` until executed. Teardown stops the VM and removes aliases and the
 peer forward while retaining media, its reservation, and VPN client protection.
 
-## 4E network closeout state
+## Network management access and recovery
 
-The fixed Firewall, DHCP/DNS, VPN, and Tailnet capability boundary now feeds
-the status daemon through ordinary internal calls. The daemon maps VPN and DNS
-facts into the existing snapshot and StreamDeck slots, keeps module collection
-single-flight off the event loop, and preserves bounded cancellation. A
-configured VPN with unverified egress remains distinct from a failed or
-unconfigured VPN.
+The managed firewall keeps inter-zone forwarding disabled for management
+access. Its owned rules allow TCP/22 from TRUSTED and the identity-bound
+Tailnet router to MGMT, plus TCP/22 from the resolved Controller SERVERS
+reservation to the Host at `10.10.99.5`. After the Host path is applied,
+re-enroll through the verified internal address to make it the active
+Controller connection; the original HOME address and strict imported SSH trust
+remain the explicit recovery path.
 
-Native observations and regressions are bounded: VPN failure is not `OFF`, and
-healthy DHCP plus failed DNS is not `healthy`. `NETWORK` is an aggregate of
-Firewall, DNS, and DHCP/NTP control-plane status; it does not execute the
-packet-acceptance suite. A red aggregate therefore indicates desired/provider
-drift or a failed local predicate, not proof of a network or VPN outage. Keep
-the Blinkt mapping fixed at
-eight pixels: `CTL HOST NETWORK VPN TAILNET SPEEDTEST CTRL-UPDATES HOST-UPDATES`.
-The StreamDeck home shows the Host summary, speedtest `NET`, guest pages,
-`NETWORK`, `VPN`, `TAILNET`, `SCROLL`, and `REFRESH`; its detail views expose
-Firewall, DNS, and DHCP/NTP state. Add no display stack, hardware, or framework.
+Recovery retains protected off-component configuration, identities, and
+AirVPN/Tailnet credentials, or documents deliberate reprovision; leases are
+disposable. Use the existing independent Controller/Host management path; there
+is no backup platform, and recovery does not need Host teardown.
 
-Keep cleanup narrow: delete only proven obsolete reachable network callers and
-docs, preserve security tests, and add regressions for changed behaviour. NET
-remains a Host HOME observation; VPN availability does not prove protected
-client enforcement. Physical navigation, USB reconnect, and overlay expiry
-returning fresh state remain NOT TESTED; fix only observed faults.
-
-The reference physical path now uses exact `nic1` ownership on `vmbr1`, with
-tagged VLANs 5, 10, 20, 30, 40, and 99 and untagged ingress rejected. Current
-client access uses SERVERS and SANDBOX; lease evidence is site-specific and belongs in private
-acceptance records; HOME remains on `vmbr0`. Remote Tailnet,
-packet, physical USB, and the disposable protected VPN-client journey remain
-separate acceptance gates and are reported as `NOT TESTED` or `HOLD` until
-their exact journeys execute.
-
-Recovery retains protected off-component config, identities, and AirVPN/Tailnet
-credentials, or documents deliberate reprovision; leases are disposable. Use
-the existing independent Controller/Host management path, with no backup
-platform or Host teardown.
-
-Application networking keeps ordinary existing calls with narrow ingress,
-egress, and identity names; do not add a generic schema. Stage 5 uses the
-public Caddy DNS-01 frontend and native journal upload with system trust. The
-Host-owned `vmbr1.99` path is `10.10.99.5/24` with LAB routes via `10.10.99.1`.
-Stage 5 uses one intentionally integrated `observability` capability. Monitoring,
-logging, and status page are query/status facets of that runtime, not separate
-deployable Modules. Holmes is a nested Monitoring operation over this runtime.
-
-The managed firewall keeps inter-zone forwarding disabled for this access. Its
-owned rules allow TCP/22 from TRUSTED and the identity-bound Tailnet router to
-MGMT, plus TCP/22 from the resolved Controller SERVERS reservation to the Host
-at `10.10.99.5`. After the Host path is applied, re-enroll through the verified
-internal address to make it the active Controller connection; the original
-HOME address and strict imported SSH trust remain the explicit recovery path.
-
-Defer new network modules, an aggregate coordinator, SSO platforms, and
-switch automation. The existing management route remains the boundary.
-
-## Phase 4A firewall capability
-
-The supported Phase 4A lifecycle is:
-
-```text
-boetticher module firewall plan
-boetticher module firewall apply
-boetticher module firewall status
-boetticher module firewall reboot --yes
-boetticher module firewall test --plan
-boetticher module firewall test --yes
-boetticher module firewall test --cleanup-only --yes
-boetticher module firewall teardown --plan
-boetticher module firewall teardown --yes
-```
-
-The capability owns one provider appliance named `lab-firewall-01`, its exact
-VM and disk, its six virtual IPv4 gateways, its reference firewall policy, and
-ordinary Internet NAT. The current provider implementation is OpenWrt, but
-OpenWrt is not a public Module namespace. The provider consumes the Host-owned
-VLAN-aware `vmbr1`; it never creates, repairs, or re-owns that bridge.
-
-Phase 4A configures IPv4 routing, inter-zone default-deny policy, and
-Controller-only provider management. Provider state outside deterministic
-Boetticher-owned sections is
-preserved. Repeating `apply` when the provider and owned state are correct is a
-semantic no-op. `teardown --yes` removes only the exact firewall provider and
-Controller-local provider credential/trust, preserving Host trust, storage,
-`vmbr0`, `vmbr1`, and physical networking.
-
-`module firewall test` tests the firewall already present; it never applies,
-repairs, reboots, or tears it down. The fixed suite creates one temporary
-network namespace and veth/access port per TRANSIT, INFRA, SERVERS, TRUSTED,
-SANDBOX, and MGMT zone, with a static `.250-.254` address candidate and the
-zone gateway as its default route. It covers gateway access, ordinary HTTPS
-egress, the fixed directional TCP/UDP policy, HOME protection, and appliance
-administration. It does not claim same-VLAN, physical-switch, Wi-Fi, guest
-firewall, or IPv6 isolation. Expected outcomes are independent of the
-renderer; transport, setup, listener, and target failures are not successful
-deny results. The test cleans up on completion, failure, timeout, and
-interruption; use `module firewall test --cleanup-only --yes` for recognised
-leftovers. `--plan` is read-only and `--plan --yes` is rejected.
-
-`module firewall teardown --plan` describes the exact provider, disk, and
-Controller-local credential/trust state that would be removed without a
-prompt. The acceptance rehearsal ends with `module firewall teardown --yes`
-and no firewall deployed; a later `status` reports absence with a nonzero exit
-and does not claim PASS.
-
-Phase 4B adds `module dns` and `module dhcp` as peer capabilities sharing this
-appliance. DHCP-derived DNS and client-facing NTP are supporting behaviour,
-not standalone modules. The status monitor consumes their bounded native
-status facts in the existing `DHCP/NTP` and `Tailnet` slots; unconfigured is off,
-configured-but-unavailable is failed, and no status database or scheduler is
-introduced.
-
-## Phase 5 observability capabilities
-
-The installed Controller owns one atomic observability runtime through the
-same single-Host path:
-
-```text
-boetticher module observability plan|apply|status|test|teardown|secrets
-boetticher module logging query|status
-boetticher module monitoring status
-boetticher module statuspage status
-boetticher module monitoring ask QUESTION
-boetticher module monitoring incidents list|show|investigate [ID]
-boetticher module observability alerts pushover apply|status|test|remove
-```
-
-`module observability` creates and reconciles the exact unprivileged
-`lab-monitor-01` LXC (VMID 120, VLAN 10) with retained metrics, logs, and
-observability state volumes. It owns VictoriaMetrics, VictoriaLogs, Grafana,
-Gatus, and the optional explicitly configured Bifrost/Holmes route. Monitoring,
-logging, and status page remain read-only facets; they have no independent
-lifecycle or runtime ownership. Holmes is configured under Monitoring, and
-`module monitoring ask` is the explicit nested monitoring operation.
-Teardown stops the whole owned guest and retains its data for a later apply.
-Apply provisions the public Caddy frontend and native collection paths. Live
-Controller/Host acceptance of that path remains `NOT TESTED` in this phase.
-Journal upload uses system trust and no client certificate; metrics use
-authenticated HTTPS paths through the fixed internal Caddy address. Ingest
-accepts only POST `/upload` from the three resolved collection sources and
-does not trust forwarded headers. Metrics paths are fixed per target and use
-Basic Auth; arbitrary upstream paths are denied.
-
-`status` for observability, logging, monitoring, and status page shares one
-30-second read budget. It verifies guest ownership once, reads the guest state,
-then checks each required unit (`systemctl is-active`) and, for active units,
-its loopback health endpoint in one batched guest command; every unit query and
-health request has its own 5-second bound. A unit that is not active or an
-endpoint that fails is reported as unhealthy with its own detail. A spent budget
-is reported as `status budget of 30s ran out during <check>; health not
-determined`, never as an unhealthy provider. `plan` runs the same check over the
-full required service set and prints what it checked (for example `7/7 required
-services active with healthy endpoints`) before proposing to preserve or
-reconcile the runtime; apply still compares the configuration digest before it
-skips work.
-
-When Holmes is enabled under Monitoring intent, the same LXC runs the pinned Holmes
-0.40 runner and the bounded incident service. Holmes can use only the local
-Prometheus-compatible VictoriaMetrics endpoint and VictoriaLogs endpoint.
-Bifrost is the sole model route at `127.0.0.1:4000/v1`; its separate
-`holmes-client-token` is the only credential Holmes and incident intake receive,
-and upstream provider keys remain Bifrost-only. Gatus alerts are accepted only
-on the loopback incident webhook; the private report UI is exposed through the
-existing Grafana session via Caddy forward-auth. `module monitoring incidents`
-lists, shows, and triggers one bounded read-only investigation. The queue is
-SQLite-backed, deduplicated, restart-recoverable, retained for 30 days, and
-capped at 100 terminal/current records. Each investigation is limited to one
-attempt, six tool rounds, five minutes, and the configured model alias.
-`module monitoring ask QUESTION` still requires normal operator approval before
-a model request that may incur charges. The runner is unprivileged and bounded,
-uses pinned localhost routes, and does not save transcripts. Kernel-level LXC
-egress containment remains `NOT TESTED`.
-
-Pushover is an optional alert contact. `module observability alerts pushover
-apply` records the enabled state, title, and priority and may import a bounded
-`--credentials-file` containing `user:API`; its credential remains
-in the Controller secret store and activation is applied with the atomic
-observability lifecycle. `status` never prints keys. `test` accepts a local
-`user:API` file, requires approval unless `--yes` is supplied, validates the
-account, and sends one clearly labelled normal-priority message without retry.
-Disabled or unconfigured Pushover remains inert.
-
-For a fresh apply, provide the operator secrets before creating the guest;
-the command reports every missing name without starting a partial runtime:
-
-```text
-boetticher module observability secrets set grafana-admin-password
-boetticher module observability secrets set cloudflare-dns-token
-boetticher module observability apply --public-domain example.com --yes
-```
-
-The Gatus status page uses HTTPS without a password prompt inside the existing
-network access boundary. Grafana sign-in and private metrics authentication
-remain enabled; no status-page password is required for a fresh deployment.
-
-To opt into Holmes/Bifrost, also set `holmes-client-token` and
-`openrouter-api-key`, then apply with an explicitly qualified provider model
-(DeepSeek V4.1 Flash is the current candidate; the V4 Flash route remains an
-explicit fallback, never an implicit downgrade):
-
-```text
-boetticher module observability secrets set holmes-client-token
-boetticher module observability secrets set openrouter-api-key
-boetticher module observability apply --public-domain example.com --holmes-model deepseek/deepseek-v4.1-flash --yes
-```
-
-On this Mac, import the existing operator-held provider material through
-stdin; the filenames are the only values that belong in shell history:
-
-```text
-boetticher module observability secrets set openrouter-api-key < ~/.secrets/btcr-openrouter.key
-boetticher module observability alerts pushover apply --credentials-file ~/.secrets/btcr-pushover.key --yes
-```
-
-The Monitoring intent may cap the paid path explicitly. Defaults are the
-approved V1 limits: `daily_budget_usd: 2`, `investigation_budget_usd: 0.25`,
-`max_rounds: 6`, `max_queue: 100`, `investigation_deadline_seconds: 300`, and
-`retention_days: 30`. The incident service reserves the maximum per-call
-budget before invoking a model and fails closed when the daily reservation is
-exhausted.
-
-Apply creates only an absent exact guest, refuses foreign or mismatched
-identity, uploads the installed provider payload, and verifies the active
-provider units and local endpoints. Repeating a healthy apply is a no-op.
-`--yes` approves mutation, while an interactive affirmative answer is required
-otherwise. Source, package, and offline checks are available locally; live
-Controller/Host rollout and live acceptance remain `NOT TESTED` in this phase.
-Gatus currently checks the shared provider health endpoints; broader lab
-outcome checks remain deferred.
+Remote Tailnet, packet, physical USB, StreamDeck navigation/reconnect, and the
+disposable protected VPN-client journeys remain separate acceptance gates and
+are reported as `NOT TESTED` or `HOLD` until their exact journeys execute.
+New network modules, an aggregate coordinator, SSO platforms, and switch
+automation are deferred.
 
 ## Capability, provider, runtime
 
@@ -388,7 +375,8 @@ genuinely the operator-managed product.
 Blinkt, StreamDeck, display, and kiosk hardware are Controller implementation
 details. They do not become `module blinkt`, `module streamdeck`, or `module
 display`. A physical device, daemon, VM, container, or third-party product is
-not automatically a Module.
+not automatically a Module. See the
+[Controller guide](controller.html#status-daemon-and-peripherals).
 
 ## Lifecycle boundary
 
@@ -400,6 +388,6 @@ boetticher host status
 ```
 
 Host apply owns the Proxmox OS baseline, storage, and virtual networking. It
-does not deploy Modules. When Module implementations are added, each must
-choose a capability name, define its bounded action surface, preserve exact
-ownership, and remain separate from Host lifecycle and Controller peripherals.
+does not deploy Modules. Each Module chooses a capability name, defines its
+bounded action surface, preserves exact ownership, and remains separate from
+Host lifecycle and Controller peripherals.
