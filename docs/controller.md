@@ -413,6 +413,8 @@ no-subscription repository policy, required host prerequisites, and headless
 power behavior, and the signed release-built Host speedtest helper. It never
 formats disks, changes guests, storage, bridges, addresses, routes, firewall, or
 recovery access. Re-running it is safe; it does not upgrade or reboot Proxmox.
+Package upgrades and reboots use `host upgrade` and `host reboot`; see
+[Host maintenance](start.md#host-maintenance).
 The required Proxmox services (`pve-cluster`, `pvedaemon`, `pvestatd`, and
 `pveproxy`) are explicitly enabled and started by the same Host setup role so
 they return after reboot.
@@ -574,9 +576,12 @@ node, storage, and network selections. `host status` then reports the
 intentional trust-only state and `host apply` directs the operator to
 `host enroll`.
 
-Approved reboot rehearsals are also Controller operations:
+Approved reboot rehearsals are also Controller operations. With guests
+present, the Host reboot requires `--with-guests` (see
+[Host maintenance](start.md#host-maintenance)):
 
 ```sh
 sudo boetticher host reboot --yes
+sudo boetticher host reboot --with-guests --yes
 sudo boetticher controller reboot --yes
 ```
