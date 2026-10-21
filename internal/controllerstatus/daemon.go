@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/labspeedtest"
 )
 
 type Daemon struct {
@@ -26,7 +28,10 @@ type Daemon struct {
 	Throughput        func(context.Context) (float64, error)
 	Telemetry         func(context.Context) (ProxmoxSnapshot, error)
 	StreamDeckFactory StreamDeckFactory
-	Now               func() time.Time
+	// LabSpeedtest runs one manual SERVERS-egress speedtest on the Host,
+	// forwarding live progress. It is started only by a StreamDeck press.
+	LabSpeedtest func(context.Context, func(labspeedtest.Event)) (labspeedtest.Event, error)
+	Now          func() time.Time
 
 	renderer              Renderer
 	snapshot              StatusSnapshot
@@ -59,6 +64,8 @@ type Daemon struct {
 	streamdeckAnimationAt time.Time
 	manualRefreshAt       time.Time
 	streamdeckDirty       bool
+	labSpeedtest          SpeedtestDisplay
+	speedtestUpdates      chan speedtestUpdate
 	previous              StatusSnapshot
 	driverBroken          bool
 }
@@ -132,6 +139,7 @@ func NewDaemon(settings Settings, driver Driver) *Daemon {
 		throughputResults: make(chan throughputResult, 1),
 		streamdeckFrames:  make(chan []KeyImage, 1),
 		streamdeckEvents:  make(chan KeyEvent, 16),
+		speedtestUpdates:  make(chan speedtestUpdate, 16),
 		streamdeckView:    StreamDeckHome,
 		streamdeckGuest:   -1,
 		streamdeckDirty:   true,
@@ -163,6 +171,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.Settings.StreamDeckEnabled {
 		if d.Telemetry == nil {
 			d.Telemetry = (ProxmoxCollector{}).Collect
+		}
+		if d.LabSpeedtest == nil {
+			d.LabSpeedtest = (LabSpeedtestRunner{}).Run
 		}
 		if d.StreamDeckFactory == nil {
 			d.StreamDeckFactory = NewNativeStreamDeckFactory(StreamDeckConfig{Serial: d.Settings.StreamDeckSerial}, d.Settings.StreamDeckBrightness)
@@ -215,6 +226,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case result := <-d.refreshResults:
 			d.applyRefreshResult(result)
 			d.scheduleThroughput(ctx, d.Now())
+			d.render(ctx)
+		case update := <-d.speedtestUpdates:
+			d.applySpeedtestUpdate(update)
 			d.render(ctx)
 		case result := <-d.throughputResults:
 			d.applyThroughputResult(result)
@@ -275,7 +289,9 @@ func (d *Daemon) applyRefreshResult(result refreshResult) {
 }
 
 func (d *Daemon) scheduleThroughput(ctx context.Context, now time.Time) {
-	if d.Throughput == nil || d.throughputRunning || !d.lastConnectivity.Healthy {
+	// A manual lab speedtest shares the household uplink; measuring both at
+	// once would understate both. The hourly sample simply waits a tick.
+	if d.Throughput == nil || d.throughputRunning || d.labSpeedtest.Running || !d.lastConnectivity.Healthy {
 		return
 	}
 	if !d.throughputTry.IsZero() && now.Sub(d.throughputTry) < d.Settings.ThroughputInterval {
@@ -512,6 +528,14 @@ func (d *Daemon) handleStreamDeckEvent(ctx context.Context, event KeyEvent) {
 			d.requestTelemetry(ctx, now)
 		}
 	case StreamDeckHostDetail, StreamDeckGuestDetail, StreamDeckNetworkDetail, StreamDeckVPNDetail, StreamDeckTailnetDetail:
+		if d.streamdeckView == StreamDeckNetworkDetail {
+			switch event.Index {
+			case 5:
+				d.startLabSpeedtest(ctx, now)
+			case 6:
+				d.Logger.Printf("%s", stVPNUnavailable)
+			}
+		}
 		switch event.Index {
 		case 13:
 			d.streamdeckView = StreamDeckHome
@@ -520,6 +544,60 @@ func (d *Daemon) handleStreamDeckEvent(ctx context.Context, event KeyEvent) {
 		}
 	}
 	d.streamdeckDirty = true
+}
+
+// startLabSpeedtest is single-flight and never runs on the render or
+// collection path. Its context derives from the daemon, not the view, so
+// navigating away does not cancel it.
+func (d *Daemon) startLabSpeedtest(ctx context.Context, now time.Time) {
+	switch {
+	case d.labSpeedtest.Running:
+		d.labSpeedtest.notice("BUSY", now)
+		return
+	case d.LabSpeedtest == nil:
+		d.labSpeedtest.notice("N/A", now)
+		return
+	case d.throughputRunning:
+		d.labSpeedtest.notice("HOURLY", now)
+		return
+	case d.snapshot.Firewall.State == Off:
+		d.labSpeedtest.notice("NO FW", now)
+		return
+	}
+	d.labSpeedtest.start(now)
+	run, updates, clock := d.LabSpeedtest, d.speedtestUpdates, d.Now
+	go func() {
+		runCtx, cancel := context.WithTimeout(ctx, labSpeedtestTimeout)
+		defer cancel()
+		event, err := run(runCtx, func(event labspeedtest.Event) {
+			// Progress is lossy by design: a newer rate supersedes a dropped one.
+			select {
+			case updates <- speedtestUpdate{event: event, at: clock()}:
+			default:
+			}
+		})
+		select {
+		case updates <- speedtestUpdate{event: event, err: err, final: true, at: clock()}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (d *Daemon) applySpeedtestUpdate(update speedtestUpdate) {
+	if !d.labSpeedtest.Running {
+		return
+	}
+	d.labSpeedtest.apply(update)
+	if update.final {
+		if d.labSpeedtest.Phase == labspeedtest.PhaseDone {
+			d.Logger.Printf("lab speedtest: %.0f Mbps down, %.0f Mbps up via %s", d.labSpeedtest.Download, d.labSpeedtest.Upload, d.labSpeedtest.Server)
+		} else {
+			d.Logger.Printf("lab speedtest failed: %s", d.labSpeedtest.Error)
+		}
+	}
+	if d.streamdeckView == StreamDeckNetworkDetail {
+		d.streamdeckDirty = true
+	}
 }
 
 func (d *Daemon) requestTelemetry(ctx context.Context, now time.Time) {
@@ -600,6 +678,10 @@ func (d *Daemon) render(ctx context.Context) {
 			_ = d.Driver.Close()
 		}
 	}
+	if d.labSpeedtest.Notice != "" && !now.Before(d.labSpeedtest.NoticeUntil) {
+		d.labSpeedtest.Notice = ""
+		d.streamdeckDirty = true
+	}
 	if d.streamdeckNeedsMarquee() {
 		if d.streamdeckAnimationAt.IsZero() || !now.Before(d.streamdeckAnimationAt) {
 			d.streamdeckDirty = true
@@ -624,7 +706,7 @@ func (d *Daemon) streamdeckNeedsMarquee() bool {
 		}
 		return needsDeckMarquee(d.telemetry.Guests[d.streamdeckGuest].Name)
 	case StreamDeckNetworkDetail:
-		return needsDeckMarquee(networkComponent(d.snapshot).Detail)
+		return needsDeckMarquee(networkComponent(d.snapshot).Detail) || needsDeckMarquee(speedtestDetail(d.labSpeedtest))
 	case StreamDeckVPNDetail:
 		return needsDeckMarquee(d.snapshot.VPN.Detail)
 	case StreamDeckTailnetDetail:
@@ -647,7 +729,7 @@ func (d *Daemon) queueStreamDeckRender(now time.Time) {
 	if !d.Settings.StreamDeckEnabled || d.streamdeckFrames == nil || !d.streamdeckDirty {
 		return
 	}
-	frame := (StreamDeckRenderer{}).RenderAt(d.snapshot, d.telemetry, d.operation, d.streamdeckView, d.streamdeckPage, d.streamdeckGuest, now)
+	frame := (StreamDeckRenderer{Speedtest: d.labSpeedtest}).RenderAt(d.snapshot, d.telemetry, d.operation, d.streamdeckView, d.streamdeckPage, d.streamdeckGuest, now)
 	select {
 	case <-d.streamdeckFrames:
 	default:

@@ -170,6 +170,8 @@ Blinkt is optional hardware: if it is absent, the daemon remains installed and
 running without a display, and the GPIO check is reported as `NOT TESTED` rather
 than blocking Controller readiness. Host apply always installs the packaged
 Host speedtest helper; it does not depend on Blinkt or StreamDeck hardware.
+Host status and apply compare the installed helper's `--version` with the
+Controller release, so `host apply` reinstalls a stale helper.
 
 The current 4E status layout, viewed from the operator side, is:
 
@@ -262,9 +264,42 @@ packet-acceptance or outage proof. SCROLL cycles
 through guests five at a time. Each guest tile uses `VM<id>` or `CT<id>` on
 the first line, the hostname on the second, and its runtime status on the
 third.
-Host and guest detail views provide BACK and REFRESH only; StreamDeck input
-cannot start, stop, reboot, deploy, or run shell commands. The old standalone
-Controller StreamDeck service is removed during Controller bootstrap.
+Host and guest detail views provide BACK and REFRESH only. Apart from the
+bounded NETWORK speedtest below, StreamDeck input cannot start, stop, reboot,
+deploy, or run shell commands. The old standalone Controller StreamDeck
+service is removed during Controller bootstrap.
+
+The NETWORK detail view (home key `NETWORK`) uses this layout:
+
+```text
+NETWORK  FIREWALL  DNS     DHCP/NTP  DETAIL
+ST-LAB   ST-VPN    PING    DOWN      UP
+SERVER   -         -       BACK      REFRESH
+```
+
+`ST-LAB` runs one manual speedtest from inside the LAB through the firewall's
+ordinary WAN egress. The Host helper creates a temporary owned namespace
+(`bt4s-lab`, host veth `bt4s-lab-h`) on the SERVERS VLAN with an address from
+the reserved `.250-.254` probe space, which is outside the VPN-protected
+`.224/28` range, and resolves names through the SERVERS gateway like any LAB
+client. It streams one progress line per phase over the strict Host SSH
+transport. While the test runs the key is blue and shows the phase or the
+live download/upload rate; PING, DOWN, UP, and SERVER show the split figures.
+The finished result stays on the keys, with its completion time, until the
+next run, including after navigating away; a failure shows `FAILED` and the
+reason scrolls on SERVER. A second press while running shows `BUSY`; a press
+during the hourly NET sample shows `HOURLY`, and with no firewall configured
+shows `NO FW`. The hourly sample waits while a manual run is active, manual
+results never feed the NET/Blinkt throughput figure, and the helper shares the
+firewall packet-test lock so the two never run together. Each run removes its
+fixture with a fresh cleanup budget, removes an exactly matching leftover from
+an interrupted run before starting (reported on SERVER), refuses ambiguous
+leftovers, and reports a cleanup failure as a failed run.
+
+`ST-VPN` shows `N/A`. VPN egress is selected only for declared VPN client
+reservations in the protected range, enforced by the firewall's source rules
+and VPN client set, so an honest VPN-path test needs a declared probe client
+rather than a temporary one.
 
 The Host detail view also shows `FW`, `DHCP`, and `TAILNET` using the same coarse
 component states as Blinkt. `FW` consumes the native `module firewall status`

@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/labspeedtest"
 	"github.com/showwin/speedtest-go/speedtest"
 	"github.com/showwin/speedtest-go/speedtest/transport"
 )
@@ -26,12 +27,32 @@ type result struct {
 func main() {
 	source := flag.String("source", "vmbr0", "source interface for the Host test")
 	jsonOutput := flag.Bool("json", false, "emit the machine-readable result")
+	version := flag.Bool("version", false, "print the helper contract version")
+	lab := flag.Bool("lab", false, "measure LAB egress from a temporary SERVERS namespace behind the firewall")
+	stream := flag.Bool("stream", false, "emit one JSON progress event per line (lab mode)")
+	labChild := flag.Bool("lab-child", false, "internal: measure from inside the owned lab namespace")
+	gateway := flag.String("gateway", "", "internal: lab namespace gateway and resolver")
 	flag.Parse()
-	if !*jsonOutput {
-		fail("--json is required")
-	}
 	if flag.NArg() != 0 {
 		fail("unexpected positional argument")
+	}
+	switch {
+	case *version:
+		fmt.Println(labspeedtest.HelperVersion)
+		return
+	case *labChild:
+		if *lab || *stream || *jsonOutput || *gateway != labspeedtest.Gateway {
+			fail("--lab-child requires only the fixed lab gateway")
+		}
+		os.Exit(runLabChild(*gateway, os.Stdout))
+	case *lab:
+		if !*stream || *jsonOutput {
+			fail("--lab requires --stream")
+		}
+		os.Exit(runLab(os.Stdout))
+	}
+	if !*jsonOutput {
+		fail("--json is required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
