@@ -598,27 +598,14 @@ func (c HostClient) ServiceStatus(ctx context.Context, b Binding, service string
 // ownership has been verified. It prevents an active-but-unresponsive unit
 // from being reported as healthy by capability status.
 func (c HostClient) ProviderHealth(ctx context.Context, b Binding, service string) (string, error) {
-	paths := map[string]string{
-		"victorialogs.service":         "http://127.0.0.1:9428/health",
-		"victoriametrics.service":      "http://127.0.0.1:8428/health",
-		"grafana.service":              "http://127.0.0.1:3000/api/health",
-		"gatus.service":                "http://127.0.0.1:8080/health",
-		"bifrost.service":              "http://127.0.0.1:4000/health",
-		"boetticher-incidentd.service": "http://127.0.0.1:8091/health",
-		"caddy.service":                "http://unix/config/",
-	}
-	path, ok := paths[service]
+	curl, ok := providerHealthCurl(service)
 	if !ok {
 		return "", fmt.Errorf("unknown observability provider %s", service)
 	}
 	if _, err := c.GuestConfig(ctx, b); err != nil {
 		return "", err
 	}
-	command := fmt.Sprintf("pct exec %d -- curl --fail --silent --show-error --max-time 5 %s >/dev/null", b.VMID, shellQuoteValue(path))
-	if service == "caddy.service" {
-		command = fmt.Sprintf("pct exec %d -- curl --fail --silent --show-error --max-time 5 --unix-socket /run/caddy/admin.sock http://unix/config/ >/dev/null", b.VMID)
-	}
-	if _, err := c.Transport.Run(ctx, command); err != nil {
+	if _, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- %s >/dev/null", b.VMID, curl)); err != nil {
 		return "", fmt.Errorf("%s health endpoint failed: %w", service, err)
 	}
 	return "healthy", nil

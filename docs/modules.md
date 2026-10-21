@@ -280,6 +280,19 @@ accepts only POST `/upload` from the three resolved collection sources and
 does not trust forwarded headers. Metrics paths are fixed per target and use
 Basic Auth; arbitrary upstream paths are denied.
 
+`status` for observability, logging, monitoring, and status page shares one
+30-second read budget. It verifies guest ownership once, reads the guest state,
+then checks each required unit (`systemctl is-active`) and, for active units,
+its loopback health endpoint in one batched guest command; every unit query and
+health request has its own 5-second bound. A unit that is not active or an
+endpoint that fails is reported as unhealthy with its own detail. A spent budget
+is reported as `status budget of 30s ran out during <check>; health not
+determined`, never as an unhealthy provider. `plan` runs the same check over the
+full required service set and prints what it checked (for example `7/7 required
+services active with healthy endpoints`) before proposing to preserve or
+reconcile the runtime; apply still compares the configuration digest before it
+skips work.
+
 When Holmes is enabled under Monitoring intent, the same LXC runs the pinned Holmes
 0.40 runner and the bounded incident service. Holmes can use only the local
 Prometheus-compatible VictoriaMetrics endpoint and VictoriaLogs endpoint.
