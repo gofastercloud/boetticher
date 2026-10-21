@@ -70,6 +70,13 @@ Each concern inspects native state first. Exact state is a no-op, safely absent
 state can be created, recognized Boetticher-owned partial state can be resumed,
 and conflicting or ambiguous state stops without mutation.
 
+The baseline configures only the known Proxmox `no-subscription` repository
+policy, required Host prerequisites, headless power behavior, and the
+release-built Host speedtest helper. The same role explicitly enables and
+starts the required Proxmox services (`pve-cluster`, `pvedaemon`, `pvestatd`,
+and `pveproxy`) so they return after reboot. It never upgrades or reboots
+Proxmox; see [Host maintenance](start.html#host-maintenance).
+
 ## Fixed physical topology
 
 HOME management remains on `vmbr0`. The current Host binding uses a
@@ -158,6 +165,14 @@ LVM-backed, guest-used, Proxmox-used, changed, or ambiguous state fails
 closed. Apply creates no filesystem or mount, moves no guests, and writes the
 selected stable identity to `/etc/boetticher/lab.yml` only after successful
 verification. A conflicting or partial layout is never wiped automatically.
+Proxmox registers `boetticher-data` as an `lvmthin` store with
+`images,rootdir` content.
+
+During acceptance, run a small reversible Proxmox allocation smoke test on
+`boetticher-data` without creating a guest. A Proxmox reboot is a separate
+explicit approval; afterwards recheck the PV, VG, thin pool, storage
+registration, guests, and management network. Independent Mac/root access
+remains the recovery path if a storage step fails.
 
 ## Host status and recovery
 

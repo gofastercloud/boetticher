@@ -236,7 +236,7 @@ CTL HOST NETWORK VPN TAILNET NET CTRL-UPDATES HOST-UPDATES
 | Breathing green | The lightweight check is healthy |
 | Steady blue | Startup, checking, or configuration staged |
 | Pulsing amber | Attention or degraded operation |
-| Solid red | A meaningful health or operation failure |
+| Flashing red | A meaningful health or operation failure |
 | Off | Not configured or not applicable |
 
 - `CTL` is local Controller health and `HOST` is the enrolled Proxmox Host.

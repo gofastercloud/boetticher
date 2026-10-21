@@ -30,6 +30,10 @@ Recent changes:
 - Bound observability, logging, monitoring, and status-page `status` within one
   30-second read budget, and report a spent budget as undetermined rather than
   unhealthy.
+- Reopen the Blinkt with backoff after a transient device failure instead of
+  latching it off until the status daemon restarts.
+- Let `controller bootstrap` move the Go links off an earlier Boetticher-owned
+  toolchain, so an existing Go 1.26.6 Controller installs Go 1.26.10 cleanly.
 - Move the Controller toolchain to Go 1.26.10 and update vulnerable Go
   dependencies in the CLI and Caddy modules.
 - Refresh the guide: one canonical home for Controller peripherals, a VPN

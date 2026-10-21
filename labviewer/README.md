@@ -16,7 +16,10 @@ go run ./labviewer --lab /etc/boetticher/lab.yml --listen 127.0.0.1:8090
 ```
 
 This local example listens on localhost only. The installed Controller unit
-(`controller/roles/controller-baseline/tasks/labviewer.yml`) listens on the
+(templated from
+`controller/roles/controller-baseline/templates/boetticher-labviewer.service.j2`;
+`labviewer/deploy/boetticher-labviewer.service` is the standalone copy) listens
+on the
 Controller SERVERS address `10.10.20.10:8090`, which the managed firewall opens
 only to the observability runtime; its Caddy frontend publishes the portal as
 `lab.<public domain>` and `labviewer.<public domain>`. The operator guide is in

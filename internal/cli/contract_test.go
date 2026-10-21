@@ -163,6 +163,22 @@ func TestLegacyLifecycleIsDisabled(t *testing.T) {
 		if err := Run([]string{command}, &output, &output); err == nil {
 			t.Fatalf("legacy command %s was accepted", command)
 		}
+		output.Reset()
+		err := Run([]string{command, "--help"}, &output, &output)
+		if err == nil || !strings.Contains(err.Error(), "retired from the supported Controller/Host workflow") {
+			t.Fatalf("legacy command %s --help did not report retirement: %v", command, err)
+		}
+	}
+}
+
+func TestHelpSpecKeysAreCommandPaths(t *testing.T) {
+	for key, spec := range helpSpecs {
+		if strings.ContainsAny(key, "[]|<>") || strings.Contains(key, "-"+"-") {
+			t.Errorf("help key %q is not a plain command path", key)
+		}
+		if !strings.HasPrefix(spec.Usage, "boetticher "+key) {
+			t.Errorf("help key %q does not match its usage %q", key, spec.Usage)
+		}
 	}
 }
 
