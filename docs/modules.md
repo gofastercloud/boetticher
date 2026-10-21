@@ -310,6 +310,14 @@ boetticher module media teardown --plan
 boetticher module media teardown --yes
 ```
 
+`plan` and `apply --plan` are read-only and identical in content: they list
+each `lab.yml` field apply would save (`field: before -> after`; defaults and
+protocol order are not changes), whether the provider DNS/DHCP/VPN
+prerequisites already match, the observed guest runtime, and the ordered steps
+apply would take (for example starting the stopped VM, which has `onboot=0`, and
+redeploying the application). When intent, provider, guest and application
+already agree, the plan says apply is a no-op.
+
 The token path must be an operator-owned private regular file. It is staged only
 through the authenticated Host and guest agent, then removed; it is not printed,
 stored in intent, or included in status. The peer port comes from the existing

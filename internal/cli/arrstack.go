@@ -19,6 +19,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/observability"
+	"github.com/gofastercloud/boetticher/internal/openwrt"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
@@ -50,13 +51,7 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 	}
 	switch action {
 	case "plan":
-		proposed, changed, err := prepareArrstackModules(c.Modules)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "MEDIA plan\n  Guest: %s VMID %d address %s\n  Configuration: %s\n  No mutation or confirmation prompt\n", arrstack.GuestName, arrstack.GuestVMID, arrstack.GuestAddress, yesNo(changed))
-		_ = proposed
-		return nil
+		return runArrstackPlan(c, "MEDIA plan", out)
 	case "status":
 		enabled := c.Modules.Media != nil && c.Modules.Media.Enabled
 		fmt.Fprintf(out, "MEDIA: %s\nGuest: %s VMID %d address %s\n", map[bool]string{true: "configured", false: "not configured"}[enabled], arrstack.GuestName, arrstack.GuestVMID, arrstack.GuestAddress)
@@ -120,12 +115,7 @@ func runArrstackCapability(action string, args []string, input io.Reader, out, _
 		return nil
 	case "apply":
 		if *plan {
-			proposed, changed, err := prepareArrstackModules(c.Modules)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "MEDIA apply plan: changed=%s guest VMID %d media=%dGiB; protected VPN prerequisites inspected; no mutation\n", yesNo(changed), arrstack.GuestVMID, proposed.Media.MediaGiB)
-			return nil
+			return runArrstackPlan(c, "MEDIA apply plan", out)
 		}
 		return runArrstackApply(c, *yes, *cloudflareTokenFile, input, out)
 	case "teardown":
@@ -146,10 +136,11 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if err != nil {
 		return err
 	}
-	proposed, changed, err := prepareArrstackModules(current.Modules)
+	proposed, changes, err := prepareArrstackModules(current.Modules)
 	if err != nil {
 		return err
 	}
+	changed := len(changes) > 0
 	mediaGiB := proposed.Normalize().Media.MediaGiB
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -163,36 +154,22 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if err != nil {
 		return err
 	}
-	verifyErr := verifyClientServices(ctx, provider, state, "arrstack")
-	if verifyErr != nil && !strings.Contains(verifyErr.Error(), "not at the desired state") {
-		return fmt.Errorf("verify DNS/DHCP/VPN prerequisites: %w", verifyErr)
-	}
-	port := arrstackPeerPort(proposed)
-	guestBefore, err := arrstack.InspectGuest(ctx, sc.Host, mediaGiB)
+	facts, err := inspectArrstackApply(ctx, sc, provider, state, proposed, changes)
 	if err != nil {
 		return err
 	}
-	runtime, runtimeErr := arrstack.ReadStatusWithConfigAndMonitoring(ctx, sc.Host, port, *proposed.Media, observability.Enabled(proposed), mediaGiB)
-	if runtimeErr != nil && !changed && verifyErr == nil {
-		return runtimeErr
-	}
-	adapterAgrees := false
-	if !changed && verifyErr == nil && runtimeErr == nil && runtime.AppReady {
-		adapterAgrees, err = arrstack.AdapterBytesAgree(ctx, sc.Host)
-		if err != nil {
-			return fmt.Errorf("verify arrstack adapter bytes: %w", err)
+	port := arrstackPeerPort(proposed)
+	if facts.NoOp() {
+		if _, err := verifyVPN(ctx, provider, sc, proposed, state, out); err != nil {
+			return fmt.Errorf("VPN must be healthy before arrstack apply: %w", err)
 		}
-		if adapterAgrees {
-			if _, err := verifyVPN(ctx, provider, sc, proposed, state, out); err != nil {
-				return fmt.Errorf("VPN must be healthy before arrstack apply: %w", err)
-			}
-			if err := reconcileMediaMonitoring(ctx, sc, proposed, out); err != nil {
-				return err
-			}
-			fmt.Fprintln(out, "MEDIA: already applied and verified")
-			return nil
+		if err := reconcileMediaMonitoring(ctx, sc, proposed, out); err != nil {
+			return err
 		}
+		fmt.Fprintln(out, "MEDIA: already applied and verified")
+		return nil
 	}
+	renderArrstackApplyPlan(out, "MEDIA apply", facts)
 	if !yes {
 		if input == nil {
 			return errors.New("module arrstack apply requires --yes or confirmation")
@@ -210,7 +187,7 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 		}
 		defer wipeArrstackPrivateToken(cloudflareToken)
 	}
-	if !guestBefore.Exists && len(cloudflareToken) == 0 {
+	if !facts.Guest.Exists && len(cloudflareToken) == 0 {
 		return errors.New("arrstack first install requires --cloudflare-token-file")
 	}
 	if changed {
@@ -244,7 +221,7 @@ func runArrstackApply(current controllerhost.LabConfig, yes bool, cloudflareToke
 	if err := arrstack.InstallRuntimeWithConfigAndMonitoring(ctx, sc.Host, port, cloudflareToken, *proposed.Media, monitoring, mediaGiB); err != nil {
 		return err
 	}
-	runtime, err = arrstack.ReadStatusWithConfigAndMonitoring(ctx, sc.Host, port, *proposed.Media, observability.Enabled(proposed), mediaGiB)
+	runtime, err := arrstack.ReadStatusWithConfigAndMonitoring(ctx, sc.Host, port, *proposed.Media, observability.Enabled(proposed), mediaGiB)
 	if err != nil {
 		return err
 	}
@@ -389,14 +366,182 @@ func runArrstackTeardown(current controllerhost.LabConfig, yes bool, input io.Re
 	return nil
 }
 
-func prepareArrstackModules(current clientservices.Modules) (clientservices.Modules, bool, error) {
+// arrstackIntentChange is one lab.yml field apply would save.
+type arrstackIntentChange struct {
+	Field, Before, After string
+}
+
+func (c arrstackIntentChange) String() string {
+	return fmt.Sprintf("%s: %s -> %s", c.Field, c.Before, c.After)
+}
+
+// arrstackApplyFacts is the read-only evidence apply and plan share to decide
+// between a verified no-op and the ordered reconciliation steps.
+type arrstackApplyFacts struct {
+	Changes       []arrstackIntentChange
+	ProviderDrift error
+	Guest         arrstack.GuestFacts
+	Runtime       arrstack.RuntimeStatus
+	RuntimeErr    error
+	AdapterAgrees bool
+	// VPNErr is observed only by plan, and only when nothing else needs
+	// reconciliation; apply checks VPN health itself before the guest starts.
+	VPNErr     error
+	Monitoring bool
+	MediaGiB   int
+}
+
+// NoOp reports whether apply may skip approval: desired intent, provider and
+// guest runtime all agree.
+func (f arrstackApplyFacts) NoOp() bool {
+	return len(f.Changes) == 0 && f.ProviderDrift == nil && f.RuntimeErr == nil && f.Runtime.AppReady && f.AdapterAgrees
+}
+
+// inspectArrstackApply gathers the read-only facts apply acts on. It never
+// mutates intent, provider, or guest.
+func inspectArrstackApply(ctx context.Context, sc clientServiceContext, provider *openwrt.Client, state firewallmodule.ServiceState, proposed clientservices.Modules, changes []arrstackIntentChange) (arrstackApplyFacts, error) {
+	mediaGiB := proposed.Normalize().Media.MediaGiB
+	facts := arrstackApplyFacts{Changes: changes, Monitoring: observability.Enabled(proposed), MediaGiB: mediaGiB}
+	verifyErr := verifyClientServices(ctx, provider, state, "arrstack")
+	if verifyErr != nil && !strings.Contains(verifyErr.Error(), "not at the desired state") {
+		return facts, fmt.Errorf("verify DNS/DHCP/VPN prerequisites: %w", verifyErr)
+	}
+	facts.ProviderDrift = verifyErr
+	guest, err := arrstack.InspectGuest(ctx, sc.Host, mediaGiB)
+	if err != nil {
+		return facts, err
+	}
+	facts.Guest = guest
+	facts.Runtime, facts.RuntimeErr = arrstack.ReadStatusWithConfigAndMonitoring(ctx, sc.Host, arrstackPeerPort(proposed), *proposed.Media, facts.Monitoring, mediaGiB)
+	if facts.RuntimeErr != nil && len(changes) == 0 && verifyErr == nil {
+		return facts, facts.RuntimeErr
+	}
+	if len(changes) == 0 && verifyErr == nil && facts.RuntimeErr == nil && facts.Runtime.AppReady {
+		facts.AdapterAgrees, err = arrstack.AdapterBytesAgree(ctx, sc.Host)
+		if err != nil {
+			return facts, fmt.Errorf("verify arrstack adapter bytes: %w", err)
+		}
+	}
+	return facts, nil
+}
+
+// runArrstackPlan is the read-only preview shared by plan and apply --plan.
+func runArrstackPlan(c controllerhost.LabConfig, title string, out io.Writer) error {
+	proposed, changes, err := prepareArrstackModules(c.Modules)
+	if err != nil {
+		return err
+	}
+	sc, err := loadClientServiceContext()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	provider, err := requireClientProvider(ctx, sc.Site, sc.Desired, sc.Host)
+	if err != nil {
+		return err
+	}
+	defer provider.Close()
+	state, err := firewallmodule.ServiceStateFromModules(sc.Site, proposed)
+	if err != nil {
+		return err
+	}
+	facts, err := inspectArrstackApply(ctx, sc, provider, state, proposed, changes)
+	if err != nil {
+		return err
+	}
+	if len(changes) == 0 && facts.ProviderDrift == nil {
+		_, facts.VPNErr = verifyVPN(ctx, provider, sc, proposed, state, io.Discard)
+	}
+	renderArrstackApplyPlan(out, title, facts)
+	fmt.Fprintln(out, "  No mutation or confirmation prompt")
+	return nil
+}
+
+// renderArrstackApplyPlan lists each intent change and each ordered step apply
+// would take, derived only from read-only facts.
+func renderArrstackApplyPlan(out io.Writer, title string, f arrstackApplyFacts) {
+	guestState := "absent"
+	if f.Guest.Exists && f.Guest.Running {
+		guestState = "running"
+	} else if f.Guest.Exists {
+		guestState = "stopped"
+	}
+	fmt.Fprintf(out, "%s\n  Guest: %s VMID %d address %s (%s)\n", title, arrstack.GuestName, arrstack.GuestVMID, arrstack.GuestAddress, guestState)
+	if len(f.Changes) == 0 {
+		fmt.Fprintln(out, "  Intent: no change")
+	} else {
+		fmt.Fprintln(out, "  Intent: save lab.yml changes")
+		for _, change := range f.Changes {
+			fmt.Fprintf(out, "    %s\n", change)
+		}
+	}
+	if f.ProviderDrift != nil {
+		fmt.Fprintf(out, "  Provider: DNS/DHCP/VPN prerequisites differ (%v)\n", f.ProviderDrift)
+	} else {
+		fmt.Fprintln(out, "  Provider: DNS/DHCP/VPN prerequisites at desired state")
+	}
+	switch {
+	case f.RuntimeErr != nil:
+		fmt.Fprintf(out, "  Runtime: not determined (%v)\n", f.RuntimeErr)
+	case f.Runtime.AppReady && !f.AdapterAgrees && len(f.Changes) == 0 && f.ProviderDrift == nil:
+		fmt.Fprintln(out, "  Runtime: application ready; installed adapter differs from this release")
+	default:
+		fmt.Fprintf(out, "  Runtime: %s\n", f.Runtime.Detail)
+	}
+	if f.NoOp() {
+		if f.VPNErr != nil {
+			fmt.Fprintf(out, "  VPN: unhealthy (%v); apply will refuse until it is healthy\n", f.VPNErr)
+		}
+		fmt.Fprintln(out, "  Apply: no change; intent, provider, guest and application already agree")
+		if f.Monitoring {
+			fmt.Fprintln(out, "    - reconcile media monitoring (observability enabled)")
+		}
+		return
+	}
+	fmt.Fprintln(out, "  Apply will:")
+	if len(f.Changes) > 0 {
+		fmt.Fprintln(out, "    - save the lab.yml intent changes above")
+	}
+	if len(f.Changes) > 0 || f.ProviderDrift != nil {
+		fmt.Fprintln(out, "    - reconcile DNS/DHCP/VPN prerequisites on the firewall provider")
+	}
+	fmt.Fprintln(out, "    - require a healthy VPN handshake before the guest starts")
+	switch {
+	case !f.Guest.Exists:
+		fmt.Fprintf(out, "    - create VM %d from the pinned image with a %dGiB media disk (requires --cloudflare-token-file)\n", arrstack.GuestVMID, f.MediaGiB)
+		fmt.Fprintf(out, "    - start VM %d and wait for the QEMU guest agent\n", arrstack.GuestVMID)
+	case !f.Guest.Running:
+		fmt.Fprintf(out, "    - start stopped VM %d and wait for the QEMU guest agent\n", arrstack.GuestVMID)
+	default:
+		fmt.Fprintf(out, "    - wait for the QEMU guest agent on running VM %d\n", arrstack.GuestVMID)
+	}
+	if f.Guest.Exists {
+		fmt.Fprintln(out, "    - redeploy the Docker application, adapter and policy (requires --cloudflare-token-file unless a retained private Caddy credential is present)")
+	} else {
+		fmt.Fprintln(out, "    - deploy the Docker application, adapter and policy")
+	}
+	fmt.Fprintln(out, "    - verify guest agent, Docker and application health")
+	if f.Monitoring {
+		fmt.Fprintln(out, "    - reconcile media monitoring (observability enabled)")
+	}
+}
+
+// prepareArrstackModules derives the media intent apply would save and lists
+// each field that differs from the saved intent. Defaults that Normalize
+// materialises and the unpersisted Arrstack alias are not changes; comparing
+// against them made every plan report changed=yes.
+func prepareArrstackModules(current clientservices.Modules) (clientservices.Modules, []arrstackIntentChange, error) {
 	proposed := current.Clone().Normalize()
 	if proposed.DNS == nil || !clientservices.Enabled(proposed.DNS.Enabled) || proposed.DHCP == nil || !clientservices.Enabled(proposed.DHCP.Enabled) || proposed.VPN == nil || !clientservices.Enabled(proposed.VPN.Enabled) {
-		return clientservices.Modules{}, false, errors.New("arrstack requires enabled DNS, DHCP, and VPN intent")
+		return clientservices.Modules{}, nil, errors.New("arrstack requires enabled DNS, DHCP, and VPN intent")
 	}
 	if proposed.Media == nil {
-		return clientservices.Modules{}, false, errors.New("modules.media.application_domain and aliases must be configured before enabling media")
-	} else {
+		return clientservices.Modules{}, nil, errors.New("modules.media.application_domain and aliases must be configured before enabling media")
+	}
+	var changes []arrstackIntentChange
+	if !proposed.Media.Enabled {
+		changes = append(changes, arrstackIntentChange{"modules.media.enabled", "false", "true"})
 		proposed.Media.Enabled = true
 	}
 	proposed.Arrstack = proposed.Media
@@ -408,11 +553,12 @@ func prepareArrstackModules(current clientservices.Modules) (clientservices.Modu
 			continue
 		}
 		if strings.EqualFold(item.Name, r.Name) || strings.EqualFold(item.MAC, r.MAC) || item.Address == r.Address {
-			return clientservices.Modules{}, false, errors.New("arrstack reservation conflicts with existing reservation")
+			return clientservices.Modules{}, nil, errors.New("arrstack reservation conflicts with existing reservation")
 		}
 	}
 	if !found {
 		proposed.DHCP.Reservations = append(proposed.DHCP.Reservations, r)
+		changes = append(changes, arrstackIntentChange{"modules.dhcp.reservations[" + r.Name + "]", "absent", fmt.Sprintf("zone %s mac %s address %s", r.Zone, r.MAC, r.Address)})
 	}
 	seen := false
 	for _, client := range proposed.VPN.Clients {
@@ -422,28 +568,37 @@ func prepareArrstackModules(current clientservices.Modules) (clientservices.Modu
 	}
 	if !seen {
 		proposed.VPN.Clients = append(proposed.VPN.Clients, arrstack.GuestName)
+		changes = append(changes, arrstackIntentChange{"modules.vpn.clients[" + arrstack.GuestName + "]", "absent", "present"})
 	}
 	forward := arrstack.VPNForward()
+	describe := func(f clientservices.VPNForward) string {
+		return fmt.Sprintf("reservation %s protocols %s port %d", f.Reservation, strings.Join(f.Protocols, ","), f.Port)
+	}
 	seen = false
 	for i := range proposed.VPN.Forwards {
-		if proposed.VPN.Forwards[i].Name != forward.Name {
+		existing := proposed.VPN.Forwards[i]
+		if existing.Name != forward.Name {
 			continue
 		}
-		if proposed.VPN.Forwards[i].Reservation != forward.Reservation || len(proposed.VPN.Forwards[i].Protocols) != 2 {
-			return clientservices.Modules{}, false, errors.New("arrstack peer forward is conflicting")
+		if existing.Reservation != forward.Reservation || len(existing.Protocols) != 2 {
+			return clientservices.Modules{}, nil, errors.New("arrstack peer forward is conflicting")
 		}
-		if proposed.VPN.Forwards[i].Port == 443 || proposed.VPN.Forwards[i].Port == 8080 {
-			return clientservices.Modules{}, false, errors.New("arrstack peer forward must not expose Caddy or qBittorrent web UI ports")
+		if existing.Port == 443 || existing.Port == 8080 {
+			return clientservices.Modules{}, nil, errors.New("arrstack peer forward must not expose Caddy or qBittorrent web UI ports")
 		}
-		forward.Port = proposed.VPN.Forwards[i].Port
+		forward.Port = existing.Port
+		if !reflect.DeepEqual(existing.Protocols, forward.Protocols) {
+			changes = append(changes, arrstackIntentChange{"modules.vpn.forwards[" + forward.Name + "]", describe(existing), describe(forward)})
+		}
 		proposed.VPN.Forwards[i] = forward
 		seen = true
 	}
 	if !seen {
 		proposed.VPN.Forwards = append(proposed.VPN.Forwards, forward)
+		changes = append(changes, arrstackIntentChange{"modules.vpn.forwards[" + forward.Name + "]", "absent", describe(forward)})
 	}
 	if err := clientservices.Validate(proposed, model.NewSite("lab", "controller-local", model.GatewayModeManaged)); err != nil {
-		return clientservices.Modules{}, false, err
+		return clientservices.Modules{}, nil, err
 	}
-	return proposed, !reflect.DeepEqual(current, proposed), nil
+	return proposed, changes, nil
 }
