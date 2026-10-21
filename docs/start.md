@@ -136,9 +136,10 @@ sudo boetticher host reboot --with-guests --plan
 sudo boetticher host reboot --with-guests --yes
 ```
 
-`host upgrade --plan` refreshes the package indexes (`apt-get update`) and
-simulates `apt-get full-upgrade`; refreshing the indexes is the only change it
-makes. It lists every package change, highlights Proxmox and kernel packages,
+Every `host upgrade` mode first refreshes the package indexes (`apt-get
+update`) and simulates `apt-get full-upgrade` as its preview. That refresh is
+the only change made before approval: `--plan`, or declining the interactive
+confirmation, installs, upgrades, or removes nothing. It lists every package change, highlights Proxmox and kernel packages,
 and predicts whether a reboot will be needed. A read-only repository preflight
 runs first: an enabled Proxmox enterprise repository without an active
 subscription is refused with guidance, and repositories are never rewritten
@@ -147,20 +148,33 @@ recommends (`DEBIAN_FRONTEND=noninteractive`, keeping existing configuration
 files with `--force-confdef --force-confold`) in the transient systemd unit
 `boetticher-host-upgrade`, logging to `/var/log/boetticher-host-upgrade.log`, so
 a dropped SSH session cannot interrupt dpkg. The Controller waits up to 60
-minutes, refuses an upgrade that would remove core Proxmox packages, and then
-reports the packages changed and whether a reboot is now required. It never
-reboots.
+minutes. A plan or upgrade that would remove core Proxmox packages is refused,
+as is any run while a previous upgrade unit is active or the dpkg frontend lock
+is held. On success it reports the packages changed and whether a reboot is now
+required: the reboot marker, a changed package that needs a reboot (kernel,
+firmware, microcode, libc6, systemd), or a running kernel other than the
+`proxmox-boot-tool` pinned kernel, or the newest installed kernel when none is
+pinned. It never reboots. If the session is lost, the command reports the unit's
+live state; the log ends with `BOETTICHER_UPGRADE_RESULT=success` or `=failed`
+when the upgrade finishes:
 
-`host reboot --yes` still refuses while any guest exists. `--with-guests`
+```sh
+systemctl status boetticher-host-upgrade
+grep BOETTICHER_UPGRADE_RESULT= /var/log/boetticher-host-upgrade.log
+```
+
+Every `host reboot` mode refuses while a package upgrade is running or dpkg
+is locked. `host reboot --yes` still refuses while any guest exists. `--with-guests`
 reboots with guests present by relying on Proxmox's native `pve-guests.service`:
 guests stop in reverse startup order and guests with `onboot` enabled start in
 order afterwards. Boetticher never stops or starts guests itself. The preview
 (`--plan`) is read-only and shows each guest's onboot and startup order, warning
-about running guests that will not start again. After the reboot the Controller
-waits up to 20 minutes for a new Host boot, probing the normal connection and
+about running guests that will not start again. The reboot is scheduled two seconds
+out so the request returns cleanly; whatever it returns, only a new Host boot ID
+counts. The Controller waits up to 20 minutes for that new boot, probing the normal connection and
 then the HOME fallback read-only, because the firewall guest that routes the LAB
-path may still be starting. It then waits up to 10 minutes for guest startup,
-compares running guests with the state before the reboot, and reports whether the
+path may still be starting. It then waits up to 10 minutes for guest startup and
+for the guest listing to settle, compares running guests with the state before the reboot, and reports whether the
 normal Host path has returned.
 
 Reboot the Controller separately:

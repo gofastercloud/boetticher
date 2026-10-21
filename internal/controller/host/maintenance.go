@@ -220,13 +220,18 @@ const (
 	AptRefreshCommand  = "LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -q -o DPkg::Lock::Timeout=300 update 2>&1"
 	AptSimulateCommand = "LC_ALL=C apt-get -s -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade 2>&1"
 	PackageSnapshotCmd = "dpkg-query -W -f='${db:Status-Abbrev}\\t${Package}\\t${Version}\\n'"
-	RebootStateCommand = "printf 'BOETTICHER_RUNNING_KERNEL=%s\\n' \"$(uname -r)\"; printf 'BOETTICHER_NEWEST_KERNEL=%s\\n' \"$(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#^/boot/vmlinuz-##' | sort -V | tail -n 1)\"; if test -e /var/run/reboot-required; then echo BOETTICHER_REBOOT_REQUIRED=1; else echo BOETTICHER_REBOOT_REQUIRED=0; fi"
+	RebootStateCommand = "printf 'BOETTICHER_RUNNING_KERNEL=%s\\n' \"$(uname -r)\"; printf 'BOETTICHER_PINNED_KERNEL=%s\\n' \"$(cat /etc/kernel/next-boot-pin 2>/dev/null || cat /etc/kernel/proxmox-boot-pin 2>/dev/null || true)\"; printf 'BOETTICHER_NEWEST_KERNEL=%s\\n' \"$(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#^/boot/vmlinuz-##' | sort -V | tail -n 1)\"; if test -e /var/run/reboot-required; then echo BOETTICHER_REBOOT_REQUIRED=1; else echo BOETTICHER_REBOOT_REQUIRED=0; fi"
 	UpgradeUnit        = "boetticher-host-upgrade"
 	UpgradeLog         = "/var/log/boetticher-host-upgrade.log"
 	// The full-upgrade runs in a transient systemd unit so that an SSH drop
 	// (for example while networking packages restart) cannot interrupt dpkg.
-	AptUpgradeCommand = "systemd-run --quiet --unit=" + UpgradeUnit + " --wait --collect --service-type=exec --property=StandardOutput=truncate:" + UpgradeLog + " --property=StandardError=inherit --setenv=DEBIAN_FRONTEND=noninteractive --setenv=APT_LISTCHANGES_FRONTEND=none --setenv=LC_ALL=C /usr/bin/apt-get -y -q -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade"
-	UpgradeLogTailCmd = "tail -n 40 " + UpgradeLog + " 2>/dev/null || true"
+	// The unit appends a result marker to its log so the outcome stays
+	// inspectable after --collect unloads it. The script contains no "$" or
+	// "%" so systemd performs no expansion on it.
+	AptUpgradeCommand   = "systemd-run --quiet --unit=" + UpgradeUnit + " --wait --collect --service-type=exec --property=StandardOutput=truncate:" + UpgradeLog + " --property=StandardError=inherit --setenv=DEBIAN_FRONTEND=noninteractive --setenv=APT_LISTCHANGES_FRONTEND=none --setenv=LC_ALL=C /bin/sh -c '/usr/bin/apt-get -y -q -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade && echo " + UpgradeResultMarker + "success || { echo " + UpgradeResultMarker + "failed; exit 1; }'"
+	UpgradeResultMarker = "BOETTICHER_UPGRADE_RESULT="
+	// UpgradeOutcomeCommand reads the unit's live state and the log tail.
+	UpgradeOutcomeCommand = "printf 'BOETTICHER_UPGRADE_UNIT=%s\\n' \"$(systemctl is-active " + UpgradeUnit + ".service 2>/dev/null || true)\"; tail -n 40 " + UpgradeLog + " 2>/dev/null || true"
 )
 
 // RefreshProblems returns apt update lines that make the refreshed indexes
@@ -362,9 +367,14 @@ func DiffPackages(before, after map[string]string) UpgradePlan {
 	return diff
 }
 
+// RebootState combines the Host's reboot signals. The boot kernel is the
+// proxmox-boot-tool next-boot or permanent pin when set, otherwise the newest
+// installed kernel. Changed lists packages from an observed upgrade that need
+// a reboot to take effect.
 type RebootState struct {
-	RunningKernel, NewestKernel string
-	Marker                      bool
+	RunningKernel, NewestKernel, PinnedKernel string
+	Marker                                    bool
+	Changed                                   []string
 }
 
 func ParseRebootState(output []byte) (RebootState, error) {
@@ -380,37 +390,83 @@ func ParseRebootState(output []byte) (RebootState, error) {
 			state.RunningKernel, seen = value, seen+1
 		case "BOETTICHER_NEWEST_KERNEL":
 			state.NewestKernel, seen = value, seen+1
+		case "BOETTICHER_PINNED_KERNEL":
+			state.PinnedKernel, seen = value, seen+1
 		case "BOETTICHER_REBOOT_REQUIRED":
 			state.Marker, seen = value == "1", seen+1
 		}
 	}
-	if seen != 3 || state.RunningKernel == "" {
+	if seen != 4 || state.RunningKernel == "" {
 		return RebootState{}, errors.New("Host reboot state is unavailable")
 	}
 	return state, nil
 }
 
+func (s RebootState) bootKernel() (string, string) {
+	if s.PinnedKernel != "" {
+		return s.PinnedKernel, "pinned"
+	}
+	return s.NewestKernel, "newest installed"
+}
+
 func (s RebootState) Required() bool {
-	return s.Marker || (s.NewestKernel != "" && s.NewestKernel != s.RunningKernel)
+	boot, _ := s.bootKernel()
+	return s.Marker || len(s.Changed) > 0 || (boot != "" && boot != s.RunningKernel)
 }
 
 func (s RebootState) Reason() string {
 	var reasons []string
-	if s.NewestKernel != "" && s.NewestKernel != s.RunningKernel {
-		reasons = append(reasons, fmt.Sprintf("running kernel %s, newest installed %s", s.RunningKernel, s.NewestKernel))
+	boot, label := s.bootKernel()
+	if boot != "" && boot != s.RunningKernel {
+		reasons = append(reasons, fmt.Sprintf("running kernel %s, %s %s", s.RunningKernel, label, boot))
 	}
 	if s.Marker {
 		reasons = append(reasons, "/var/run/reboot-required is present")
 	}
+	if len(s.Changed) > 0 {
+		reasons = append(reasons, "changed "+strings.Join(s.Changed, ", "))
+	}
 	if len(reasons) == 0 {
-		return "running kernel " + s.RunningKernel + " is the newest installed"
+		return "running kernel " + s.RunningKernel + " is the " + label + " kernel"
 	}
 	return strings.Join(reasons, "; ")
+}
+
+// UpgradeBusy reads, without changing anything, whether a Boetticher upgrade
+// unit or any dpkg frontend holds the Host's package system.
+const UpgradeBusyCommand = "printf 'BOETTICHER_UPGRADE_UNIT=%s\\n' \"$(systemctl is-active " + UpgradeUnit + ".service 2>/dev/null || true)\"; if command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then echo BOETTICHER_DPKG_LOCK=held; elif ! locks=$(lslocks -n -r -o PATH 2>/dev/null); then echo BOETTICHER_DPKG_LOCK=unknown; elif printf '%s\\n' \"$locks\" | grep -qx /var/lib/dpkg/lock-frontend; then echo BOETTICHER_DPKG_LOCK=held; else echo BOETTICHER_DPKG_LOCK=free; fi"
+
+// CheckPackageSystemIdle refuses while an upgrade unit runs or dpkg is locked.
+func CheckPackageSystemIdle(output []byte) error {
+	unit, lock := "", ""
+	for _, line := range strings.Split(string(output), "\n") {
+		key, value, _ := strings.Cut(strings.TrimSpace(line), "=")
+		switch key {
+		case "BOETTICHER_UPGRADE_UNIT":
+			unit = value
+		case "BOETTICHER_DPKG_LOCK":
+			lock = value
+		}
+	}
+	switch unit {
+	case "active", "activating", "deactivating", "reloading", "refreshing":
+		return fmt.Errorf("a Host package upgrade is in progress (%s.service is %s); wait for it to finish (systemctl status %s; tail %s)", UpgradeUnit, unit, UpgradeUnit, UpgradeLog)
+	}
+	switch lock {
+	case "free":
+		return nil
+	case "held":
+		return errors.New("the Host dpkg frontend lock (/var/lib/dpkg/lock-frontend) is held by another package operation; wait for it to finish")
+	}
+	return errors.New("the Host package lock state is unknown; refusing while it cannot be confirmed idle")
 }
 
 // Guest reboot preflight.
 
 const (
+	// RebootCommand schedules the reboot two seconds out so the SSH call
+	// returns cleanly before the Host goes down.
+	RebootCommand          = "systemd-run --quiet --on-active=2 --timer-property=AccuracySec=100ms --unit=boetticher-host-reboot /usr/bin/systemctl reboot"
 	BootIDCommand          = "cat /proc/sys/kernel/random/boot_id"
 	GuestsServiceCommand   = "systemctl is-enabled pve-guests.service 2>/dev/null || true"
 	GuestsServiceActiveCmd = "systemctl is-active pve-guests.service 2>/dev/null || true"

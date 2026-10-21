@@ -122,6 +122,9 @@ func runHostUpgradeWith(deps hostMaintenanceDeps, args []string, input io.Reader
 	if err != nil {
 		return err
 	}
+	if err := requirePackageSystemIdle(ctx, runner); err != nil {
+		return err
+	}
 	repositories, err := runner.Run(ctx, controllerhost.AptRepositoryCommand)
 	if err != nil {
 		return fmt.Errorf("read Host APT repositories: %w", err)
@@ -169,6 +172,9 @@ func runHostUpgradeWith(deps hostMaintenanceDeps, args []string, input io.Reader
 	}
 	if *plan {
 		fmt.Fprintln(out, "\nPlan only. Refreshing the package indexes was the only change; no packages were installed, upgraded, or removed.")
+		if len(protected) > 0 {
+			return fmt.Errorf("host upgrade plan refused: the full-upgrade would remove %s", strings.Join(protected, ", "))
+		}
 		return nil
 	}
 	if planned.Count() == 0 {
@@ -187,6 +193,9 @@ func runHostUpgradeWith(deps hostMaintenanceDeps, args []string, input io.Reader
 			return errors.New("host upgrade cancelled; no packages were changed")
 		}
 	}
+	if err := requirePackageSystemIdle(ctx, runner); err != nil {
+		return err
+	}
 	snapshot, err := runner.Run(ctx, controllerhost.PackageSnapshotCmd)
 	if err != nil {
 		return fmt.Errorf("read installed packages before upgrade: %w", err)
@@ -199,11 +208,7 @@ func runHostUpgradeWith(deps hostMaintenanceDeps, args []string, input io.Reader
 	fmt.Fprintln(out, "\nUpgrading Proxmox Host packages (noninteractive full-upgrade, existing configuration files kept)...")
 	started := deps.now()
 	if _, err := upgradeRunner.Run(ctx, controllerhost.AptUpgradeCommand); err != nil {
-		tail := ""
-		if logTail, logErr := runner.Run(ctx, controllerhost.UpgradeLogTailCmd); logErr == nil {
-			tail = outputTail(logTail.Stdout)
-		}
-		return fmt.Errorf("Host full-upgrade did not complete: %w%s\nIf the SSH session was lost, the upgrade continues on the Host as systemd unit %s with its log at %s. The Host was not rebooted. Rerun `boetticher host upgrade --plan` after it finishes", err, tail, controllerhost.UpgradeUnit, controllerhost.UpgradeLog)
+		return describeUpgradeFailure(ctx, runner, err)
 	}
 	elapsed := deps.now().Sub(started).Round(time.Second)
 	snapshot, err = runner.Run(ctx, controllerhost.PackageSnapshotCmd)
@@ -217,11 +222,55 @@ func runHostUpgradeWith(deps hostMaintenanceDeps, args []string, input io.Reader
 	if err != nil {
 		return err
 	}
+	after.Changed = changed.RebootReasons()
 	fmt.Fprintf(out, "  Reboot required   %s\n", yesNoDetail(after.Required(), after.Reason()))
 	if after.Required() {
 		fmt.Fprintln(out, "\nThe Host was not rebooted. Review and reboot explicitly:\n  sudo boetticher host reboot --with-guests --plan\n  sudo boetticher host reboot --with-guests --yes")
 	}
 	return nil
+}
+
+func requirePackageSystemIdle(ctx context.Context, runner controllerhost.Runner) error {
+	output, err := runner.Run(ctx, controllerhost.UpgradeBusyCommand)
+	if err != nil {
+		return fmt.Errorf("read Host package system state: %w", err)
+	}
+	return controllerhost.CheckPackageSystemIdle(output.Stdout)
+}
+
+var upgradeCheckHint = "Check on the Host: systemctl status " + controllerhost.UpgradeUnit + "; grep " + controllerhost.UpgradeResultMarker + " " + controllerhost.UpgradeLog + ". The Host was not rebooted"
+
+// describeUpgradeFailure reports the upgrade unit's live state after the
+// Controller's wait failed, so an SSH drop or timeout is not mistaken for a
+// failed (or finished) upgrade.
+func describeUpgradeFailure(ctx context.Context, runner controllerhost.Runner, runErr error) error {
+	if text := runErr.Error(); strings.Contains(text, "already loaded") || strings.Contains(text, "already exists") {
+		return fmt.Errorf("Host full-upgrade did not start: a %s unit already exists from another run: %w. %s", controllerhost.UpgradeUnit, runErr, upgradeCheckHint)
+	}
+	output, err := runner.Run(ctx, controllerhost.UpgradeOutcomeCommand)
+	if err != nil {
+		return fmt.Errorf("Host full-upgrade outcome is unknown: the Controller wait ended (%v) and the unit state could not be read (%v). %s", runErr, err, upgradeCheckHint)
+	}
+	unit, result := "unknown", ""
+	for _, line := range strings.Split(string(output.Stdout), "\n") {
+		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, "BOETTICHER_UPGRADE_UNIT="); ok {
+			unit = value
+		}
+		if value, ok := strings.CutPrefix(line, controllerhost.UpgradeResultMarker); ok {
+			result = value
+		}
+	}
+	tail := outputTail(output.Stdout)
+	switch {
+	case unit == "active" || unit == "activating":
+		return fmt.Errorf("Host full-upgrade is still running: the Controller wait ended (%v) but %s.service is %s. Wait for it, then rerun `boetticher host upgrade --plan`. %s", runErr, controllerhost.UpgradeUnit, unit, upgradeCheckHint)
+	case result == "success":
+		return fmt.Errorf("Host full-upgrade finished on the Host, but the Controller lost its result (%v); changed packages were not reported. Rerun `boetticher host upgrade --plan` and `boetticher host status`. %s", runErr, upgradeCheckHint)
+	case result == "failed":
+		return fmt.Errorf("Host full-upgrade failed: %w%s\n%s", runErr, tail, upgradeCheckHint)
+	}
+	return fmt.Errorf("Host full-upgrade outcome is unknown: %w (%s.service is %s, no result marker in the log)%s\n%s", runErr, controllerhost.UpgradeUnit, unit, tail, upgradeCheckHint)
 }
 
 func readRebootState(ctx context.Context, runner controllerhost.Runner) (controllerhost.RebootState, error) {

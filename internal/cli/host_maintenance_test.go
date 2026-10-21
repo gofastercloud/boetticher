@@ -29,6 +29,28 @@ type fakeHost struct {
 	rebooted  bool
 	clock     time.Time
 	lockCalls int
+	// busy is the UpgradeBusyCommand output; empty means idle.
+	busy string
+	// upgradeErr, when set, is the systemd-run result; outcome is then the
+	// UpgradeOutcomeCommand output (an error when outcomeErr is set).
+	upgradeErr error
+	outcome    string
+	outcomeErr error
+	// rebootErr is returned by the reboot request; rebootIgnored keeps the
+	// previous boot (the request never took effect).
+	rebootErr     error
+	rebootIgnored bool
+	// guestLag is how many post-reboot listings still show 280 stopped.
+	guestLag int
+}
+
+const idlePackages = "BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_DPKG_LOCK=free\n"
+
+func (h *fakeHost) busyOutput() (controllerhost.Result, error) {
+	if h.busy == "" {
+		return controllerhost.Result{Stdout: []byte(idlePackages)}, nil
+	}
+	return controllerhost.Result{Stdout: []byte(h.busy)}, nil
 }
 
 type fakeHostPath struct {
@@ -92,9 +114,9 @@ func upgradeHost(sources, simulation string) *fakeHost {
 			return out(sources)
 		case controllerhost.RebootStateCommand:
 			if host.upgraded {
-				return out("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_NEWEST_KERNEL=7.0.15-1-pve\nBOETTICHER_REBOOT_REQUIRED=0\n")
+				return out("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_PINNED_KERNEL=\nBOETTICHER_NEWEST_KERNEL=7.0.15-1-pve\nBOETTICHER_REBOOT_REQUIRED=0\n")
 			}
-			return out("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_NEWEST_KERNEL=7.0.14-16-pve\nBOETTICHER_REBOOT_REQUIRED=0\n")
+			return out("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_PINNED_KERNEL=\nBOETTICHER_NEWEST_KERNEL=7.0.14-16-pve\nBOETTICHER_REBOOT_REQUIRED=0\n")
 		case controllerhost.AptRefreshCommand:
 			return out("Hit:1 http://download.proxmox.com/debian/pve trixie InRelease\nReading package lists...\n")
 		case controllerhost.AptSimulateCommand:
@@ -104,7 +126,17 @@ func upgradeHost(sources, simulation string) *fakeHost {
 				return out("ii \tpve-manager\t9.2.22\nii \tproxmox-kernel-7.0.15-1-pve-signed\t7.0.15-1\nii \tcurl\t8.14-2\n")
 			}
 			return out("ii \tpve-manager\t9.2.21\nii \tcurl\t8.14-1\n")
+		case controllerhost.UpgradeBusyCommand:
+			return host.busyOutput()
+		case controllerhost.UpgradeOutcomeCommand:
+			if host.outcomeErr != nil {
+				return controllerhost.Result{ExitCode: 255}, host.outcomeErr
+			}
+			return out(host.outcome)
 		case controllerhost.AptUpgradeCommand:
+			if host.upgradeErr != nil {
+				return controllerhost.Result{ExitCode: 255}, host.upgradeErr
+			}
 			host.upgraded = true
 			return out("")
 		}
@@ -163,7 +195,7 @@ func TestHostUpgradeYesReportsChangedPackagesAndNeverReboots(t *testing.T) {
 	if err := runHostUpgradeWith(host.deps(), []string{"--yes"}, nil, &out); err != nil {
 		t.Fatalf("upgrade: %v\n%s", err, out.String())
 	}
-	if host.count(controllerhost.AptUpgradeCommand) != 1 || host.count("systemctl reboot") != 0 {
+	if host.count(controllerhost.AptUpgradeCommand) != 1 || host.count(controllerhost.RebootCommand) != 0 {
 		t.Fatalf("commands=%v", host.commands)
 	}
 	for _, fragment := range []string{"DEBIAN_FRONTEND=noninteractive", "--force-confdef", "--force-confold", "full-upgrade"} {
@@ -172,7 +204,7 @@ func TestHostUpgradeYesReportsChangedPackagesAndNeverReboots(t *testing.T) {
 		}
 	}
 	text := out.String()
-	for _, want := range []string{"Host upgrade: PASS", "Changed           3 packages (2 upgraded, 1 new, 0 removed)", "upgrade  pve-manager", "9.2.21 -> 9.2.22", "Reboot required   yes (running kernel 7.0.14-16-pve, newest installed 7.0.15-1-pve)", "The Host was not rebooted"} {
+	for _, want := range []string{"Host upgrade: PASS", "Changed           3 packages (2 upgraded, 1 new, 0 removed)", "upgrade  pve-manager", "9.2.21 -> 9.2.22", "Reboot required   yes (running kernel 7.0.14-16-pve, newest installed 7.0.15-1-pve; changed proxmox-kernel-7.0.15-1-pve-signed)", "The Host was not rebooted"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("upgrade output missing %q:\n%s", want, text)
 		}
@@ -217,9 +249,16 @@ func rebootHost(returnAfterPolls int) *fakeHost {
 		switch {
 		case command == "pvesh get /nodes --output-format json":
 			return out(testNodes)
+		case command == controllerhost.UpgradeBusyCommand:
+			return host.busyOutput()
 		case command == "pvesh get /cluster/resources --output-format json":
 			if host.rebooted {
-				return out(strings.Replace(testGuests, `"vmid":502,"name":"lab-jupyter-01","status":"running"`, `"vmid":502,"name":"lab-jupyter-01","status":"stopped"`, 1))
+				listing := strings.Replace(testGuests, `"vmid":502,"name":"lab-jupyter-01","status":"running"`, `"vmid":502,"name":"lab-jupyter-01","status":"stopped"`, 1)
+				if host.guestLag > 0 {
+					host.guestLag--
+					listing = strings.Replace(listing, `"vmid":280,"name":"lab-firewall-01","status":"running"`, `"vmid":280,"name":"lab-firewall-01","status":"stopped"`, 1)
+				}
+				return out(listing)
 			}
 			return out(testGuests)
 		case strings.HasSuffix(command, "/qemu/280/config --output-format json"):
@@ -237,7 +276,7 @@ func rebootHost(returnAfterPolls int) *fakeHost {
 			}
 			return out("active\n")
 		case command == controllerhost.BootIDCommand:
-			if !host.rebooted {
+			if !host.rebooted || host.rebootIgnored {
 				return out(testBootBefore + "\n")
 			}
 			homeProbes++
@@ -245,10 +284,13 @@ func rebootHost(returnAfterPolls int) *fakeHost {
 				return down()
 			}
 			return out(testBootAfter + "\n")
-		case command == "systemctl reboot":
+		case command == controllerhost.RebootCommand:
 			host.rebooted = true
-			host.labDown = true
-			return controllerhost.Result{ExitCode: 255}, errors.New("Proxmox SSH command failed: exit status 255")
+			host.labDown = !host.rebootIgnored
+			if host.rebootErr != nil {
+				return controllerhost.Result{ExitCode: -1}, host.rebootErr
+			}
+			return out("")
 		}
 		return controllerhost.Result{ExitCode: 1}, errors.New("unexpected command " + command)
 	}
@@ -275,7 +317,7 @@ func TestHostRebootPlanShowsGuestBootPolicyWithoutRebooting(t *testing.T) {
 	if err := runHostRebootWith(host.deps(), []string{"--with-guests", "--plan"}, &out); err != nil {
 		t.Fatalf("plan: %v\n%s", err, out.String())
 	}
-	if host.rebooted || host.count("systemctl reboot") != 0 {
+	if host.rebooted || host.count(controllerhost.RebootCommand) != 0 {
 		t.Fatalf("plan rebooted: %v", host.commands)
 	}
 	text := out.String()
@@ -298,7 +340,7 @@ func TestHostRebootWithGuestsReconnectsThroughHomeWithinBudget(t *testing.T) {
 	if err := runHostRebootWith(deps, []string{"--with-guests", "--yes"}, &out); err != nil {
 		t.Fatalf("reboot: %v\n%s", err, out.String())
 	}
-	if host.count("lab: systemctl reboot") != 1 || host.count("home: systemctl reboot") != 0 {
+	if host.count("lab: "+controllerhost.RebootCommand) != 1 || host.count("home: "+controllerhost.RebootCommand) != 0 {
 		t.Fatalf("reboot must be issued once over the normal path: %v", host.commands)
 	}
 	if elapsed := host.clock.Sub(start); elapsed != 90*time.Second {
@@ -323,5 +365,131 @@ func TestHostRebootStopsAtReturnBudget(t *testing.T) {
 	}
 	if elapsed := host.clock.Sub(start); elapsed > deps.rebootReturnBudget+deps.pollInterval {
 		t.Fatalf("wait exceeded budget: %s", elapsed)
+	}
+}
+
+func TestHostUpgradePlanWithProtectedRemovalFails(t *testing.T) {
+	host := upgradeHost(testSources, testSimulation+"Remv proxmox-ve [9.1.0]\n")
+	var out bytes.Buffer
+	err := runHostUpgradeWith(host.deps(), []string{"--plan"}, nil, &out)
+	if err == nil || !strings.Contains(err.Error(), "proxmox-ve") || !strings.Contains(out.String(), "Refused:") || host.upgraded {
+		t.Fatalf("err=%v upgraded=%v\n%s", err, host.upgraded, out.String())
+	}
+}
+
+func TestHostUpgradeRefusesWhilePackageSystemBusy(t *testing.T) {
+	for name, busy := range map[string]string{
+		"unit active":     "BOETTICHER_UPGRADE_UNIT=active\nBOETTICHER_DPKG_LOCK=held\n",
+		"unit activating": "BOETTICHER_UPGRADE_UNIT=activating\nBOETTICHER_DPKG_LOCK=free\n",
+		"dpkg lock":       "BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_DPKG_LOCK=held\n",
+		"lock unknown":    "BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_DPKG_LOCK=unknown\n",
+	} {
+		for _, args := range [][]string{{"--plan"}, {"--yes"}} {
+			host := upgradeHost(testSources, testSimulation)
+			host.busy = busy
+			err := runHostUpgradeWith(host.deps(), args, nil, &bytes.Buffer{})
+			if err == nil || host.count(controllerhost.AptRefreshCommand) != 0 || host.count(controllerhost.AptUpgradeCommand) != 0 {
+				t.Fatalf("%s %v: err=%v commands=%v", name, args, err, host.commands)
+			}
+		}
+	}
+}
+
+func TestHostUpgradeReportsLiveUnitStateAfterSSHDropOrSystemdRunFailure(t *testing.T) {
+	timeout := errors.New("Proxmox SSH command timed out: context deadline exceeded")
+	for name, tc := range map[string]struct {
+		runErr     error
+		outcome    string
+		outcomeErr error
+		want       []string
+		reject     string
+	}{
+		"still running":   {timeout, "BOETTICHER_UPGRADE_UNIT=active\nUnpacking pve-manager ...\n", nil, []string{"still running", "is active", "systemctl status boetticher-host-upgrade"}, "Host upgrade: PASS"},
+		"finished":        {timeout, "BOETTICHER_UPGRADE_UNIT=inactive\nSetting up pve-manager\nBOETTICHER_UPGRADE_RESULT=success\n", nil, []string{"finished on the Host", "changed packages were not reported"}, "still running"},
+		"failed":          {timeout, "BOETTICHER_UPGRADE_UNIT=inactive\nE: Sub-process /usr/bin/dpkg returned an error code (1)\nBOETTICHER_UPGRADE_RESULT=failed\n", nil, []string{"Host full-upgrade failed", "dpkg returned an error"}, "still running"},
+		"unreadable":      {timeout, "", errors.New("exit status 255: connect timed out"), []string{"outcome is unknown", "could not be read", "grep BOETTICHER_UPGRADE_RESULT="}, "still running"},
+		"no marker":       {errors.New("Proxmox SSH command failed: exit status 1"), "BOETTICHER_UPGRADE_UNIT=inactive\n", nil, []string{"outcome is unknown", "no result marker"}, "still running"},
+		"unit exists":     {errors.New("Proxmox SSH command failed: exit status 1: Failed to start transient service unit: Unit boetticher-host-upgrade.service was already loaded or has a fragment file."), "", nil, []string{"did not start", "already exists from another run"}, "still running"},
+		"unit exists alt": {errors.New("Proxmox SSH command failed: exit status 1: Unit boetticher-host-upgrade.service already exists."), "", nil, []string{"did not start"}, "continues"},
+	} {
+		host := upgradeHost(testSources, testSimulation)
+		host.upgradeErr, host.outcome, host.outcomeErr = tc.runErr, tc.outcome, tc.outcomeErr
+		var out bytes.Buffer
+		err := runHostUpgradeWith(host.deps(), []string{"--yes"}, nil, &out)
+		if err == nil {
+			t.Fatalf("%s: upgrade failure was reported as success", name)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error lacks %q: %v", name, want, err)
+			}
+		}
+		if strings.Contains(err.Error()+out.String(), tc.reject) || host.count(controllerhost.AptUpgradeCommand) != 1 || host.count(controllerhost.RebootCommand) != 0 {
+			t.Errorf("%s: err=%v commands=%v\n%s", name, err, host.commands, out.String())
+		}
+		if strings.HasPrefix(name, "unit exists") && host.count(controllerhost.UpgradeOutcomeCommand) != 0 {
+			t.Errorf("%s: read another run's log as this run's outcome", name)
+		}
+	}
+}
+
+func TestHostRebootRefusedWhileUpgradeRunsOrDpkgLocked(t *testing.T) {
+	for _, busy := range []string{"BOETTICHER_UPGRADE_UNIT=active\nBOETTICHER_DPKG_LOCK=held\n", "BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_DPKG_LOCK=held\n"} {
+		for _, args := range [][]string{{"--yes"}, {"--plan"}, {"--with-guests", "--plan"}, {"--with-guests", "--yes"}} {
+			host := rebootHost(0)
+			host.busy = busy
+			err := runHostRebootWith(host.deps(), args, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), "Host reboot refused") || host.count(controllerhost.RebootCommand) != 0 || host.count("/config --output-format json") != 0 {
+				t.Fatalf("%v busy=%q: err=%v commands=%v", args, busy, err, host.commands)
+			}
+		}
+	}
+}
+
+func TestHostRebootRequestErrorStillWaitsForNewBoot(t *testing.T) {
+	for name, requestErr := range map[string]error{
+		"timeout":   errors.New("Proxmox SSH command timed out: context deadline exceeded"),
+		"exit 1":    errors.New("Proxmox SSH command failed: exit status 1"),
+		"exit 255":  errors.New("Proxmox SSH command failed: exit status 255"),
+		"killed -1": errors.New("Proxmox SSH command failed: signal: killed"),
+	} {
+		host := rebootHost(2)
+		host.rebootErr = requestErr
+		var out bytes.Buffer
+		if err := runHostRebootWith(host.deps(), []string{"--with-guests", "--yes"}, &out); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out.String())
+		}
+		if !strings.Contains(out.String(), "waiting for a new Host boot to confirm") || !strings.Contains(out.String(), "Host reboot: PASS") {
+			t.Fatalf("%s output:\n%s", name, out.String())
+		}
+	}
+	host := rebootHost(0)
+	host.rebootErr = errors.New("Proxmox SSH command failed: exit status 1: Failed to start transient timer unit")
+	host.rebootIgnored = true
+	deps := host.deps()
+	deps.rebootReturnBudget = time.Minute
+	err := runHostRebootWith(deps, []string{"--with-guests", "--yes"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "did not return within 1m0s") || !strings.Contains(err.Error(), "still running the previous boot") {
+		t.Fatalf("unchanged boot err=%v", err)
+	}
+}
+
+func TestHostRebootRetriesLaggingGuestStatus(t *testing.T) {
+	host := rebootHost(0)
+	host.guestLag = 2
+	var out bytes.Buffer
+	if err := runHostRebootWith(host.deps(), []string{"--with-guests", "--yes"}, &out); err != nil {
+		t.Fatalf("lagging listing failed: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "280   lab-firewall-01          running  running  PASS  running again") || strings.Count(strings.Join(host.commands, "\n"), "/cluster/resources") < 4 {
+		t.Fatalf("commands=%v\n%s", host.commands, out.String())
+	}
+	host = rebootHost(0)
+	host.guestLag = 1 << 30
+	deps := host.deps()
+	deps.guestStartBudget = time.Minute
+	err := runHostRebootWith(deps, []string{"--with-guests", "--yes"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "1 guest(s)") {
+		t.Fatalf("persistent stop err=%v", err)
 	}
 }

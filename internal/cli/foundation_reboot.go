@@ -46,6 +46,9 @@ func runHostRebootWith(deps hostMaintenanceDeps, args []string, out io.Writer) e
 	if err != nil {
 		return err
 	}
+	if err := requirePackageSystemIdle(ctx, runner); err != nil {
+		return fmt.Errorf("Host reboot refused: %w", err)
+	}
 	guests, err := controllerhost.ReadGuests(ctx, runner)
 	if err != nil {
 		return fmt.Errorf("verify Proxmox guests before reboot: %w", err)
@@ -94,12 +97,15 @@ func runHostRebootWith(deps hostMaintenanceDeps, args []string, out io.Writer) e
 		fmt.Fprintf(out, "\nPlan only. The Host was not rebooted. A reboot waits up to %s for the Host to return and %s for guest startup.\n", deps.rebootReturnBudget, deps.guestStartBudget)
 		return nil
 	}
-	result, err := runner.Run(ctx, "systemctl reboot")
-	if err != nil && result.ExitCode != 255 {
-		return fmt.Errorf("Proxmox reboot failed: %w", err)
-	}
 	requested := deps.now()
-	fmt.Fprintln(out, "\nProxmox reboot requested.")
+	if _, err := runner.Run(ctx, controllerhost.RebootCommand); err != nil {
+		// The reply may be lost (SSH drop, hang killed by the timeout) even
+		// though the reboot was scheduled. A new boot ID is the only proof
+		// either way, so keep waiting; an unchanged one gives the failure.
+		fmt.Fprintf(out, "\nProxmox reboot request returned an error (%v); waiting for a new Host boot to confirm.\n", err)
+	} else {
+		fmt.Fprintln(out, "\nProxmox reboot requested.")
+	}
 
 	returned, address, err := waitForHostReturn(ctx, deps, config, bootID)
 	if err != nil {
@@ -109,12 +115,34 @@ func runHostRebootWith(deps hostMaintenanceDeps, args []string, out io.Writer) e
 	if len(policies) == 0 {
 		return reportManagementPath(ctx, deps, config, address, out)
 	}
-	startErr := waitForGuestStartup(ctx, deps, returned)
-	after, err := controllerhost.ReadGuests(ctx, returned)
-	if err != nil {
-		return fmt.Errorf("read Proxmox guests after reboot: %w", err)
+	// pve-guests finishing is not enough: /cluster/resources lags guest
+	// state, so the comparison retries within the same startup budget.
+	deadline := deps.now().Add(deps.guestStartBudget)
+	startErr := waitForGuestStartup(ctx, deps, returned, deadline)
+	var rows []string
+	var failures int
+	var readErr error
+	for {
+		after, err := controllerhost.ReadGuests(ctx, returned)
+		readErr = err
+		if err == nil {
+			rows, failures = guestRecovery(policies, after)
+		}
+		if startErr != nil || (err == nil && failures == 0) || !deps.now().Before(deadline) {
+			break
+		}
+		if err := deps.sleep(ctx, deps.pollInterval); err != nil {
+			return err
+		}
 	}
-	failures := renderGuestRecovery(out, policies, after)
+	if rows == nil {
+		return fmt.Errorf("read Proxmox guests after reboot: %w", readErr)
+	}
+	fmt.Fprintln(out, "\nGuests after reboot")
+	fmt.Fprintf(out, "    %-5s %-24s %-8s %-8s %s\n", "VMID", "NAME", "BEFORE", "AFTER", "RESULT")
+	for _, row := range rows {
+		fmt.Fprintln(out, row)
+	}
 	pathErr := reportManagementPath(ctx, deps, config, address, out)
 	if startErr != nil {
 		return startErr
@@ -173,8 +201,7 @@ func waitForHostReturn(ctx context.Context, deps hostMaintenanceDeps, config con
 
 // waitForGuestStartup waits for pve-guests.service, which performs the
 // native onboot startall, to finish.
-func waitForGuestStartup(ctx context.Context, deps hostMaintenanceDeps, runner controllerhost.Runner) error {
-	deadline := deps.now().Add(deps.guestStartBudget)
+func waitForGuestStartup(ctx context.Context, deps hostMaintenanceDeps, runner controllerhost.Runner, deadline time.Time) error {
 	started := deps.now()
 	state := "unknown"
 	for {
@@ -237,14 +264,13 @@ func unsetDash(value int) string {
 	return fmt.Sprint(value)
 }
 
-func renderGuestRecovery(out io.Writer, policies []controllerhost.GuestBootPolicy, after []controllerhost.Guest) int {
+func guestRecovery(policies []controllerhost.GuestBootPolicy, after []controllerhost.Guest) ([]string, int) {
 	current := map[int]string{}
 	for _, guest := range after {
 		current[guest.VMID] = guest.Status
 	}
 	failures := 0
-	fmt.Fprintln(out, "\nGuests after reboot")
-	fmt.Fprintf(out, "    %-5s %-24s %-8s %-8s %s\n", "VMID", "NAME", "BEFORE", "AFTER", "RESULT")
+	rows := make([]string, 0, len(policies))
 	for _, policy := range policies {
 		status, ok := current[policy.VMID]
 		if !ok {
@@ -267,7 +293,7 @@ func renderGuestRecovery(out io.Writer, policies []controllerhost.GuestBootPolic
 		default:
 			result = "PASS  remains " + status
 		}
-		fmt.Fprintf(out, "    %-5d %-24s %-8s %-8s %s\n", policy.VMID, policy.Name, policy.Status, status, result)
+		rows = append(rows, fmt.Sprintf("    %-5d %-24s %-8s %-8s %s", policy.VMID, policy.Name, policy.Status, status, result))
 	}
-	return failures
+	return rows, failures
 }

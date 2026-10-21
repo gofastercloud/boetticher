@@ -97,11 +97,11 @@ Conf pve-manager (9.2.22 Proxmox:9.2/stable [all])
 }
 
 func TestRebootStateAndRefreshProblems(t *testing.T) {
-	state, err := ParseRebootState([]byte("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_NEWEST_KERNEL=7.0.15-1-pve\nBOETTICHER_REBOOT_REQUIRED=0\n"))
+	state, err := ParseRebootState([]byte("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_PINNED_KERNEL=\nBOETTICHER_NEWEST_KERNEL=7.0.15-1-pve\nBOETTICHER_REBOOT_REQUIRED=0\n"))
 	if err != nil || !state.Required() || !strings.Contains(state.Reason(), "newest installed 7.0.15-1-pve") {
 		t.Fatalf("state=%+v err=%v", state, err)
 	}
-	current, _ := ParseRebootState([]byte("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_NEWEST_KERNEL=7.0.14-16-pve\nBOETTICHER_REBOOT_REQUIRED=0\n"))
+	current, _ := ParseRebootState([]byte("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_PINNED_KERNEL=\nBOETTICHER_NEWEST_KERNEL=7.0.14-16-pve\nBOETTICHER_REBOOT_REQUIRED=0\n"))
 	if current.Required() {
 		t.Fatalf("current=%+v", current)
 	}
@@ -163,5 +163,39 @@ func TestReadGuestsTreatsUnknownAsError(t *testing.T) {
 	}
 	if empty, err := ReadGuests(context.Background(), stubRunner{cmdGuests: {Stdout: []byte(`[]`)}}); err != nil || len(empty) != 0 {
 		t.Fatalf("empty=%v err=%v", empty, err)
+	}
+}
+
+func TestRebootStateHonoursPinnedKernelAndChangedPackages(t *testing.T) {
+	pinned, err := ParseRebootState([]byte("BOETTICHER_RUNNING_KERNEL=7.0.14-16-pve\nBOETTICHER_PINNED_KERNEL=7.0.14-16-pve\nBOETTICHER_NEWEST_KERNEL=7.0.15-1-pve\nBOETTICHER_REBOOT_REQUIRED=0\n"))
+	if err != nil || pinned.Required() || !strings.Contains(pinned.Reason(), "pinned kernel") {
+		t.Fatalf("pinned=%+v err=%v reason=%s", pinned, err, pinned.Reason())
+	}
+	pinned.Changed = []string{"libc6"}
+	if !pinned.Required() || !strings.Contains(pinned.Reason(), "changed libc6") {
+		t.Fatalf("changed=%+v", pinned)
+	}
+	other, _ := ParseRebootState([]byte("BOETTICHER_RUNNING_KERNEL=7.0.15-1-pve\nBOETTICHER_PINNED_KERNEL=7.0.14-16-pve\nBOETTICHER_NEWEST_KERNEL=7.0.15-1-pve\nBOETTICHER_REBOOT_REQUIRED=0\n"))
+	if !other.Required() || !strings.Contains(other.Reason(), "pinned 7.0.14-16-pve") {
+		t.Fatalf("other=%+v", other)
+	}
+}
+
+func TestCheckPackageSystemIdle(t *testing.T) {
+	for output, idle := range map[string]bool{
+		"BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_DPKG_LOCK=free\n":    true,
+		"BOETTICHER_UPGRADE_UNIT=failed\nBOETTICHER_DPKG_LOCK=free\n":      true,
+		"BOETTICHER_UPGRADE_UNIT=active\nBOETTICHER_DPKG_LOCK=free\n":      false,
+		"BOETTICHER_UPGRADE_UNIT=activating\nBOETTICHER_DPKG_LOCK=free\n":  false,
+		"BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_DPKG_LOCK=held\n":    false,
+		"BOETTICHER_UPGRADE_UNIT=inactive\nBOETTICHER_DPKG_LOCK=unknown\n": false,
+		"": false,
+	} {
+		if err := CheckPackageSystemIdle([]byte(output)); (err == nil) != idle {
+			t.Errorf("%q: err=%v", output, err)
+		}
+	}
+	if !strings.Contains(AptUpgradeCommand, UpgradeResultMarker+"success") || strings.ContainsAny(AptUpgradeCommand[strings.Index(AptUpgradeCommand, "/bin/sh"):], "$%") {
+		t.Fatal("upgrade unit script must carry a result marker and no systemd-expanded characters")
 	}
 }
