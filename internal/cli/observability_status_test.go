@@ -18,6 +18,14 @@ func (r capabilityStatusRunner) Run(_ context.Context, command string) (controll
 	if strings.HasPrefix(command, "pct config ") {
 		return controllerhost.Result{Stdout: []byte("hostname: " + b.Hostname + "\ntags: boetticher;managed;module-observability;boetticher-module-observability\nnet0: name=eth0,bridge=vmbr1,tag=10,ip=10.10.10.20/24\n")}, nil
 	}
+	if strings.Contains(command, "boetticher-service-check") {
+		return controllerhost.Result{Stdout: []byte(batchedServiceResults(command, func(service string) (string, string) {
+			if r.bifrostDown && service == "bifrost.service" {
+				return "inactive", ""
+			}
+			return "active", "healthy"
+		}))}, nil
+	}
 	if strings.Contains(command, "systemctl is-active") {
 		if r.bifrostDown && strings.Contains(command, "bifrost.service") {
 			return controllerhost.Result{Stdout: []byte("inactive\n")}, nil
@@ -28,6 +36,20 @@ func (r capabilityStatusRunner) Run(_ context.Context, command string) (controll
 		return controllerhost.Result{Stdout: []byte("status: running\n")}, nil
 	}
 	return controllerhost.Result{Stdout: []byte("installed")}, nil
+}
+
+// batchedServiceResults answers the batched guest service check with one
+// result line per provider named in the command, as the guest script does.
+func batchedServiceResults(command string, result func(service string) (unit, endpoint string)) string {
+	var out strings.Builder
+	for _, service := range observability.Services() {
+		if !strings.Contains(command, service) {
+			continue
+		}
+		unit, endpoint := result(service)
+		out.WriteString("boetticher-service-check\t" + service + "\t" + unit + "\t" + endpoint + "\n")
+	}
+	return out.String()
 }
 
 func TestCapabilityStatusUsesOnlyOwnedComponentServices(t *testing.T) {

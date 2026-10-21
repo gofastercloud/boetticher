@@ -112,43 +112,58 @@ func runObservabilityCapability(capability, action string, args []string, input 
 		return err
 	}
 	client := observability.HostClient{Transport: transport}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), observabilityReadBudget)
 	defer cancel()
 	if action == "plan" {
-		return planObservability(ctx, client, b, out)
-	}
-	state, err := client.GuestStatus(ctx, b)
-	if err != nil {
-		return err
+		return planObservability(ctx, client, b, config.Modules, out)
 	}
 	services := requiredObservabilityServices(capability, config.Modules)
-	serviceStates := make([]string, 0, len(services))
-	for _, serviceName := range services {
-		svc, serviceErr := client.ServiceStatus(ctx, b, serviceName)
-		if serviceErr != nil {
-			return serviceErr
+	runtime, err := client.ObserveRuntime(ctx, b, services)
+	if err != nil {
+		return observabilityCheckError(ctx, "module "+capability+" status", err)
+	}
+	if !runtime.Running {
+		return fmt.Errorf("module %s guest %d is not running: %s", capability, b.VMID, runtime.State)
+	}
+	serviceStates := make([]string, 0, 2*len(runtime.Services))
+	var unhealthy []string
+	for _, svc := range runtime.Services {
+		serviceStates = append(serviceStates, svc.Service+"="+svc.Unit)
+		if !svc.UnitActive() {
+			unhealthy = append(unhealthy, fmt.Sprintf("service %s unhealthy: %s", svc.Service, svc.Unit))
+			continue
 		}
-		if action == "status" && !serviceHealthy(svc) {
-			return fmt.Errorf("module %s service %s unhealthy: %s", capability, serviceName, svc)
-		}
-		serviceStates = append(serviceStates, serviceName+"="+svc)
-		if action == "status" {
-			endpoint, endpointErr := client.ProviderHealth(ctx, b, serviceName)
-			if endpointErr != nil {
-				return fmt.Errorf("module %s provider %s unhealthy: %w", capability, serviceName, endpointErr)
-			}
-			serviceStates = append(serviceStates, serviceName+"-endpoint="+endpoint)
+		serviceStates = append(serviceStates, svc.Service+"-endpoint="+svc.Endpoint)
+		if !svc.Healthy() {
+			unhealthy = append(unhealthy, fmt.Sprintf("provider %s unhealthy: %s health endpoint failed: %s", svc.Service, svc.Service, svc.Endpoint))
 		}
 	}
-	fmt.Fprintf(out, "Module %s\n  Desired  %t\n  Guest    %d (%s)\n  Services %s\n", capability, observability.Enabled(config.Modules), b.VMID, state, strings.Join(serviceStates, ", "))
-	if action == "plan" {
-		if observability.Enabled(config.Modules) {
-			fmt.Fprintln(out, "  Change    configured intent and owned runtime inspected; no mutation")
-		} else {
-			fmt.Fprintln(out, "  Change    capability remains disabled; owned runtime inspected")
-		}
+	if len(unhealthy) > 0 {
+		return fmt.Errorf("module %s %s", capability, strings.Join(unhealthy, "; "))
 	}
+	fmt.Fprintf(out, "Module %s\n  Desired  %t\n  Guest    %d (%s)\n  Services %s\n", capability, observability.Enabled(config.Modules), b.VMID, runtime.State, strings.Join(serviceStates, ", "))
 	return nil
+}
+
+// observabilityReadBudget bounds one read-only status or plan run. The run
+// makes three Host round trips (ownership, guest state, one batched service
+// check whose per-service checks are each bounded in the guest).
+var observabilityReadBudget = 30 * time.Second
+
+// observabilityCheckError keeps a spent read budget distinct from an observed
+// failure: when the deadline is what stopped the check, it says so and names
+// the check that was running instead of reporting a provider as unhealthy.
+func observabilityCheckError(ctx context.Context, operation string, err error) error {
+	check := "read-only check"
+	var checkErr *observability.CheckError
+	if errors.As(err, &checkErr) {
+		check = checkErr.Check
+		err = checkErr.Err
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%s budget of %s ran out during %s; health not determined: %w", operation, observabilityReadBudget, check, err)
+	}
+	return fmt.Errorf("%s could not %s: %w", operation, check, err)
 }
 
 func serviceHealthy(value string) bool {
@@ -156,21 +171,38 @@ func serviceHealthy(value string) bool {
 	return len(fields) == 1 && fields[0] == "active" || len(fields) >= 2 && fields[0] == "active" && fields[1] == "running"
 }
 
-func planObservability(ctx context.Context, client observability.HostClient, b observability.Binding, out io.Writer) error {
+func planObservability(ctx context.Context, client observability.HostClient, b observability.Binding, modules clientservices.Modules, out io.Writer) error {
 	observation, err := client.ObserveGuest(ctx, b)
 	if err != nil {
-		return err
+		return observabilityCheckError(ctx, "module observability plan", &observability.CheckError{Check: fmt.Sprintf("observe guest %d", b.VMID), Err: err})
 	}
 	fmt.Fprintf(out, "Module observability plan\n  Guest    %d (%s)\n", b.VMID, observation.State)
 	switch observation.State {
 	case "absent":
 		fmt.Fprintf(out, "  Change   Create unprivileged LXC on vmbr1 VLAN %d with %dMiB, metrics 24GiB, logs 24GiB, and state 4GiB retained data\n", b.VLAN, b.MemoryMiB)
 	case "owned":
-		service, serviceErr := client.ServiceStatus(ctx, b, "victoriametrics.service")
-		if serviceErr == nil && serviceHealthy(service) {
-			fmt.Fprintln(out, "  Change   Preserve healthy owned runtime")
-		} else {
+		services := observability.ServicesForModules(modules)
+		runtime, runtimeErr := client.ObserveRuntime(ctx, b, services)
+		switch {
+		case runtimeErr != nil:
+			fmt.Fprintf(out, "  Checked  runtime health not determined: %v\n", observabilityCheckError(ctx, "module observability plan", runtimeErr))
 			fmt.Fprintln(out, "  Change   Reconcile owned runtime and provider")
+		case !runtime.Running:
+			fmt.Fprintf(out, "  Checked  guest not running (%s)\n", runtime.State)
+			fmt.Fprintln(out, "  Change   Reconcile owned runtime and provider")
+		default:
+			var unhealthy []string
+			for _, svc := range runtime.Services {
+				if !svc.Healthy() {
+					unhealthy = append(unhealthy, svc.Service)
+				}
+			}
+			fmt.Fprintf(out, "  Checked  guest running; %d/%d required services active with healthy endpoints\n", len(services)-len(unhealthy), len(services))
+			if len(unhealthy) == 0 {
+				fmt.Fprintln(out, "  Change   Preserve owned runtime unless apply finds configuration drift")
+			} else {
+				fmt.Fprintf(out, "  Change   Reconcile owned runtime and provider (unhealthy: %s)\n", strings.Join(unhealthy, ", "))
+			}
 		}
 	case "conflict":
 		fmt.Fprintf(out, "  Change   Conflict: %s\n", observation.Detail)
