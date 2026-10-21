@@ -60,7 +60,11 @@ const (
 	StreamDeckTailnetDetail StreamDeckView = "tailnet"
 )
 
-type StreamDeckRenderer struct{}
+// StreamDeckRenderer draws one frame. Speedtest carries the daemon-owned
+// manual lab speedtest state shown on the NETWORK view.
+type StreamDeckRenderer struct {
+	Speedtest SpeedtestDisplay
+}
 
 var streamDeckFont = loadStreamDeckFont()
 
@@ -76,11 +80,11 @@ func loadStreamDeckFont() font.Face {
 	return face
 }
 
-func (StreamDeckRenderer) Render(snapshot StatusSnapshot, telemetry ProxmoxSnapshot, operation *operationDisplay, view StreamDeckView, page, guestIndex int) []KeyImage {
-	return (StreamDeckRenderer{}).RenderAt(snapshot, telemetry, operation, view, page, guestIndex, time.Now())
+func (r StreamDeckRenderer) Render(snapshot StatusSnapshot, telemetry ProxmoxSnapshot, operation *operationDisplay, view StreamDeckView, page, guestIndex int) []KeyImage {
+	return r.RenderAt(snapshot, telemetry, operation, view, page, guestIndex, time.Now())
 }
 
-func (StreamDeckRenderer) RenderAt(snapshot StatusSnapshot, telemetry ProxmoxSnapshot, operation *operationDisplay, view StreamDeckView, page, guestIndex int, now time.Time) []KeyImage {
+func (r StreamDeckRenderer) RenderAt(snapshot StatusSnapshot, telemetry ProxmoxSnapshot, operation *operationDisplay, view StreamDeckView, page, guestIndex int, now time.Time) []KeyImage {
 	keys := make([]KeyImage, StreamDeckKeyCount)
 	for index := range keys {
 		keys[index] = blankDeckKey()
@@ -91,7 +95,7 @@ func (StreamDeckRenderer) RenderAt(snapshot StatusSnapshot, telemetry ProxmoxSna
 	case StreamDeckGuestDetail:
 		return renderGuestDetail(keys, telemetry, guestIndex, now)
 	case StreamDeckNetworkDetail:
-		return renderNetworkDetail(keys, snapshot, now)
+		return renderNetworkDetail(keys, snapshot, r.Speedtest, now)
 	case StreamDeckVPNDetail:
 		return renderCapabilityDetail(keys, "VPN", snapshot.VPN, now)
 	case StreamDeckTailnetDetail:
@@ -155,13 +159,14 @@ func renderHome(keys []KeyImage, snapshot StatusSnapshot, telemetry ProxmoxSnaps
 	return keys
 }
 
-func renderNetworkDetail(keys []KeyImage, snapshot StatusSnapshot, now time.Time) []KeyImage {
+func renderNetworkDetail(keys []KeyImage, snapshot StatusSnapshot, speedtest SpeedtestDisplay, now time.Time) []KeyImage {
 	network := networkComponent(snapshot)
 	keys[0] = renderDeckKey("NETWORK", stateLabel(network.State), "AGGREGATE", network.State)
 	keys[1] = renderDeckKey("FIREWALL", stateLabel(displayComponentState(snapshot.Firewall)), "NETWORK", displayComponentState(snapshot.Firewall))
 	keys[2] = renderDeckKey("DNS", stateLabel(displayComponentState(snapshot.DNS)), "NETWORK", displayComponentState(snapshot.DNS))
 	keys[3] = renderDeckKey("DHCP/NTP", stateLabel(displayComponentState(snapshot.DHCPNTP)), "NETWORK", displayComponentState(snapshot.DHCPNTP))
 	keys[4] = renderDeckKeyAt("DETAIL", network.Detail, "NETWORK", network.State, now, true)
+	renderSpeedtestKeys(keys, speedtest, now)
 	keys[13] = renderDeckKey("BACK", "HOME", "NAV", Off)
 	keys[14] = renderDeckKey("REFRESH", "READ", "STATUS", Off)
 	return keys

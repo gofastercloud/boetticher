@@ -68,7 +68,7 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) (err error) 
 	if networkPlan.State != "exact" && networkPlan.State != "absent" {
 		return teardownFailure(out, "Host teardown stopped.", fmt.Errorf("internal network is %s: %s", networkPlan.State, networkPlan.Detail), "No Host state was changed.", "Inspect vmbr1 before retrying")
 	}
-	baseline, baselineErr := controllerhost.CheckBaseline(ctx, transport)
+	baseline, baselineErr := controllerhost.BaselineOwnedPresent(ctx, transport)
 	if baselineErr != nil {
 		return teardownFailure(out, "Host teardown could not inspect the Host configuration.", baselineErr, "No Host state was changed.", "sudo boetticher host status")
 	}
@@ -154,7 +154,7 @@ func runHostTeardown(args []string, input io.Reader, out io.Writer) (err error) 
 		if _, commandErr := transport.Run(ctx, controllerhost.HostBaselineTeardownCommand()); commandErr != nil {
 			return teardownFailure(out, "Host teardown incomplete.", commandErr, "Network and storage were removed; Host configuration remains.", "sudo boetticher host teardown --plan")
 		}
-		prepared, checkErr := controllerhost.CheckBaseline(ctx, transport)
+		prepared, checkErr := controllerhost.BaselineOwnedPresent(ctx, transport)
 		if checkErr != nil || prepared {
 			if checkErr == nil {
 				checkErr = errors.New("owned host baseline configuration remains")
