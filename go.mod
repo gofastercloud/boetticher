@@ -11,11 +11,11 @@ require (
 	github.com/matthewpi/streamdeck v0.0.0-20240226234722-6586ce762db3
 	github.com/showwin/speedtest-go v1.8.3
 	golang.org/x/crypto v0.57.0
-	golang.org/x/image v0.39.0
+	golang.org/x/image v0.41.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
-	google.golang.org/grpc v1.83.1
+	google.golang.org/grpc v1.83.2
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.57.0
 )
