@@ -17,7 +17,7 @@ import (
 
 func runHost(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher host <create-identity|show-public-key|import-host-key|authorize-controller|enroll|apply|status|plan-storage|teardown|reboot>")
+		return errors.New("usage: boetticher host <create-identity|show-public-key|import-host-key|authorize-controller|enroll|apply|status|plan-storage|teardown|upgrade|reboot>")
 	}
 	switch args[0] {
 	case "create-identity":
@@ -41,6 +41,8 @@ func runHost(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runControllerStorage([]string{"plan"}, out)
 	case "teardown":
 		return runHostTeardown(args[1:], input, out)
+	case "upgrade":
+		return runHostUpgrade(args[1:], input, out)
 	case "reboot":
 		return runHostReboot(args[1:], out)
 	case "register-system", "list-systems", "system-status", "unregister-system":

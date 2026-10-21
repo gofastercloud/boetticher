@@ -124,13 +124,49 @@ sudo boetticher host status
 Teardown is retryable. Unknown guests, storage, bridges, or configuration stop
 the operation; no direct Proxmox cleanup is part of the supported journey.
 
-## Reboots
+## Host maintenance
 
-Reboot the concrete target explicitly:
+Proxmox package upgrades and Host reboots are explicit Controller operations;
+`host apply` installs prerequisites only and never upgrades or reboots.
+
+```sh
+sudo boetticher host upgrade --plan
+sudo boetticher host upgrade --yes
+sudo boetticher host reboot --with-guests --plan
+sudo boetticher host reboot --with-guests --yes
+```
+
+`host upgrade --plan` refreshes the package indexes (`apt-get update`) and
+simulates `apt-get full-upgrade`; refreshing the indexes is the only change it
+makes. It lists every package change, highlights Proxmox and kernel packages,
+and predicts whether a reboot will be needed. A read-only repository preflight
+runs first: an enabled Proxmox enterprise repository without an active
+subscription is refused with guidance, and repositories are never rewritten
+during an upgrade. `--yes` runs the noninteractive full-upgrade Proxmox
+recommends (`DEBIAN_FRONTEND=noninteractive`, keeping existing configuration
+files with `--force-confdef --force-confold`) in the transient systemd unit
+`boetticher-host-upgrade`, logging to `/var/log/boetticher-host-upgrade.log`, so
+a dropped SSH session cannot interrupt dpkg. The Controller waits up to 60
+minutes, refuses an upgrade that would remove core Proxmox packages, and then
+reports the packages changed and whether a reboot is now required. It never
+reboots.
+
+`host reboot --yes` still refuses while any guest exists. `--with-guests`
+reboots with guests present by relying on Proxmox's native `pve-guests.service`:
+guests stop in reverse startup order and guests with `onboot` enabled start in
+order afterwards. Boetticher never stops or starts guests itself. The preview
+(`--plan`) is read-only and shows each guest's onboot and startup order, warning
+about running guests that will not start again. After the reboot the Controller
+waits up to 20 minutes for a new Host boot, probing the normal connection and
+then the HOME fallback read-only, because the firewall guest that routes the LAB
+path may still be starting. It then waits up to 10 minutes for guest startup,
+compares running guests with the state before the reboot, and reports whether the
+normal Host path has returned.
+
+Reboot the Controller separately:
 
 ```sh
 sudo boetticher controller reboot --yes
-sudo boetticher host reboot --yes
 ```
 
 The current reference architecture is IPv4-only. The retained guest IPv6 bridge
