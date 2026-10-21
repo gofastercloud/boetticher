@@ -59,6 +59,12 @@ type ServiceHealth struct {
 // UnitActive reports whether the observed unit state is exactly active.
 func (h ServiceHealth) UnitActive() bool { return h.Unit == "active" }
 
+// UnitDetermined reports whether the unit query produced a state at all. A
+// query that timed out or returned nothing says nothing about the provider.
+func (h ServiceHealth) UnitDetermined() bool {
+	return h.Unit != "check-timed-out" && h.Unit != "unknown"
+}
+
 // Healthy reports an active unit with a healthy loopback endpoint.
 func (h ServiceHealth) Healthy() bool { return h.UnitActive() && h.Endpoint == "healthy" }
 
@@ -121,7 +127,7 @@ func serviceChecksScript(services []string) (string, error) {
 		}
 		seen[service] = true
 		quoted := shellQuoteValue(service)
-		fmt.Fprintf(&script, "( u=$(timeout %s systemctl is-active %s 2>/dev/null); rc=$?; if [ \"$rc\" -eq 124 ]; then u=check-timed-out; fi; [ -n \"$u\" ] || u=unknown; h=; if [ \"$u\" = active ]; then %s >/dev/null 2>&1; rc=$?; if [ \"$rc\" -eq 0 ]; then h=healthy; else h=curl-$rc; fi; fi; printf '%s\\t%%s\\t%%s\\t%%s\\n' %s \"$u\" \"$h\" ) &\n", timeout, quoted, curl, serviceCheckMarker, quoted)
+		fmt.Fprintf(&script, "( u=$(timeout -k 2 %s systemctl is-active %s 2>/dev/null); rc=$?; if [ \"$rc\" -eq 124 ]; then u=check-timed-out; fi; [ -n \"$u\" ] || u=unknown; h=; if [ \"$u\" = active ]; then %s >/dev/null 2>&1; rc=$?; if [ \"$rc\" -eq 0 ]; then h=healthy; else h=curl-$rc; fi; fi; printf '%s\\t%%s\\t%%s\\t%%s\\n' %s \"$u\" \"$h\" ) &\n", timeout, quoted, curl, serviceCheckMarker, quoted)
 	}
 	script.WriteString("wait\nexit 0\n")
 	return script.String(), nil

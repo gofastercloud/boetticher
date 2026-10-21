@@ -24,9 +24,9 @@ func TestServiceChecksScriptReportsEachServiceUnderItsOwnTimeout(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// timeout must receive the per-check bound; it runs the wrapped command,
+	// timeout must receive the per-check bound and a kill grace; it runs the wrapped command,
 	// except that the gatus unit query simulates a hung systemctl.
-	write("timeout", `[ "$1" = 5 ] || exit 99; shift; case "$*" in *gatus*) exit 124;; esac; exec "$@"`+"\n")
+	write("timeout", `[ "$1 $2 $3" = "-k 2 5" ] || exit 99; shift 3; case "$*" in *gatus*) exit 124;; esac; exec "$@"`+"\n")
 	write("systemctl", `case "$2" in grafana.service) echo failed; exit 3;; *) echo active;; esac`+"\n")
 	write("curl", `case "$*" in *"--max-time 5"*) ;; *) exit 98;; esac; case "$*" in *4000*) exit 7;; *8428*) exit 28;; esac; exit 0`+"\n")
 	services := []string{"victoriametrics.service", "grafana.service", "gatus.service", "bifrost.service", "caddy.service"}

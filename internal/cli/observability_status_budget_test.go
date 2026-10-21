@@ -99,6 +99,8 @@ func TestObservabilityStatusReportsRealUnhealthyProviders(t *testing.T) {
 	runner := &budgetRunner{results: map[string][2]string{
 		"bifrost.service": {"active", "curl-7"},
 		"grafana.service": {"failed", ""},
+		"gatus.service":   {"check-timed-out", ""},
+		"caddy.service":   {"unknown", ""},
 	}}
 	withHolmesObservability(t, runner)
 	var out, errOut bytes.Buffer
@@ -106,9 +108,19 @@ func TestObservabilityStatusReportsRealUnhealthyProviders(t *testing.T) {
 	if err == nil {
 		t.Fatal("status passed with unhealthy providers")
 	}
-	for _, want := range []string{"service grafana.service unhealthy: failed", "provider bifrost.service unhealthy: bifrost.service health endpoint failed: connection refused"} {
+	for _, want := range []string{
+		"service grafana.service unhealthy: failed",
+		"provider bifrost.service unhealthy: bifrost.service health endpoint failed: connection refused",
+		"service gatus.service health not determined: unit query returned check-timed-out",
+		"service caddy.service health not determined: unit query returned unknown",
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("unhealthy error %q does not contain %q", err, want)
+		}
+	}
+	for _, wrong := range []string{"gatus.service unhealthy", "caddy.service unhealthy"} {
+		if strings.Contains(err.Error(), wrong) {
+			t.Fatalf("undetermined unit blamed as unhealthy: %q", err)
 		}
 	}
 	if strings.Contains(err.Error(), "budget") {

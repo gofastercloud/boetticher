@@ -129,6 +129,10 @@ func runObservabilityCapability(capability, action string, args []string, input 
 	var unhealthy []string
 	for _, svc := range runtime.Services {
 		serviceStates = append(serviceStates, svc.Service+"="+svc.Unit)
+		if !svc.UnitDetermined() {
+			unhealthy = append(unhealthy, fmt.Sprintf("service %s health not determined: unit query returned %s within its %ds bound", svc.Service, svc.Unit, observability.ServiceCheckTimeoutSeconds))
+			continue
+		}
 		if !svc.UnitActive() {
 			unhealthy = append(unhealthy, fmt.Sprintf("service %s unhealthy: %s", svc.Service, svc.Unit))
 			continue
@@ -145,9 +149,10 @@ func runObservabilityCapability(capability, action string, args []string, input 
 	return nil
 }
 
-// observabilityReadBudget bounds one read-only status or plan run. The run
+// observabilityReadBudget bounds one read-only status or plan run. Status
 // makes three Host round trips (ownership, guest state, one batched service
-// check whose per-service checks are each bounded in the guest).
+// check whose per-service checks are each bounded in the guest); plan adds its
+// guest observation first, for four.
 var observabilityReadBudget = 30 * time.Second
 
 // observabilityCheckError keeps a spent read budget distinct from an observed
