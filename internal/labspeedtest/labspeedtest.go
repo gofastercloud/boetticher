@@ -20,8 +20,13 @@ const (
 	// so a stale helper is reinstalled by the normal `host apply` path.
 	HelperVersion = "boetticher-host-speedtest/v2"
 	HelperPath    = "/usr/local/libexec/boetticher-host-speedtest"
-	// LabCommand is the only lab-mode invocation the Controller issues.
+	// LabCommand is the only lab-mode measurement the Controller issues.
 	LabCommand = HelperPath + " --lab --stream"
+	// CleanupCommand removes an owned fixture left by an interrupted run. It
+	// is Host-local and needs no provider. A Host still on helper v1 (which
+	// has no lab mode, so cannot own a fixture) reports that instead of
+	// failing on an unknown flag.
+	CleanupCommand = "set -eu; if [ \"$(" + HelperPath + " --version 2>/dev/null || true)\" != " + "'" + HelperVersion + "'" + " ]; then printf '%s\\n' '{\"phase\":\"cleanup\",\"helper_absent\":true}'; exit 0; fi; exec " + HelperPath + " --lab --cleanup-only"
 
 	// The fixture uses the fixed SERVERS network contract and the reserved
 	// .250-.254 probe space, outside the VPN-protected .224/28 range, so its
@@ -48,6 +53,8 @@ const (
 	PhaseUpload   Phase = "upload"
 	PhaseDone     Phase = "done"
 	PhaseError    Phase = "error"
+	// PhaseCleanup is the terminal event of a cleanup-only run.
+	PhaseCleanup Phase = "cleanup"
 )
 
 // Event is one progress line. Rates are megabits per second; download and
@@ -61,10 +68,13 @@ type Event struct {
 	DownloadMbps float64 `json:"download_mbps,omitempty"`
 	UploadMbps   float64 `json:"upload_mbps,omitempty"`
 	Recovered    bool    `json:"recovered_leftovers,omitempty"`
+	HelperAbsent bool    `json:"helper_absent,omitempty"`
 	Error        string  `json:"error,omitempty"`
 }
 
-func (e Event) Terminal() bool { return e.Phase == PhaseDone || e.Phase == PhaseError }
+func (e Event) Terminal() bool {
+	return e.Phase == PhaseDone || e.Phase == PhaseError || e.Phase == PhaseCleanup
+}
 
 // ErrorEvent builds a bounded error event.
 func ErrorEvent(format string, args ...any) Event {
@@ -113,7 +123,7 @@ func ParseEvent(line []byte) (Event, error) {
 
 func Validate(event Event) error {
 	switch event.Phase {
-	case PhaseSetup, PhaseServer, PhasePing, PhaseDownload, PhaseUpload, PhaseDone:
+	case PhaseSetup, PhaseServer, PhasePing, PhaseDownload, PhaseUpload, PhaseDone, PhaseCleanup:
 		if event.Error != "" {
 			return fmt.Errorf("speedtest %s event carries an error", event.Phase)
 		}
@@ -131,6 +141,9 @@ func Validate(event Event) error {
 	}
 	if len(event.Server) > 200 || strings.ContainsAny(event.Server, "\r\n\x00") || strings.ContainsAny(event.Error, "\x00") {
 		return errors.New("speedtest progress text is malformed")
+	}
+	if event.HelperAbsent && event.Phase != PhaseCleanup {
+		return errors.New("only a cleanup event can report an absent lab helper")
 	}
 	if event.Phase == PhaseDone && event.DownloadMbps <= 0 {
 		return errors.New("speedtest done event has no usable download result")

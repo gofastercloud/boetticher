@@ -24,6 +24,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/controllerstatus"
 	"github.com/gofastercloud/boetticher/internal/firewallmodule"
 	"github.com/gofastercloud/boetticher/internal/firewalltest"
+	"github.com/gofastercloud/boetticher/internal/labspeedtest"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/openwrt"
 )
@@ -222,7 +223,44 @@ func runFirewallTestCleanup(host firewallmodule.HostClient, out io.Writer) error
 	} else {
 		fmt.Fprintln(out, "Firewall test cleanup: PASS (no recognised leftovers remain)")
 	}
+	// The StreamDeck ST-LAB speedtest shares the Host test lock and SERVERS
+	// probe space; its owned fixture is recovered through the same native
+	// cleanup surface. It is Host-local and needs no provider.
+	event, err := cleanupLabSpeedtest(ctx, host)
+	if err != nil {
+		return fmt.Errorf("lab speedtest cleanup failed: %w", err)
+	}
+	switch {
+	case event.HelperAbsent:
+		fmt.Fprintln(out, "Lab speedtest cleanup: PASS (helper v2 not installed; no lab fixture can exist)")
+	case event.Recovered:
+		fmt.Fprintln(out, "Lab speedtest cleanup: PASS (recognised leftover removed)")
+	default:
+		fmt.Fprintln(out, "Lab speedtest cleanup: PASS (no recognised leftovers remain)")
+	}
 	return nil
+}
+
+type hostRunner interface {
+	Run(context.Context, string) (controllerhost.Result, error)
+}
+
+func cleanupLabSpeedtest(ctx context.Context, host hostRunner) (labspeedtest.Event, error) {
+	result, runErr := host.Run(ctx, labspeedtest.CleanupCommand)
+	lines := strings.Split(strings.TrimSpace(string(result.Stdout)), "\n")
+	event, parseErr := labspeedtest.ParseEvent([]byte(lines[len(lines)-1]))
+	switch {
+	case parseErr == nil && event.Phase == labspeedtest.PhaseError:
+		return event, errors.New(event.Error)
+	case parseErr == nil && event.Phase == labspeedtest.PhaseCleanup:
+		return event, nil
+	case runErr != nil:
+		return labspeedtest.Event{}, runErr
+	case parseErr != nil:
+		return labspeedtest.Event{}, parseErr
+	default:
+		return labspeedtest.Event{}, fmt.Errorf("unexpected lab speedtest cleanup phase %q", event.Phase)
+	}
 }
 
 func cleanupFirewallTestWithRetry(host firewallmodule.HostClient) (firewalltest.Response, error) {

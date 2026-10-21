@@ -191,6 +191,7 @@ func (t Transport) RunLines(ctx context.Context, command string, maxLine int, on
 	// Stdout is read before Wait, so cancellation must close the pipe by
 	// ending the whole SSH process group rather than only the direct child.
 	process.Cancel = func() error { return syscall.Kill(-process.Process.Pid, syscall.SIGKILL) }
+	process.WaitDelay = 5 * time.Second
 	var stderr boundedBuffer
 	process.Stderr = &stderr
 	stdout, err := process.StdoutPipe()

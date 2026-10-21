@@ -1,6 +1,7 @@
 package host
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,6 +22,37 @@ const headlessPolicy = "[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternal
 func HostBaselineTeardownCommand() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
 	return "set -eu; for path in " + proxmoxRepositoryPath + " " + headlessPolicyPath + " /usr/local/libexec/boetticher-host-speedtest; do test ! -L \"$path\"; done; if [ -f " + proxmoxRepositoryPath + " ] && printf %s " + quote(proxmoxRepository) + " | cmp -s - " + proxmoxRepositoryPath + "; then rm -f " + proxmoxRepositoryPath + "; fi; if [ -f " + headlessPolicyPath + " ] && printf %s " + quote(headlessPolicy) + " | cmp -s - " + headlessPolicyPath + "; then rm -f " + headlessPolicyPath + "; systemctl daemon-reload; systemctl reload systemd-logind.service; fi; if [ -e /usr/local/libexec/boetticher-host-speedtest ]; then rm -f /usr/local/libexec/boetticher-host-speedtest; fi"
+}
+
+// ownedBaselineCommand reports whether any file HostBaselineTeardownCommand
+// would remove is present. It is independent of whether the baseline is
+// current, so a Host that was never reapplied after a helper upgrade still
+// has its owned baseline removed by teardown.
+func ownedBaselineCommand() string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+	return "set -eu; owned=0; if [ -f " + proxmoxRepositoryPath + " ] && [ ! -L " + proxmoxRepositoryPath + " ] && printf %s " + quote(proxmoxRepository) + " | cmp -s - " + proxmoxRepositoryPath + "; then owned=1; fi; if [ -f " + headlessPolicyPath + " ] && [ ! -L " + headlessPolicyPath + " ] && printf %s " + quote(headlessPolicy) + " | cmp -s - " + headlessPolicyPath + "; then owned=1; fi; if [ -e /usr/local/libexec/boetticher-host-speedtest ]; then owned=1; fi; printf 'BOETTICHER_BASELINE_OWNED=%s\\n' \"$owned\""
+}
+
+// BaselineOwnedPresent is the teardown-side check: true when owned baseline
+// files remain, regardless of helper versions. Transport failure is an error,
+// never "absent".
+func BaselineOwnedPresent(ctx context.Context, transport Transport) (bool, error) {
+	result, err := transport.Run(ctx, ownedBaselineCommand())
+	if err != nil {
+		return false, fmt.Errorf("inspect owned Host baseline: %w", err)
+	}
+	return parseOwnedBaseline(string(result.Stdout))
+}
+
+func parseOwnedBaseline(output string) (bool, error) {
+	switch strings.TrimSpace(output) {
+	case "BOETTICHER_BASELINE_OWNED=1":
+		return true, nil
+	case "BOETTICHER_BASELINE_OWNED=0":
+		return false, nil
+	default:
+		return false, errors.New("owned Host baseline inspection returned an unexpected response")
+	}
 }
 
 // NetworkTeardownCommand removes an exact, owned vmbr1 and its host IPv6

@@ -279,7 +279,8 @@ SERVER   -         -       BACK      REFRESH
 
 `ST-LAB` runs one manual speedtest from inside the LAB through the firewall's
 ordinary WAN egress. The Host helper creates a temporary owned namespace
-(`bt4s-lab`, host veth `bt4s-lab-h`) on the SERVERS VLAN with an address from
+(`bt4s-lab`, host veth `bt4s-lab-h`) as an access port on exactly the SERVERS
+VLAN (untagged, PVID, with the bridge default VLAN 1 removed) with an address from
 the reserved `.250-.254` probe space, which is outside the VPN-protected
 `.224/28` range, and resolves names through the SERVERS gateway like any LAB
 client. It streams one progress line per phase over the strict Host SSH
@@ -292,9 +293,18 @@ during the hourly NET sample shows `HOURLY`, and with no firewall configured
 shows `NO FW`. The hourly sample waits while a manual run is active, manual
 results never feed the NET/Blinkt throughput figure, and the helper shares the
 firewall packet-test lock so the two never run together. Each run removes its
-fixture with a fresh cleanup budget, removes an exactly matching leftover from
-an interrupted run before starting (reported on SERVER), refuses ambiguous
-leftovers, and reports a cleanup failure as a failed run.
+fixture with a fresh cleanup budget, removes an owned leftover from an
+interrupted run before starting (reported on SERVER), and reports a cleanup
+failure as a failed run. Ownership is proven by the reserved namespace and a
+host veth whose peer is that namespace's `eth0`; a leftover at any point of
+setup (not yet on vmbr1, still carrying VLAN 1) is recognised, while another
+bridge, another VLAN, a non-SERVERS address, or a same-named foreign link is
+refused and left in place. Recovery without starting a test uses the existing
+native cleanup surface, which also needs no healthy firewall provider:
+
+```text
+sudo boetticher module firewall test --cleanup-only --yes
+```
 
 `ST-VPN` shows `N/A`. VPN egress is selected only for declared VPN client
 reservations in the protected range, enforced by the firewall's source rules

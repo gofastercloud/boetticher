@@ -1,6 +1,9 @@
 package labspeedtest
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -57,5 +60,43 @@ func TestEncodeRoundTripsAndBoundsErrors(t *testing.T) {
 	}
 	if _, err := Encode(Event{Phase: PhaseDone}); err == nil {
 		t.Fatal("done event without a download result was encodable")
+	}
+}
+
+func TestCleanupEventsAreTerminalAndHelperAbsentIsCleanupOnly(t *testing.T) {
+	for _, line := range []string{`{"phase":"cleanup"}`, `{"phase":"cleanup","recovered_leftovers":true}`, `{"phase":"cleanup","helper_absent":true}`} {
+		event, err := ParseEvent([]byte(line))
+		if err != nil || !event.Terminal() {
+			t.Fatalf("ParseEvent(%s) = %#v, %v", line, event, err)
+		}
+	}
+	if _, err := ParseEvent([]byte(`{"phase":"setup","helper_absent":true}`)); err == nil {
+		t.Fatal("helper_absent accepted outside cleanup")
+	}
+}
+
+// The cleanup command must not fail on a Host still running the v1 helper,
+// which has no lab mode and so cannot own a fixture.
+func TestCleanupCommandHandlesStaleAndCurrentHelpers(t *testing.T) {
+	for name, item := range map[string]struct {
+		helper string
+		want   string
+	}{
+		"v1 helper":      {helper: "#!/bin/sh\necho 'flag provided but not defined: -version' >&2\nexit 2\n", want: `{"phase":"cleanup","helper_absent":true}`},
+		"missing helper": {want: `{"phase":"cleanup","helper_absent":true}`},
+		"v2 helper":      {helper: "#!/bin/sh\nif [ \"$1\" = --version ]; then echo " + HelperVersion + "; exit 0; fi\necho \"ran $*\"\n", want: "ran --lab --cleanup-only"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "boetticher-host-speedtest")
+			if item.helper != "" {
+				if err := os.WriteFile(path, []byte(item.helper), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			output, err := exec.Command("/bin/sh", "-c", strings.ReplaceAll(CleanupCommand, HelperPath, path)).Output()
+			if err != nil || strings.TrimSpace(string(output)) != item.want {
+				t.Fatalf("output=%q err=%v", output, err)
+			}
+		})
 	}
 }

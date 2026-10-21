@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -24,6 +26,7 @@ import (
 const (
 	labTestBudget    = 150 * time.Second
 	labCleanupBudget = 30 * time.Second
+	labVerifyBudget  = 5 * time.Second
 	labChildFlag     = "--lab-child"
 )
 
@@ -89,6 +92,35 @@ func runLab(stdout io.Writer) int {
 	return 0
 }
 
+// runLabCleanup is the recovery path: under the shared Host test lock it
+// removes an exactly owned leftover fixture and nothing else. It is
+// Host-local, so it works when the firewall provider is unhealthy.
+func runLabCleanup(stdout io.Writer) int {
+	writer := &eventWriter{out: stdout}
+	lock, err := acquireLabLock()
+	if err != nil {
+		writer.emit(labspeedtest.ErrorEvent("%v", err))
+		return 1
+	}
+	defer lock.Close()
+	event := cleanupLabWith(nativeLabHost{})
+	writer.emit(event)
+	if event.Phase != labspeedtest.PhaseCleanup {
+		return 1
+	}
+	return 0
+}
+
+func cleanupLabWith(host labHost) labspeedtest.Event {
+	ctx, cancel := context.WithTimeout(context.Background(), labCleanupBudget)
+	defer cancel()
+	recovered, err := recoverLabLeftovers(ctx, host)
+	if err != nil {
+		return labspeedtest.ErrorEvent("lab speedtest cleanup failed: %v", err)
+	}
+	return labspeedtest.Event{Phase: labspeedtest.PhaseCleanup, Recovered: recovered}
+}
+
 // runLabWith owns the fixture lifecycle: recover leftovers, register cleanup
 // before the first mutation, measure, then clean up with a fresh budget. The
 // terminal event is returned rather than emitted so a cleanup failure can
@@ -141,6 +173,25 @@ func (f *labFixture) setup(ctx context.Context) error {
 		{"ip", "netns", "exec", ns, "sysctl", "-q", "-w", "net.ipv6.conf.default.disable_ipv6=1"},
 		{"ip", "link", "set", veth, "master", "vmbr1"},
 		{"bridge", "vlan", "add", "dev", veth, "vid", strconv.Itoa(labspeedtest.VLAN), "pvid", "untagged"},
+	}
+	for _, step := range steps {
+		if _, err := f.host.run(ctx, step[0], step[1:]...); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(step, " "), err)
+		}
+	}
+	// Attaching to vmbr1 also joins the bridge default VLAN 1. Remove it so
+	// the fixture is an access port on exactly SERVERS; the result is
+	// verified below rather than trusting the delete's exit status, because
+	// a bridge without default_pvid has no VLAN 1 to remove.
+	_, _ = f.host.run(ctx, "bridge", "vlan", "del", "dev", veth, "vid", "1")
+	vlans, err := f.host.run(ctx, "bridge", "-j", "vlan", "show", "dev", veth)
+	if err != nil {
+		return fmt.Errorf("inspect fixture VLANs: %w", err)
+	}
+	if state, err := parseBridgeVLANs(vlans); err != nil || !state.exactAccess() {
+		return fmt.Errorf("fixture port is not exactly VLAN %d untagged/PVID: %s", labspeedtest.VLAN, strings.TrimSpace(vlans))
+	}
+	steps = [][]string{
 		{"ip", "link", "set", veth, "up"},
 		{"ip", "netns", "exec", ns, "ip", "link", "set", "lo", "up"},
 		{"ip", "netns", "exec", ns, "ip", "link", "set", "eth0", "up"},
@@ -206,7 +257,11 @@ func (f *labFixture) cleanup(ctx context.Context) error {
 			cleanupErr = errors.Join(cleanupErr, err)
 		}
 	}
-	if f.host.namespaceExists(ns) || f.host.linkExists(ctx, veth) {
+	// Verify with a fresh short budget: an exhausted cleanup context must not
+	// make a surviving resource look absent.
+	verifyCtx, cancel := context.WithTimeout(context.Background(), labVerifyBudget)
+	defer cancel()
+	if f.host.namespaceExists(ns) || f.host.linkExists(verifyCtx, veth) {
 		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("lab speedtest resource %s or %s remains", ns, veth))
 	}
 	return cleanupErr
@@ -239,6 +294,12 @@ func recoverLabLeftovers(ctx context.Context, host labHost) (bool, error) {
 	return true, nil
 }
 
+// labLeftoverOwned proves ownership before any removal. The namespace name is
+// reserved, and when the host veth exists its peer must be exactly the
+// namespace's eth0 (matching ifindex pairs), so a same-named foreign link is
+// never taken. Any prefix of the setup sequence is accepted: the veth may not
+// yet be on vmbr1, or may still carry the default VLAN 1, but it never belongs
+// to another bridge or carries a VLAN other than 1 and SERVERS.
 func labLeftoverOwned(ctx context.Context, host labHost, vethPresent bool) (bool, error) {
 	ns, veth := labspeedtest.Namespace, labspeedtest.HostVeth
 	links, err := host.run(ctx, "ip", "netns", "exec", ns, "ip", "-o", "link", "show")
@@ -249,18 +310,29 @@ func labLeftoverOwned(ctx context.Context, host labHost, vethPresent bool) (bool
 		// Interrupted between namespace and veth creation: only loopback.
 		return onlyLoopback(links), nil
 	}
-	output, err := host.run(ctx, "ip", "link", "show", veth)
-	if err != nil || !strings.Contains(output, "master vmbr1") {
+	hostLine, err := host.run(ctx, "ip", "-o", "link", "show", "dev", veth)
+	if err != nil {
 		return false, nil
 	}
-	output, err = host.run(ctx, "bridge", "vlan", "show", "dev", veth)
-	if err != nil || !vlanListed(output, labspeedtest.VLAN) {
+	hostLink, ok := parseLinkLine(hostLine, veth)
+	if !ok || (hostLink.master != "" && hostLink.master != "vmbr1") {
 		return false, nil
 	}
-	if !strings.Contains(links, "eth0@if") {
+	peerLink, ok := parseLinkLine(links, "eth0")
+	if !ok || peerLink.index != hostLink.peer || peerLink.peer != hostLink.index || !onlyLoopbackAnd(links, "eth0") {
 		return false, nil
 	}
-	output, err = host.run(ctx, "ip", "netns", "exec", ns, "ip", "-4", "-o", "address", "show", "dev", "eth0")
+	if hostLink.master == "vmbr1" {
+		output, err := host.run(ctx, "bridge", "-j", "vlan", "show", "dev", veth)
+		if err != nil {
+			return false, nil
+		}
+		state, err := parseBridgeVLANs(output)
+		if err != nil || !state.setupPrefix() {
+			return false, nil
+		}
+	}
+	output, err := host.run(ctx, "ip", "netns", "exec", ns, "ip", "-4", "-o", "address", "show", "dev", "eth0")
 	if err != nil {
 		return false, nil
 	}
@@ -270,27 +342,113 @@ func labLeftoverOwned(ctx context.Context, host labHost, vethPresent bool) (bool
 	return true, nil
 }
 
-func onlyLoopback(links string) bool {
+type linkLine struct {
+	index, peer int
+	master      string
+}
+
+// parseLinkLine reads one `ip -o link show` record such as
+// "42: bt4s-lab-h@if2: <...> mtu 1500 master vmbr1 ...".
+func parseLinkLine(output, name string) (linkLine, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		label := strings.TrimSuffix(fields[1], ":")
+		base, peerText, hasPeer := strings.Cut(label, "@if")
+		if base != name || !hasPeer {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+		peer, peerErr := strconv.Atoi(peerText)
+		if err != nil || peerErr != nil || index <= 0 || peer <= 0 {
+			return linkLine{}, false
+		}
+		result := linkLine{index: index, peer: peer}
+		for position := 2; position+1 < len(fields); position++ {
+			if fields[position] == "master" {
+				result.master = fields[position+1]
+			}
+		}
+		return result, true
+	}
+	return linkLine{}, false
+}
+
+func onlyLoopback(links string) bool { return onlyLoopbackAnd(links, "") }
+
+func onlyLoopbackAnd(links, allowed string) bool {
 	for _, line := range strings.Split(strings.TrimSpace(links), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
 		}
-		if strings.TrimSuffix(fields[1], ":") != "lo" {
+		name, _, _ := strings.Cut(strings.TrimSuffix(fields[1], ":"), "@")
+		if name != "lo" && (allowed == "" || name != allowed) {
 			return false
 		}
 	}
 	return true
 }
 
-func vlanListed(output string, vlan int) bool {
-	want := strconv.Itoa(vlan)
-	for _, field := range strings.Fields(output) {
-		if field == want {
-			return true
+type bridgeVLAN struct {
+	ID       int
+	PVID     bool
+	Untagged bool
+}
+
+type bridgeVLANState []bridgeVLAN
+
+// parseBridgeVLANs reads `bridge -j vlan show dev <port>`.
+func parseBridgeVLANs(output string) (bridgeVLANState, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return nil, nil
+	}
+	var ports []struct {
+		VLANs []struct {
+			VLAN  int      `json:"vlan"`
+			Flags []string `json:"flags"`
+		} `json:"vlans"`
+	}
+	if err := json.Unmarshal([]byte(output), &ports); err != nil {
+		return nil, fmt.Errorf("decode bridge VLANs: %w", err)
+	}
+	state := bridgeVLANState{}
+	for _, port := range ports {
+		for _, vlan := range port.VLANs {
+			entry := bridgeVLAN{ID: vlan.VLAN}
+			for _, flag := range vlan.Flags {
+				entry.PVID = entry.PVID || flag == "PVID"
+				entry.Untagged = entry.Untagged || flag == "Egress Untagged"
+			}
+			state = append(state, entry)
 		}
 	}
-	return false
+	return state, nil
+}
+
+// exactAccess is the completed fixture: only SERVERS, untagged, as PVID.
+func (s bridgeVLANState) exactAccess() bool {
+	return len(s) == 1 && s[0].ID == labspeedtest.VLAN && s[0].PVID && s[0].Untagged
+}
+
+// setupPrefix accepts the states the setup sequence passes through on vmbr1:
+// nothing yet, default VLAN 1, VLAN 1 plus SERVERS, or exactly SERVERS.
+func (s bridgeVLANState) setupPrefix() bool {
+	for _, vlan := range s {
+		switch vlan.ID {
+		case 1:
+		case labspeedtest.VLAN:
+			if !vlan.PVID || !vlan.Untagged {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func addressesInSubnet(output, subnet string) bool {
@@ -416,14 +574,21 @@ func (nativeLabHost) run(ctx context.Context, tool string, args ...string) (stri
 	return string(output), nil
 }
 
+// namespaceExists and linkExists are conservative: only a definite "does not
+// exist" is absence. Any other failure, including an expired context, counts
+// as present so cleanup can never report a surviving resource as gone.
 func (nativeLabHost) namespaceExists(name string) bool {
 	_, err := os.Stat("/run/netns/" + name)
-	return err == nil
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 func (h nativeLabHost) linkExists(ctx context.Context, name string) bool {
-	_, err := h.run(ctx, "ip", "link", "show", "dev", name)
-	return err == nil
+	output, err := h.run(ctx, "ip", "link", "show", "dev", name)
+	return !linkAbsent(output, err)
+}
+
+func linkAbsent(output string, err error) bool {
+	return err != nil && strings.Contains(output, "does not exist")
 }
 
 // stopNamespaceChildren signals only this helper's own measurement processes

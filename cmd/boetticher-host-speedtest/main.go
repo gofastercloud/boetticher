@@ -30,6 +30,7 @@ func main() {
 	version := flag.Bool("version", false, "print the helper contract version")
 	lab := flag.Bool("lab", false, "measure LAB egress from a temporary SERVERS namespace behind the firewall")
 	stream := flag.Bool("stream", false, "emit one JSON progress event per line (lab mode)")
+	cleanupOnly := flag.Bool("cleanup-only", false, "remove an owned lab fixture left by an interrupted run (lab mode)")
 	labChild := flag.Bool("lab-child", false, "internal: measure from inside the owned lab namespace")
 	gateway := flag.String("gateway", "", "internal: lab namespace gateway and resolver")
 	flag.Parse()
@@ -41,15 +42,22 @@ func main() {
 		fmt.Println(labspeedtest.HelperVersion)
 		return
 	case *labChild:
-		if *lab || *stream || *jsonOutput || *gateway != labspeedtest.Gateway {
+		if *lab || *stream || *cleanupOnly || *jsonOutput || *gateway != labspeedtest.Gateway {
 			fail("--lab-child requires only the fixed lab gateway")
 		}
 		os.Exit(runLabChild(*gateway, os.Stdout))
+	case *lab && *cleanupOnly:
+		if *stream || *jsonOutput || *gateway != "" {
+			fail("--lab --cleanup-only takes no other options")
+		}
+		os.Exit(runLabCleanup(os.Stdout))
 	case *lab:
-		if !*stream || *jsonOutput {
+		if !*stream || *jsonOutput || *gateway != "" {
 			fail("--lab requires --stream")
 		}
 		os.Exit(runLab(os.Stdout))
+	case *cleanupOnly:
+		fail("--cleanup-only requires --lab")
 	}
 	if !*jsonOutput {
 		fail("--json is required")

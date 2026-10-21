@@ -11,10 +11,12 @@ import (
 	"github.com/gofastercloud/boetticher/internal/labspeedtest"
 )
 
-// labSpeedtestTimeout bounds one manual run end to end. The Host helper has
-// its own 150 s measurement budget plus a fresh 30 s cleanup budget, so it
-// reports its own terminal event before this Controller-side bound expires.
-const labSpeedtestTimeout = 3*time.Minute + 15*time.Second
+// labSpeedtestTimeout bounds one manual run end to end. The Host helper's
+// worst case is about 220 s: 30 s leftover recovery, the 150 s measurement
+// budget, 5 s child wait delay, then 30 s cleanup and a 5 s fresh
+// verification. About 35 s of headroom lets the helper report its own
+// terminal event (including a cleanup failure) before SSH is cut.
+const labSpeedtestTimeout = 4*time.Minute + 15*time.Second
 
 // speedtestNoticeHold is how long a refused press shows its reason.
 const speedtestNoticeHold = 3 * time.Second

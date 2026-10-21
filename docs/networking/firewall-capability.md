@@ -151,7 +151,8 @@ claim same-VLAN, physical-switch, Wi-Fi, guest-firewall, or IPv6 isolation.
 The Controller StreamDeck `ST-LAB` speedtest (described in the Controller
 guide) uses its own `bt4s-lab` namespace on SERVERS
 and holds the same Host test lock, so a packet test started during a manual
-speedtest is refused as already running until that bounded run finishes.
+speedtest is refused as already running until that bounded run finishes. `test --cleanup-only --yes` also
+removes an owned leftover `bt4s-lab` fixture from an interrupted speedtest.
 
 The existing Controller status monitor represents the firewall check on the
 `FW` Blinkt slot and the StreamDeck Host-detail view. Phase 4B adds peer
