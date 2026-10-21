@@ -3,6 +3,8 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,7 +57,7 @@ func TestSupportedVersionRejectsUnknownMajor(t *testing.T) {
 }
 
 func TestTransportArgsAreStrictAndRootOnly(t *testing.T) {
-	transport := Transport{Address: "192.0.2.10", User: "root", Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}
+	transport := testTransport(t)
 	args, err := transport.Args("hostname")
 	if err != nil {
 		t.Fatal(err)
@@ -66,16 +68,41 @@ func TestTransportArgsAreStrictAndRootOnly(t *testing.T) {
 			t.Errorf("transport args missing %q: %s", required, joined)
 		}
 	}
-	if _, err := (Transport{Address: "192.0.2.10", User: "pi", Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}).Args("hostname"); err == nil {
+	nonRoot := transport
+	nonRoot.User = "pi"
+	if _, err := nonRoot.Args("hostname"); err == nil {
 		t.Fatal("non-root transport was accepted")
 	}
-	if _, err := (Transport{Address: "192.0.2.10", User: "root", Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}).Run(context.Background(), ""); err == nil {
+	if _, err := transport.Run(context.Background(), ""); err == nil {
 		t.Fatal("empty remote command was accepted")
+	}
+	linked := transport
+	linked.Identity = filepath.Join(filepath.Dir(transport.Identity), "linked_id")
+	if err := os.Symlink(transport.Identity, linked.Identity); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := linked.Args("hostname"); err == nil {
+		t.Fatal("symlinked identity was accepted")
 	}
 }
 
+// testTransport binds strict transport tests to private fixture files instead
+// of the Controller's root-only production identity.
+func testTransport(t *testing.T) Transport {
+	t.Helper()
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "id_ed25519")
+	knownHosts := filepath.Join(dir, "known_hosts")
+	for _, path := range []string{identity, knownHosts} {
+		if err := os.WriteFile(path, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return Transport{Address: "192.0.2.10", User: "root", Identity: identity, KnownHosts: knownHosts}
+}
+
 func TestTransportSCPArgsKeepStrictHostIdentity(t *testing.T) {
-	transport := Transport{Address: "192.0.2.10", User: "root", Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}
+	transport := testTransport(t)
 	args, err := transport.SCPArgs("/tmp/provider.img", "/var/tmp/provider.img")
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +118,7 @@ func TestTransportSCPArgsKeepStrictHostIdentity(t *testing.T) {
 }
 
 func TestTransportSCPFromArgsKeepStrictHostIdentity(t *testing.T) {
-	transport := Transport{Address: "192.0.2.10", User: "root", Identity: PrivateKeyPath, KnownHosts: KnownHostsPath}
+	transport := testTransport(t)
 	args, err := transport.SCPFromArgs("/var/tmp/provider.img", "/tmp/provider.img")
 	if err != nil {
 		t.Fatal(err)

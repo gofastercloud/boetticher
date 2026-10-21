@@ -19,9 +19,10 @@ class BuildTempTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "runs"
             active = subprocess.Popen([sys.executable, str(SCRIPT), "run", str(root), "--", sys.executable, "-c", "import time; time.sleep(30)"])
-            for _ in range(30):
-                if list(root.glob("run-*")):
-                    break
+            # The wrapper writes its token last, after taking the lock, so
+            # backdating before then would be undone by its own writes.
+            deadline = time.monotonic() + 10
+            while not list(root.glob("run-*/.boetticher-build-token")) and time.monotonic() < deadline:
                 time.sleep(0.01)
             active_dir = next(root.glob("run-*"))
             os.utime(active_dir, (time.time() - 7200, time.time() - 7200))

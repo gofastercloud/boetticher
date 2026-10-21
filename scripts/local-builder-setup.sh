@@ -12,8 +12,8 @@ fi
 
 # Keep this toolchain pinned so local builds use the same supported Go minor
 # release as the project without relying on automatic toolchain downloads.
-go_version=1.26.8
-go_sha256=d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
+go_version=1.26.10
+go_sha256=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
 go_root=/opt/boetticher/go
 go_install="$go_root/$go_version"
 trivy_version=0.69.3

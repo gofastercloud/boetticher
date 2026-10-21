@@ -22,10 +22,12 @@ func TestControllerCheckerRequiresReadableConfigServicesAndDiskSpace(t *testing.
 	if err := os.WriteFile(updates, []byte("APT::Periodic::Unattended-Upgrade \"1\";\nUnattended-Upgrade::Automatic-Reboot \"false\";\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	rebootRequired := filepath.Join(t.TempDir(), "reboot-required")
 	checker := ControllerChecker{
-		ConfigPath:       config,
-		UpdateConfigPath: updates,
-		RequiredServices: []string{"ssh.service"},
+		ConfigPath:         config,
+		UpdateConfigPath:   updates,
+		RebootRequiredPath: rebootRequired,
+		RequiredServices:   []string{"ssh.service"},
 		RunCommand: func(context.Context, string, ...string) ([]byte, error) {
 			return nil, nil
 		},
@@ -37,6 +39,15 @@ func TestControllerCheckerRequiresReadableConfigServicesAndDiskSpace(t *testing.
 	}
 	if result := checker.Check(context.Background()); !result.Healthy || result.Update.State != Healthy {
 		t.Fatalf("healthy controller result = %#v", result)
+	}
+	if err := os.WriteFile(rebootRequired, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if result := checker.Check(context.Background()); !result.Healthy || result.Update.State != Attention {
+		t.Fatalf("reboot-required controller result = %#v", result)
+	}
+	if err := os.Remove(rebootRequired); err != nil {
+		t.Fatal(err)
 	}
 	checker.RunCommand = func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("inactive") }
 	if result := checker.Check(context.Background()); result.Healthy {

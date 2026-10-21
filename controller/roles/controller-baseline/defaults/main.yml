@@ -1,6 +1,6 @@
 ---
-controller_go_version: "1.26.6"
-controller_go_sha256: "d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e"
+controller_go_version: "1.26.10"
+controller_go_sha256: "3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797"
 controller_go_archive: "/var/cache/boetticher/go{{ controller_go_version }}.linux-arm64.tar.gz"
 controller_go_root: "/opt/boetticher/toolchains/go{{ controller_go_version }}"
 controller_log2ram_size: "128M"
