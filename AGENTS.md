@@ -179,7 +179,8 @@ security, correctness, user authority, and required verification gates.
   Docs-only edits need structure/link/diff checks. After fixes settle, run the
   required closing journey once; don't repeat qualified Host teardown/reboots
   or full ceremonies for wording/display changes.
-- GitHub Actions is Pages-only; testing is local unless explicitly changed.
+- GitHub Actions runs Pages and lightweight PR checks (`pr-check.yml`); full
+  `make ci` and runtime testing remain local.
   Do not resurrect retired all-artifact release ceremonies from older documents.
 
 ## Keep it small and truthful
