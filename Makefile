@@ -51,6 +51,8 @@ vet:
 build:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher ./cmd/boetticher
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher-status ./cmd/boetticher-status
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher-agent-broker ./cmd/boetticher-agent-broker
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/agent-lab ./cmd/agent-lab
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/boetticher-host-speedtest-linux-amd64 ./cmd/boetticher-host-speedtest
 
 release-bundle: companion-binary
