@@ -49,18 +49,8 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runController(args[1:], out, errOut)
 	case "host":
 		return runHost(args[1:], input, out, errOut)
-	case "ssh-config":
-		return runSSHConfig(args[1:], out)
-	case "access":
-		return runAccess(args[1:], out)
 	case "module":
 		return runModuleWithInput(args[1:], input, out, errOut)
-	case "config":
-		return runConfig(args[1:], out)
-	case "hardware":
-		return runHardware(args[1:], out)
-	case "recover":
-		return runRecovery(args[1:], out)
 	}
 	fmt.Fprintln(errOut, "usage: boetticher <command>")
 	return fmt.Errorf("unknown or incomplete command %q", strings.Join(args, " "))
@@ -114,7 +104,8 @@ func retiredCommandError(args []string) error {
 
 func isLegacyLifecycleCommand(command string) bool {
 	switch command {
-	case "init", "enroll", "plan", "bundle", "deploy", "status", "update", "tui", "pki", "companion":
+	case "init", "enroll", "plan", "bundle", "deploy", "status", "update", "tui", "pki", "companion",
+		"ssh-config", "access", "config", "hardware", "recover":
 		return true
 	default:
 		return false
