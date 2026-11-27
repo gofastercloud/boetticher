@@ -286,23 +286,6 @@ func (c HostClient) ReconcileGuestWithTLS(ctx context.Context, b Binding, payloa
 	return nil
 }
 
-func validDNSName(value string) bool {
-	if value == "" || len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || strings.Contains(value, "..") {
-		return false
-	}
-	for _, part := range strings.Split(value, ".") {
-		if part == "" || len(part) > 63 {
-			return false
-		}
-		for _, char := range part {
-			if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 func (c HostClient) pushProviderPayload(ctx context.Context, b Binding, payloadRoot string, modules clientservices.Modules, secrets map[string][]byte) error {
 	if strings.TrimSpace(payloadRoot) == "" || !strings.HasPrefix(payloadRoot, "/") || strings.ContainsAny(payloadRoot, "\r\n\x00") {
 		return errors.New("installed observability payload path is invalid")
@@ -550,10 +533,6 @@ func (c HostClient) GuestConfig(ctx context.Context, b Binding) (map[string]stri
 	return m, nil
 }
 
-func networkIdentityMatches(raw, address string) bool {
-	return networkIdentityMatchesVLAN(raw, address, 0)
-}
-
 func networkIdentityMatchesVLAN(raw, address string, vlan int) bool {
 	bridge, ip := "", ""
 	tag := 0
@@ -609,22 +588,6 @@ func (c HostClient) ProviderHealth(ctx context.Context, b Binding, service strin
 		return "", fmt.Errorf("%s health endpoint failed: %w", service, err)
 	}
 	return "healthy", nil
-}
-
-// HolmesRunnerStatus verifies only the installed on-demand runner payload. It
-// never starts Holmes or contacts Bifrost/model providers.
-func (c HostClient) HolmesRunnerStatus(ctx context.Context, b Binding) (string, error) {
-	if _, err := c.GuestConfig(ctx, b); err != nil {
-		return "", err
-	}
-	r, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- sh -c %s", b.VMID, shellQuoteValue("test -x /opt/boetticher/observability/holmes/venv/bin/python; test -f /opt/boetticher/observability/holmes/holmes-runner.py; test -f /etc/boetticher/holmes/config.yaml; printf installed")))
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(string(r.Stdout)) != "installed" {
-		return "", errors.New("Holmes runner payload is incomplete")
-	}
-	return "installed", nil
 }
 
 func (c HostClient) RuntimeDigest(ctx context.Context, b Binding) (string, error) {
@@ -690,21 +653,6 @@ func validHolmesAlias(value string) bool {
 		}
 	}
 	return true
-}
-
-func (c HostClient) GuestCertificate(ctx context.Context, b Binding) (string, error) {
-	if _, err := c.GuestConfig(ctx, b); err != nil {
-		return "", err
-	}
-	r, err := c.Transport.Run(ctx, fmt.Sprintf("pct exec %d -- cat /var/lib/boetticher/tls/observability.crt.pem", b.VMID))
-	if err != nil {
-		return "", err
-	}
-	return string(r.Stdout), nil
-}
-
-func (c HostClient) VerifyReadiness(ctx context.Context, b Binding) error {
-	return c.VerifyReadinessForModules(ctx, b, clientservices.Modules{})
 }
 
 func (c HostClient) VerifyReadinessForModules(ctx context.Context, b Binding, modules clientservices.Modules) error {

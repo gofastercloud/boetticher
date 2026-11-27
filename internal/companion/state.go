@@ -118,11 +118,6 @@ func (s *State) Update(item Item) {
 		}
 	}
 }
-func (s *State) SetResources(resources []Resource) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.data.Resources = append([]Resource{}, resources...)
-}
 func (s *State) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()

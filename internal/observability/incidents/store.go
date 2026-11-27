@@ -119,19 +119,6 @@ func Open(path string, limits Limits) (*Store, error) {
 	return s, nil
 }
 
-// NewStore is useful for tests and callers that already own a SQLite handle.
-func NewStore(db *sql.DB, limits Limits) (*Store, error) {
-	if db == nil {
-		return nil, errors.New("incident database is nil")
-	}
-	db.SetMaxOpenConns(1)
-	s := &Store{db: db, limits: limits.normalized(), now: time.Now}
-	if err := s.init(context.Background()); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) init(ctx context.Context) error {

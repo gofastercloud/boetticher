@@ -77,10 +77,6 @@ func loadFirewallContext() (model.Site, firewallmodule.DesiredState, firewallmod
 	return loadFirewallContextWithOptions("", false)
 }
 
-func loadFirewallContextWithAddress(address string) (model.Site, firewallmodule.DesiredState, firewallmodule.HostClient, error) {
-	return loadFirewallContextWithOptions(address, false)
-}
-
 func loadFirewallContextWithOptions(address string, homeRecovery bool) (model.Site, firewallmodule.DesiredState, firewallmodule.HostClient, error) {
 	hostConfig, err := controllerhost.LoadConfig()
 	if err != nil {

@@ -407,10 +407,6 @@ func requiredObservabilityServices(capability string, modules clientservices.Mod
 	}
 }
 
-func capabilityConfigured(modules clientservices.Modules, capability string) bool {
-	return capability == "observability" && modules.Observability != nil
-}
-
 func setObservabilityEnabled(modules *clientservices.Modules, enabled bool) {
 	if modules.Observability == nil {
 		modules.Observability = &clientservices.ObservabilityConfig{}
