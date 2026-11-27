@@ -16,7 +16,7 @@ import (
 
 func runController(args []string, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: boetticher controller <bootstrap|status>")
+		return fmt.Errorf("usage: boetticher controller <bootstrap|status|reboot|agent-access>")
 	}
 	switch args[0] {
 	case "bootstrap":
@@ -25,6 +25,8 @@ func runController(args []string, out, errOut io.Writer) error {
 		return runControllerStatus(args[1:], out)
 	case "reboot":
 		return runControllerReboot(args[1:], out)
+	case "agent-access":
+		return runControllerAgentAccess(args[1:], out)
 	default:
 		return fmt.Errorf("unknown controller command %q", args[0])
 	}
