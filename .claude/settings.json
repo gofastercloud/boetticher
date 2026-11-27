@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "claude-sonnet-5-5",
+  "advisorModel": "claude-opus-5-5",
+  "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000",
+    "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS": "100000",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_CODE_FORK_SUBAGENT": "0",
+    "CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS": "1",
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+    "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "3",
+    "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "10000",
+    "MAX_MCP_OUTPUT_TOKENS": "10000",
+    "CLAUDE_CODE_DISABLE_FAST_MODE": "1",
+    "CLAUDE_CODE_GOAL_CHECKIN_MINUTES": "0",
+    "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false"
+  },
+  "promptCacheTtl": "1h",
+  "subagentPromptCacheTtl": "5m",
+  "bashOutputMaxChars": 10000,
+  "workflowSizeGuideline": "small",
+  "crossSessionInbound": "hold",
+  "permissions": {
+    "deny": [
+      "Agent(general-purpose)",
+      "Agent(fork)",
+      "Bash(watch *)",
+      "Bash(sleep *)",
+      "Bash(gh pr checks --watch*)",
+      "Bash(gh run watch*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh api *)",
+      "Bash(agent-gh api *)",
+      "Bash(gh gist *)",
+      "Bash(agent-gh gist *)",
+      "Bash(gh auth *)",
+      "Bash(agent-gh auth *)",
+      "Bash(gh secret *)",
+      "Bash(agent-gh secret *)",
+      "Bash(gh variable *)",
+      "Bash(agent-gh variable *)",
+      "Bash(gh release *)",
+      "Bash(agent-gh release *)",
+      "Bash(gh repo delete*)",
+      "Bash(agent-gh repo delete*)",
+      "Bash(git push --force*)",
+      "Bash(agent-git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(agent-git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(agent-git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(agent-git push * -f*)",
+      "Bash(git push --delete*)",
+      "Bash(agent-git push --delete*)",
+      "Bash(git push * --delete*)",
+      "Bash(agent-git push * --delete*)",
+      "Bash(git push * +*)",
+      "Bash(agent-git push * +*)",
+      "Bash(git push * main)",
+      "Bash(agent-git push * main)",
+      "Bash(git push * main:*)",
+      "Bash(agent-git push * main:*)",
+      "Bash(git push * *:main)",
+      "Bash(agent-git push * *:main)",
+      "Bash(git push * master)",
+      "Bash(agent-git push * master)",
+      "Bash(git push * master:*)",
+      "Bash(agent-git push * master:*)",
+      "Bash(git push * *:master)",
+      "Bash(agent-git push * *:master)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.config/groundhog/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.docker/**)",
+      "Read(~/.netrc)",
+      "Read(~/.git-credentials)",
+      "Read(~/.npmrc)",
+      "Read(~/.pypirc)",
+      "Edit(./**/.claude/settings*.json)",
+      "Write(./**/.claude/settings*.json)",
+      "Edit(./**/.claude/hooks/**)",
+      "Write(./**/.claude/hooks/**)",
+      "Edit(./**/.claude/agents/**)",
+      "Write(./**/.claude/agents/**)",
+      "Edit(./**/.claude/skills/**)",
+      "Write(./**/.claude/skills/**)",
+      "Edit(./**/.claude/commands/**)",
+      "Write(./**/.claude/commands/**)",
+      "Edit(./**/.claude/rules/**)",
+      "Write(./**/.claude/rules/**)",
+      "Edit(./**/.claude/output-styles/**)",
+      "Write(./**/.claude/output-styles/**)",
+      "Edit(./**/.claude/groupthinq.md)",
+      "Write(./**/.claude/groupthinq.md)",
+      "Edit(./**/.claude/groundhog-agency.md)",
+      "Write(./**/.claude/groundhog-agency.md)",
+      "Edit(./**/.agents/**)",
+      "Write(./**/.agents/**)",
+      "Edit(./.agency/**)",
+      "Write(./.agency/**)",
+      "Edit(./.git/**)",
+      "Write(./.git/**)",
+      "Edit(./**/.mcp.json)",
+      "Write(./**/.mcp.json)",
+      "Edit(./**/CLAUDE.local.md)",
+      "Write(./**/CLAUDE.local.md)",
+      "Edit(./**/.github/CODEOWNERS)",
+      "Write(./**/.github/CODEOWNERS)",
+      "Bash(git credential*)",
+      "Bash(printenv*)",
+      "Bash(git push * HEAD:*)",
+      "Bash(git push * *:refs/heads/main)"
+    ],
+    "ask": [
+      "Bash(gh repo *)",
+      "Bash(gh workflow *)",
+      "Bash(git remote *)",
+      "Bash(uv add *)",
+      "Bash(uv pip install *)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(npm install *)",
+      "Bash(npm i *)",
+      "Bash(pnpm add *)",
+      "Bash(yarn add *)",
+      "Edit(./AGENTS.md)",
+      "Write(./AGENTS.md)",
+      "Edit(./CLAUDE.md)",
+      "Write(./CLAUDE.md)",
+      "Edit(./**/.github/workflows/**)",
+      "Write(./**/.github/workflows/**)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "denyRead": [
+        "./.env",
+        "./.env.*",
+        "./**/*.pem",
+        "./**/*.key",
+        "~/.ssh",
+        "~/.aws",
+        "~/.netrc",
+        "~/.git-credentials",
+        "~/.gnupg",
+        "~/.kube",
+        "~/.config/gcloud",
+        "~/.azure",
+        "~/.npmrc",
+        "~/.pypirc",
+        "~/.docker"
+      ],
+      "denyWrite": [
+        ".agency",
+        ".git/hooks",
+        ".git/config",
+        ".mcp.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CLAUDE.local.md",
+        "**/.agents",
+        "**/.claude/settings.json",
+        "**/.claude/settings.local.json",
+        "**/.claude/hooks",
+        "**/.claude/agents",
+        "**/.claude/skills",
+        "**/.claude/commands",
+        "**/.claude/rules",
+        "**/.claude/groupthinq.md",
+        "**/.claude/groundhog-agency.md",
+        "**/.github/workflows",
+        "**/.github/CODEOWNERS"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry.npmjs.org"
+      ]
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PROJECT_DIR}/.claude/hooks/gtq.py\" brief",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PROJECT_DIR}/.claude/hooks/gtq.py\" guard",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PROJECT_DIR}/.claude/hooks/gtq.py\" pretool || exit 2",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "CronCreate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PROJECT_DIR}/.claude/hooks/gtq.py\" posttool",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PROJECT_DIR}/.claude/hooks/gtq.py\" ledger",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "python3 -I \"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/.claude/hooks/gtq.py\" statusline"
+  }
+}

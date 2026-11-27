@@ -13,3 +13,4 @@ secrets/
 *.tar.zst
 *.qcow2
 .trivy/
+.agency/
