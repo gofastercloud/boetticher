@@ -67,27 +67,6 @@ func (o *Operation) Progress(step int, detail string) {
 	o.notify(OperationEvent{Event: "operation-progress", Name: o.name, Mode: o.mode, CurrentStep: step, TotalSteps: o.total, Detail: detail, Tests: o.copyTests()})
 }
 
-func (o *Operation) TestResult(name string, passed bool) error {
-	if o == nil || o.mode != Testing {
-		return errors.New("test result requires a Testing display operation")
-	}
-	for index := range o.tests {
-		if o.tests[index].Name == name {
-			if o.tests[index].State != Checking {
-				return fmt.Errorf("test %q already has a result", name)
-			}
-			if passed {
-				o.tests[index].State = Healthy
-			} else {
-				o.tests[index].State = Failed
-			}
-			o.Progress(index+1, "")
-			return nil
-		}
-	}
-	return fmt.Errorf("unknown test %q", name)
-}
-
 func (o *Operation) End(err error) {
 	if o == nil {
 		return

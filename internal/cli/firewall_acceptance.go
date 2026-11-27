@@ -299,10 +299,6 @@ func invokeFirewallTestHost(ctx context.Context, host firewallmodule.HostClient,
 	return response, runErr
 }
 
-func firewallProviderClient(current model.Site, desired firewallmodule.DesiredState) (*openwrt.Client, error) {
-	return providerClientForAccess(current, desired, controllerhost.Transport{Address: controllerhost.LabHostAddress, User: "root", Identity: controllerhost.PrivateKeyPath, KnownHosts: controllerhost.KnownHostsPath}, providerAccessLAB)
-}
-
 type providerAccessMode uint8
 
 const (

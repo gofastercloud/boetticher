@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/pathguard"
@@ -62,18 +61,6 @@ func (s SecretStore) Load() (map[string][]byte, error) {
 		result[name] = []byte(value)
 	}
 	return result, nil
-}
-func (s SecretStore) Names() ([]string, error) {
-	values, err := s.Load()
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names, nil
 }
 func (s SecretStore) Set(name string, value []byte) error {
 	if !safeSecretName(name) || len(value) == 0 || len(value) > 64*1024 || bytes.IndexByte(value, 0) >= 0 {

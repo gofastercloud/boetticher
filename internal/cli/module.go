@@ -261,42 +261,6 @@ func purgeIntentMatches(existing, current site.PurgeIntent) bool {
 	return true
 }
 
-type pendingModulePurge struct {
-	intent    site.PurgeIntent
-	purgeSite model.Site
-	plan      proxmox.Plan
-}
-
-// loadPendingModulePurge validates the controller-local destructive operation
-// against the currently requested module definition. It is deliberately
-// usable without a Proxmox connection: planning a purge must be safe offline,
-// while the live ownership proof remains in proxmox.PurgeModule.
-func loadPendingModulePurge(siteDir string, s model.Site) (*pendingModulePurge, bool, error) {
-	intent, found, err := site.LoadPurgeIntent(siteDir)
-	if err != nil || !found {
-		return nil, found, err
-	}
-	purgeSite, err := modulePurgeSite(s, intent.Module)
-	if err != nil {
-		return nil, true, err
-	}
-	declaration, ok := findDeclaration(purgeSite, intent.Module)
-	if !ok {
-		return nil, true, fmt.Errorf("module %s purge declaration is missing", intent.Module)
-	}
-	if err := site.ValidateModuleSecretOwnership(purgeSite, intent.Module, declaration); err != nil {
-		return nil, true, err
-	}
-	plan, err := proxmox.PlanFromSite(purgeSite)
-	if err != nil {
-		return nil, true, err
-	}
-	if !purgeIntentMatches(intent, purgeIntentForPlan(plan, intent.Module)) {
-		return nil, true, errors.New("the persisted purge intent does not match the current module plan; inspect it before retrying")
-	}
-	return &pendingModulePurge{intent: intent, purgeSite: purgeSite, plan: plan}, true, nil
-}
-
 // modulePurgeSite reconstructs the disabled module's declaration in memory so
 // the generic Proxmox purge path can prove its exact guest, volume, and
 // security identity. It never changes the persisted site configuration; the

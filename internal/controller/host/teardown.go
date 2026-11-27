@@ -92,16 +92,3 @@ rm -f /etc/sysctl.d/70-boetticher-vmbr1.conf /etc/network/if-up.d/boetticher-vmb
 if [ -e /root/boetticher-network-pre-change.interfaces ]; then test ! -L /root/boetticher-network-pre-change.interfaces; rm -f /root/boetticher-network-pre-change.interfaces; fi
 `, nil
 }
-
-func validateTeardownConfig(config LabConfig) error {
-	if config.Proxmox.Node == "" {
-		return errors.New("host enrollment is already absent")
-	}
-	if config.Storage == nil || config.Storage.Device == "" {
-		return errors.New("dedicated storage selection is absent")
-	}
-	if config.Network == nil || config.Network.InternalBridge != InternalBridge {
-		return errors.New("internal network selection is absent")
-	}
-	return nil
-}

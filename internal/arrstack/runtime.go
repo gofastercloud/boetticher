@@ -316,10 +316,6 @@ func ValidateRecoverableGuestConfigForSize(config map[string]string, mediaGiB in
 	return nil
 }
 
-func EnsureGuest(ctx context.Context, host firewallmodule.HostClient) error {
-	return EnsureGuestWithMedia(ctx, host, MediaDiskGiB)
-}
-
 func EnsureGuestWithMedia(ctx context.Context, host firewallmodule.HostClient, mediaGiB int) error {
 	if mediaGiB < 1 {
 		return errors.New("arrstack media disk size must be positive")
@@ -506,14 +502,6 @@ func copyAssetToHost(ctx context.Context, host firewallmodule.HostClient, source
 		return "", func() {}, fmt.Errorf("copy arrstack asset to Host: %w", err)
 	}
 	return remote, cleanup, nil
-}
-
-func InstallRuntime(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, mediaSizes ...int) error {
-	return installRuntime(ctx, host, peerPort, cloudflareToken, clientservices.MediaConfig{ApplicationDomain: clientservices.DefaultMediaReference.ApplicationDomain, Aliases: clientservices.DefaultMediaReference.Aliases}, false, mediaSizes...)
-}
-
-func InstallRuntimeWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, config clientservices.MediaConfig, mediaSizes ...int) error {
-	return installRuntime(ctx, host, peerPort, cloudflareToken, config, false, mediaSizes...)
 }
 
 func InstallRuntimeWithConfigAndMonitoring(ctx context.Context, host firewallmodule.HostClient, peerPort int, cloudflareToken []byte, config clientservices.MediaConfig, monitoring bool, mediaSizes ...int) error {
@@ -785,21 +773,6 @@ func waitGuestAgent(ctx context.Context, host firewallmodule.HostClient) error {
 		}
 	}
 	return errors.New("arrstack QEMU guest agent did not become ready")
-}
-
-func ReadStatus(ctx context.Context, host firewallmodule.HostClient, mediaSizes ...int) (RuntimeStatus, error) {
-	return ReadStatusWithPeerPort(ctx, host, QBitTorrentPort, mediaSizes...)
-}
-
-// ReadStatusWithPeerPort verifies the runtime against the currently intended
-// peer port. A different applied firewall port is drift, even when containers
-// happen to be running.
-func ReadStatusWithPeerPort(ctx context.Context, host firewallmodule.HostClient, peerPort int, mediaSizes ...int) (RuntimeStatus, error) {
-	return readStatusWithConfig(ctx, host, peerPort, clientservices.MediaConfig{ApplicationDomain: "media.example.com", Aliases: clientservices.MediaAliases{Radarr: "radarr"}}, false, mediaSizes...)
-}
-
-func ReadStatusWithConfig(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, mediaSizes ...int) (RuntimeStatus, error) {
-	return ReadStatusWithConfigAndMonitoring(ctx, host, peerPort, config, false, mediaSizes...)
 }
 
 func ReadStatusWithConfigAndMonitoring(ctx context.Context, host firewallmodule.HostClient, peerPort int, config clientservices.MediaConfig, monitoring bool, mediaSizes ...int) (RuntimeStatus, error) {

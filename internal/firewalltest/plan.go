@@ -3,7 +3,6 @@ package firewalltest
 import (
 	"fmt"
 	"net/netip"
-	"strconv"
 )
 
 // Fixtures derives the preferred temporary address without probing or
@@ -47,5 +46,3 @@ func CandidateAddresses(subnet string) ([]string, error) {
 	}
 	return addresses, nil
 }
-
-func PortName(port int) string { return strconv.Itoa(port) }

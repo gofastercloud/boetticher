@@ -11,13 +11,6 @@ import (
 	controllerhost "github.com/gofastercloud/boetticher/internal/controller/host"
 )
 
-func shouldRunControllerStorage(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	return args[0] == "plan" || args[0] == "status" || args[0] == "initialize"
-}
-
 func runControllerStorage(args []string, out io.Writer) error {
 	if err := requireControllerReady(); err != nil {
 		return err

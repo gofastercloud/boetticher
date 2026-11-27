@@ -12,6 +12,13 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
+func shouldRunControllerStorage(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return args[0] == "plan" || args[0] == "status" || args[0] == "initialize"
+}
+
 func runStorage(args []string, out io.Writer) error {
 	if shouldRunControllerStorage(args) {
 		return runControllerStorage(args, out)

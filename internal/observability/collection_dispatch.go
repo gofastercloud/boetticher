@@ -116,16 +116,6 @@ func (b *boundedCollectionBuffer) Bytes() []byte { return bytes.Clone(b.data) }
 // dispatches the same verified collection installer to the three owned Linux
 // targets. Providers and their HTTPS frontend must already be ready when this
 // method is called by ReconcileGuestWithTLS.
-// ReconcileMediaCollection is the lifecycle hook for a media-enabled apply.
-// It deliberately delegates to the same idempotent collection reconciler so
-// receiver credentials and the three existing targets retain one owner.
-func (c HostClient) ReconcileMediaCollection(ctx context.Context, b Binding, payloadRoot, publicDomain string, config CollectionConfig) error {
-	if countTargetKind(config.Targets, TargetMedia) != 1 {
-		return errors.New("media collection requires exactly one owned media target")
-	}
-	return c.ReconcileCollection(ctx, b, payloadRoot, publicDomain, config)
-}
-
 func (c HostClient) ReconcileCollection(ctx context.Context, b Binding, payloadRoot, publicDomain string, config CollectionConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("collection configuration: %w", err)
@@ -307,11 +297,6 @@ func inspectMediaGuestFacts(ctx context.Context, runner Runner, mediaSizes ...in
 		return arrstack.GuestFacts{}, errors.New("media collection requires the enrolled Host transport for exact QEMU identity inspection")
 	}
 	return inspectMediaGuest(ctx, transport, mediaSizes...)
-}
-
-func inspectOwnedMediaGuest(ctx context.Context, runner Runner, mediaSizes ...int) error {
-	_, err := inspectMediaGuestFacts(ctx, runner, mediaSizes...)
-	return err
 }
 
 func (c HostClient) collectionReadCredential(ctx context.Context, b Binding, config CollectionConfig) ([]byte, string, error) {

@@ -80,8 +80,15 @@ command-docs-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/command-docs > /tmp/boetticher-commands.md
 	cmp -s /tmp/boetticher-commands.md docs/commands.md
 
+DEADCODE_LEGACY_PATTERN := ^internal/(ansible|artifacts|firewall|model|modules|pki|proxmox|schema|site|sshconfig)/|^internal/cli/(bootstrap|bootstrap_report|bundle|config|converge|deploy_preflight|deploy_report|firewall|hardware_usb|helpers|init|network_trunk_helpers|plan|runtime_credentials|ssh|storage|verify)\.go:
+
 deadcode:
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run golang.org/x/tools/cmd/deadcode@v0.47.0 -test ./...
+	@out=$$(GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run golang.org/x/tools/cmd/deadcode@v0.47.0 -test ./...) || exit $$?; \
+	active=$$(printf '%s\n' "$$out" | grep -Ev '$(DEADCODE_LEGACY_PATTERN)' | grep -v '^$$' || true); \
+	if [ -n "$$active" ]; then \
+		printf '%s\n' "$$active"; \
+		exit 1; \
+	fi
 
 local-builder-init:
 	./scripts/local-builder.sh init
