@@ -387,6 +387,170 @@ writes only `/var/lib/boetticher/labviewer/snapshot`. See
 [labviewer/README.md](https://github.com/gofastercloud/boetticher/blob/main/labviewer/README.md)
 for running it locally and for optional `control_surfaces` links.
 
+## Restricted agent access (`agent-lab`)
+
+Autonomous agents on a Mac can inspect the Controller and lab without touching
+the operator's Secretive master keys. The Mac-side `agent-lab` binary connects
+over a dedicated, non-interactive SSH key to the local `boetticher-agent`
+account on the Pi, where OpenSSH forces every session through
+`/usr/local/libexec/boetticher-agent-broker`. The broker parses
+`SSH_ORIGINAL_COMMAND` without a shell, enforces a strict allowlist and policy,
+and executes `/usr/local/bin/boetticher` directly via `execve`.
+
+`boetticher-agent-broker` is packaged in the Controller release and installed
+by `install.sh`. On the Mac, build `bin/agent-lab` with `make build`.
+
+### Generate the Mac agent key and pin the Controller host key
+
+Generate the dedicated Ed25519 identity on the Mac (stored with `0600`
+permissions at `~/.config/groundhog/agent_lab_ed25519` by default):
+
+```sh
+agent-lab init
+```
+
+`agent-lab init` prints the public key and the exact enable command for the Pi.
+Next, create `~/.config/groundhog/agent-lab.yml` (overridable via `--config` or
+`AGENT_LAB_CONFIG`; unknown YAML fields are rejected):
+
+```yaml
+host: 192.168.4.10
+user: boetticher-agent
+port: 22
+identity_file: ~/.config/groundhog/agent_lab_ed25519
+known_hosts_file: ~/.config/groundhog/agent_lab_known_hosts
+```
+
+Only `host` is required; the other fields default to the values shown above.
+Pin the Pi's verified SSH host key from the Mac's existing trusted
+`~/.ssh/known_hosts` into `~/.config/groundhog/agent_lab_known_hosts` without
+using `ssh-keyscan`, TOFU, or `StrictHostKeyChecking=no`:
+
+```sh
+awk '$1 == "192.168.4.10" && $2 == "ssh-ed25519" { print; exit }' \
+  ~/.ssh/known_hosts > ~/.config/groundhog/agent_lab_known_hosts
+```
+
+`agent-lab` fails closed if `known_hosts_file` is absent or if `identity_file`
+grants group or other permissions. It runs `ssh` with `-F /dev/null`,
+`IdentitiesOnly=yes`, `StrictHostKeyChecking=yes`, `BatchMode=yes`, and
+`SSH_AUTH_SOCK` stripped from the environment so it never contacts Secretive or
+an ambient `ssh-agent`.
+
+### Enable access on the Pi and verify
+
+Connect to the Pi over your normal Secretive-backed operator SSH session.
+Preview the local changes first with `--plan`, then apply with `--yes`:
+
+```sh
+sudo boetticher controller agent-access enable \
+  --key 'ssh-ed25519 AAAA... boetticher-agent' \
+  --plan
+sudo boetticher controller agent-access enable \
+  --key 'ssh-ed25519 AAAA... boetticher-agent' \
+  --yes
+```
+
+`enable --yes` creates the locked-password `boetticher-agent` system user if
+absent, atomically writes `0600` `~boetticher-agent/.ssh/authorized_keys` with
+`restrict,command="/usr/local/libexec/boetticher-agent-broker"`, atomically
+writes a `visudo`-validated `0440` rule at
+`/etc/sudoers.d/boetticher-agent-broker`, and creates the default read-only
+`/etc/boetticher/agent-policy.yml` (`0644`) only if it does not already exist.
+Only single-line `ed25519`, `ecdsa`, and `rsa` keys without embedded
+`authorized_keys` options are accepted.
+
+Inspect the configured state on the Pi (prints key type, SHA256 fingerprint,
+and comment—never raw key material):
+
+```sh
+sudo boetticher controller agent-access status
+```
+
+Then verify from the Mac without touching Secretive:
+
+```sh
+agent-lab status
+```
+
+`agent-lab status` runs `boetticher controller status`. Pass any other allowed
+subcommand directly, for example `agent-lab host status --details` or
+`agent-lab module firewall status`.
+
+### Tiers, policy, and hard denials
+
+By default (and whenever `/etc/boetticher/agent-policy.yml` is absent), the
+broker permits only **Tier 1** read-only commands:
+
+- `controller status [--operator USER]`
+- `host status [--details]`, `host plan-storage`, `host list-systems`,
+  `host system-status <name>`, `host upgrade --plan`, and
+  `host reboot --plan [--with-guests]`
+- `module <capability> status` for `firewall`, `dns`, `dhcp`, `observability`,
+  `logging`, `monitoring`, `statuspage`, `vpn` (`--details` permitted),
+  `tailnet`, and `media`
+- `module <capability> plan` for `firewall`, `dns`, `dhcp`, `observability`,
+  `vpn`, `tailnet`, and `media`
+- `module dns list-records`, `module dhcp list-reservations`, and
+  `module dhcp list-leases [--details]`
+- `module logging query` with bounded flags (`--host`, `--unit`, `--level`,
+  `--since` up to `168h`, `--limit` `1`–`500`)
+- `module monitoring incidents list [--json]` and
+  `module monitoring incidents show <id> [--json]`
+
+To opt into **Tier 2** active-test or mutation capabilities, edit the
+root-owned `/etc/boetticher/agent-policy.yml` on the Pi. The broker rejects
+symlinks, non-regular files, non-root ownership, group/world-writable modes,
+and unknown YAML fields:
+
+```yaml
+tier2:
+  system_power: false       # host start-system|stop-system <name> --plan|--yes
+  firewall_test: false      # module firewall test --plan|--yes
+  dns_records: false        # module dns add-record|remove-record
+  dhcp_reservations: false  # module dhcp add-reservation|remove-reservation
+  module_apply: []          # subset of: firewall, dns, dhcp, observability, vpn, tailnet, media
+```
+
+The following are **always hard-denied** and cannot be enabled by policy:
+
+- Any `teardown` or `secrets` subcommand, or any argument referencing
+  `install.sh`
+- `controller reboot`, `controller bootstrap`, and `controller agent-access`
+- `host reboot --yes` (only `--plan` is allowed)
+- Sensitive flags: `--data-disk`, `--api-key-stdin`, `--auth-key-file`,
+  `--cloudflare-token-file`, and `--credentials-file`
+
+### Audit logs and instant revocation
+
+Every broker invocation writes a structured JSON audit record (`timestamp`,
+`user`, `key_comment`, `argv`, `decision`, `tier`, `reason`, `exit_code`, and
+`duration_ms`) to `stderr`, and SSH/sudo activity for `boetticher-agent` is
+recorded in `journald` on the Controller:
+
+```sh
+sudo journalctl -u ssh -t sudo --since '1 hour ago' | grep boetticher-agent
+```
+
+When the observability module is enabled, Controller `journald` logs are
+shipped to VictoriaLogs and can be queried via:
+
+```sh
+boetticher module logging query --unit ssh --since 1h --limit 100
+```
+
+To revoke agent access immediately from a Secretive operator session on the Pi:
+
+```sh
+sudo boetticher controller agent-access disable --yes
+```
+
+Use `--plan` first to preview removals. `disable --yes` removes
+`~boetticher-agent/.ssh/authorized_keys` and
+`/etc/sudoers.d/boetticher-agent-broker` immediately while preserving
+`/etc/boetticher/agent-policy.yml`; pass `--purge-policy` to delete the policy
+file as well.
+
 ## Installed paths and maintenance
 
 | Path | Purpose |
@@ -395,8 +559,11 @@ for running it locally and for optional `control_surfaces` links.
 | `/opt/boetticher/current` | Active release symlink |
 | `/opt/boetticher/venv/` | Private Ansible environment |
 | `/opt/boetticher/toolchains/go1.26.10/` | Pinned Go toolchain |
+| `/usr/local/libexec/boetticher-agent-broker` | Forced-command SSH broker for restricted agent access |
 | `/etc/boetticher/controller.yml` | Controller-local operator and status settings |
+| `/etc/boetticher/agent-policy.yml` | Root-owned opt-in Tier 2 policy for restricted agent access |
 | `/etc/boetticher/lab.yml` | Host, LAB, and capability intent |
+| `/etc/sudoers.d/boetticher-agent-broker` | Narrow NOPASSWD rule for `boetticher-agent` |
 | `/var/lib/boetticher/controller/` | Controller state, SSH identity, and the log2ram boot marker |
 | `/var/lib/boetticher/labviewer/` | Lab snapshot facts and publication |
 | `/run/boetticher/status.sock` | Root-only best-effort operation event socket |
