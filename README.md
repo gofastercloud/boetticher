@@ -50,6 +50,8 @@ configured, and never accepts Host trust or erases a disk without exact
 operator approval. [Start here](docs/start.md) is the canonical journey,
 including approval boundaries, maintenance, teardown, and the Module order.
 
+For read-only Controller, Host, and guest patch preflight, see the [homelab maintenance guide](docs/maintenance.md). It reports package plans and backup evidence but does not apply updates or reboot.
+
 ## Built with a lot of excellent open source
 
 Boetticher is the small connector between a pile of brilliant projects. Huge

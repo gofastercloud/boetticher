@@ -26,7 +26,10 @@ work="$BOETTICHER_BUILD_TEMP_DIR/observability-base"
 mkdir -m 0700 "$work"
 rootfs=$work/rootfs
 mmdebstrap --variant=minbase --architectures=amd64 --aptopt=Acquire::Check-Valid-Until=false --aptopt=Acquire::Retries=3 --aptopt=Acquire::Languages=none --include="$packages" "$release" "$rootfs" "$mirror"
-mkdir -p "$rootfs/etc/boetticher"
+mkdir -p "$rootfs/etc/boetticher" "$rootfs/etc/apt/sources.list.d" "$rootfs/etc/apt/apt.conf.d"
+printf '%s\n' 'Types: deb' 'URIs: https://deb.debian.org/debian-security/' 'Suites: trixie-security' 'Components: main' >"$rootfs/etc/apt/sources.list.d/boetticher-debian-security-live.sources"
+printf '%s\n' 'APT::Periodic::Update-Package-Lists "1";' 'APT::Periodic::Unattended-Upgrade "1";' 'Unattended-Upgrade::Origins-Pattern {' '    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";' '};' 'Unattended-Upgrade::Automatic-Reboot "false";' 'Unattended-Upgrade::Remove-Unused-Dependencies "false";' >"$rootfs/etc/apt/apt.conf.d/52boetticher-unattended"
+chroot "$rootfs" systemctl enable apt-daily.timer apt-daily-upgrade.timer
 tar --zstd -C "$rootfs" -cf "$work/base.tar.zst" .
 install -m 0644 "$work/base.tar.zst" "$output.new"
 mv -f "$output.new" "$output"

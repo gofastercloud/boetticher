@@ -25,6 +25,7 @@ build:
     - jq
     - bash
     - python3
+    - unattended-upgrades
 runtime:
   journal: systemd-journal
   journal_upload: systemd-journal-upload

@@ -5,6 +5,9 @@
 - name: Install Proxmox host prerequisites
   ansible.builtin.include_tasks: prerequisites.yml
 
+- name: Configure security-only unattended upgrades
+  ansible.builtin.include_tasks: unattended.yml
+
 - name: Ensure required Proxmox services start on reboot
   ansible.builtin.include_tasks: services.yml
 
