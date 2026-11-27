@@ -23,6 +23,7 @@ boetticher host status
 
 ```text
 boetticher controller bootstrap|status|reboot [--operator USER] [--confirm-key-login] [--yes]
+boetticher controller agent-access status|enable|disable [--key PUBKEY] [--purge-policy] [--plan|--yes]
 boetticher host create-identity|show-public-key|import-host-key|authorize-controller|enroll|apply|status|plan-storage|teardown|upgrade|reboot ...
 boetticher host register-system|list-systems|system-status|start-system|stop-system|unregister-system ...
 boetticher module <capability> <action> [flags]
