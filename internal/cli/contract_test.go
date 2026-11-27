@@ -61,7 +61,7 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 			t.Errorf("root short help exposed advanced command %s: %s", hidden, text)
 		}
 	}
-	for _, hidden := range []string{"boetticher init", "boetticher deploy", "boetticher bundle", "boetticher tui", "boetticher companion", "boetticher pki"} {
+	for _, hidden := range []string{"boetticher init", "boetticher deploy", "boetticher bundle", "boetticher tui", "boetticher companion", "boetticher pki", "boetticher ssh-config", "boetticher access", "boetticher config", "boetticher hardware", "boetticher recover"} {
 		if strings.Contains(text, hidden) {
 			t.Errorf("root help exposed superseded lifecycle %s", hidden)
 		}
@@ -92,8 +92,8 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"controller", "--help"}, {"controller", "bootstrap", "--help"}, {"controller", "status", "--help"},
 		{"host", "--help"}, {"host", "apply", "--help"}, {"host", "status", "--help"}, {"host", "teardown", "--help"},
-		{"module", "dhcp", "--help"}, {"module", "dns", "--help"}, {"access", "--help"},
-		{"module", "--help"}, {"module", "firewall", "--help"}, {"module", "monitoring", "--help"}, {"config", "--help"},
+		{"module", "dhcp", "--help"}, {"module", "dns", "--help"},
+		{"module", "--help"}, {"module", "firewall", "--help"}, {"module", "monitoring", "--help"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err != nil {
@@ -109,7 +109,7 @@ func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	paths := []string{
 		"module dhcp list-leases",
 		"module firewall status",
-		"config schema",
+		"controller reboot",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -158,15 +158,20 @@ func TestCommandMetadataHasSubstantiveHelpForEveryPath(t *testing.T) {
 }
 
 func TestLegacyLifecycleIsDisabled(t *testing.T) {
-	for _, command := range []string{"init", "enroll", "plan", "bundle", "deploy", "status", "update", "tui", "pki", "companion"} {
+	for _, command := range []string{"init", "enroll", "plan", "bundle", "deploy", "status", "update", "tui", "pki", "companion", "ssh-config", "access", "config", "hardware", "recover"} {
+		want := "boetticher " + command + " is retired from the supported Controller/Host workflow"
 		var output bytes.Buffer
-		if err := Run([]string{command}, &output, &output); err == nil {
-			t.Fatalf("legacy command %s was accepted", command)
+		err := Run([]string{command}, &output, &output)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("legacy command %s did not report retirement %q: %v", command, want, err)
+		}
+		if output.Len() != 0 {
+			t.Fatalf("legacy command %s produced unexpected output: %q", command, output.String())
 		}
 		output.Reset()
-		err := Run([]string{command, "--help"}, &output, &output)
-		if err == nil || !strings.Contains(err.Error(), "retired from the supported Controller/Host workflow") {
-			t.Fatalf("legacy command %s --help did not report retirement: %v", command, err)
+		err = Run([]string{command, "--help"}, &output, &output)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("legacy command %s --help did not report retirement %q: %v", command, want, err)
 		}
 	}
 }
