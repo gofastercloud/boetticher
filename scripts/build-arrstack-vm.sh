@@ -72,7 +72,17 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-virt-customize -a "$customized" --install docker.io,qemu-guest-agent,nftables,iptables,ca-certificates,curl --upload "$policy":/usr/local/sbin/boetticher-arrstack-firewall --upload "$unit":/etc/systemd/system/boetticher-arrstack-firewall.service --run-command 'chmod 0755 /usr/local/sbin/boetticher-arrstack-firewall; systemctl enable boetticher-arrstack-firewall.service qemu-guest-agent; systemctl disable docker.service docker.socket' --mkdir /var/lib/arrstack/media --mkdir /opt/arrstack
+unattended=$stage/52boetticher-unattended
+cat >"$unattended" <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
+EOF
+virt-customize -a "$customized" --install docker.io,qemu-guest-agent,nftables,iptables,ca-certificates,curl,unattended-upgrades --upload "$unattended":/etc/apt/apt.conf.d/52boetticher-unattended --upload "$policy":/usr/local/sbin/boetticher-arrstack-firewall --upload "$unit":/etc/systemd/system/boetticher-arrstack-firewall.service --run-command 'chmod 0755 /usr/local/sbin/boetticher-arrstack-firewall; systemctl enable boetticher-arrstack-firewall.service qemu-guest-agent apt-daily.timer apt-daily-upgrade.timer; systemctl disable docker.service docker.socket' --mkdir /var/lib/arrstack/media --mkdir /opt/arrstack
 qemu-img check "$customized"
 install -d -m 0755 /var/lib/boetticher/arrstack-image
 install -m 0644 "$customized" "$output.new"

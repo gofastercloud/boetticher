@@ -1,0 +1,3 @@
+interface:
+  display_name: "Boetticher OS Patching"
+  short_description: "Plan safe Boetticher OS maintenance"

@@ -1,4 +1,4 @@
-.PHONY: controller-check ci test build release-bundle companion-binary companion-check vet fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-firewall image-tailnet-router image-bifrost image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-firewall scan-tailnet-router scan-bifrost scan-network-probe command-docs command-docs-check deadcode streamdeck-check build-temp-check
+.PHONY: controller-check ci test build release-bundle companion-binary companion-check maintenance-check vet fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-firewall image-tailnet-router image-bifrost image-network-probe images local-builder-init local-builder-storage-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-firewall scan-tailnet-router scan-bifrost scan-network-probe command-docs command-docs-check deadcode streamdeck-check build-temp-check
 
 GOCACHE ?= $(shell go env GOCACHE 2>/dev/null || printf '%s/go-build' "$${XDG_CACHE_HOME:-$${HOME}/Library/Caches}")
 GOMODCACHE ?= $(shell go env GOMODCACHE 2>/dev/null || printf '%s/go/pkg/mod' "$${HOME}")
@@ -21,6 +21,9 @@ test:
 
 build-temp-check:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'build_temp_test.py' -v
+
+maintenance-check:
+	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --no-project --python 3.13 python -m unittest discover -s tests -p 'maintain_homelab_test.py' -v
 
 streamdeck-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/streamdeck ./cmd/boetticher-streamdeck
@@ -128,4 +131,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-ci: controller-check fmt-check image-check schema-check command-docs-check deadcode test usb-export-test streamdeck-check companion-check build-temp-check vet build ansible-check security-check diff-check
+ci: controller-check maintenance-check fmt-check image-check schema-check command-docs-check deadcode test usb-export-test streamdeck-check companion-check build-temp-check vet build ansible-check security-check diff-check

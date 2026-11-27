@@ -274,6 +274,9 @@ create_base_rootfs() {
     --include="$base_packages" \
     "$base_release" "$rootfs" "$mirror"
   install -D -m 0644 images/base/runtime/debian-security-snapshot.sources "$rootfs/etc/apt/sources.list.d/boetticher-debian-security.sources"
+  # The snapshot above is frozen; a live security source lets unattended-upgrades see new fixes.
+  install -D -m 0644 images/base/runtime/debian-security-live.sources "$rootfs/etc/apt/sources.list.d/boetticher-debian-security-live.sources"
+  install -D -m 0644 images/base/runtime/52boetticher-unattended "$rootfs/etc/apt/apt.conf.d/52boetticher-unattended"
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
   install -D -m 0644 images/base/runtime/journal-upload.conf "$rootfs/etc/systemd/journal-upload.conf"
   install -D -m 0644 images/base/runtime/chrony.default "$rootfs/etc/default/chrony"
@@ -298,7 +301,7 @@ create_base_rootfs() {
   rm -f "$rootfs"/etc/ssh/ssh_host_*
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
   rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
-  chroot "$rootfs" systemctl enable boetticher-first-boot.service
+  chroot "$rootfs" systemctl enable boetticher-first-boot.service apt-daily.timer apt-daily-upgrade.timer
   cache_tmp="$cache_root/base/.${base_cache_key}.tmp.$$"
   rm -rf "$cache_tmp"
   mkdir -p "$cache_tmp"

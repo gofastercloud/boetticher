@@ -1,0 +1,31 @@
+---
+- name: Install unattended-upgrades without upgrading the host
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    update_cache: false
+    lock_timeout: 300
+
+- name: Configure Debian security-only unattended upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52boetticher-unattended
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      Unattended-Upgrade::Origins-Pattern {
+          "origin=Debian,codename={{ ansible_facts.distribution_release }}-security,label=Debian-Security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Dependencies "false";
+
+- name: Enable the apt timers that drive unattended upgrades
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer

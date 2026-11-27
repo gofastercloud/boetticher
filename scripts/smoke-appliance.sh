@@ -50,6 +50,9 @@ require_chroot_executable() {
 
 printf '%s\n' 'boetticher smoke check: module descriptor absence'
 test ! -e "$rootfs/etc/boetticher/module.yaml"
+printf '%s\n' 'boetticher smoke check: unattended security upgrades'
+grep -Fq 'Unattended-Upgrade::Automatic-Reboot "false"' "$rootfs/etc/apt/apt.conf.d/52boetticher-unattended"
+test -f "$rootfs/etc/apt/sources.list.d/boetticher-debian-security-live.sources"
 printf '%s\n' 'boetticher smoke check: artifact identity presence'
 test -s "$rootfs/usr/lib/boetticher/artifact.json"
 printf '%s\n' 'boetticher smoke check: artifact definition checksum'
