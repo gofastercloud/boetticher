@@ -40,7 +40,9 @@ main() {
     "$go_bin" build -trimpath -o "$stage/bin/boetticher-lab-snapshot" ./cmd/boetticher-lab-snapshot
   GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
     "$go_bin" build -trimpath -o "$stage/bin/boetticher-labviewer" ./labviewer
-  chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status" "$stage/bin/boetticher-lab-snapshot" "$stage/bin/boetticher-labviewer"
+  GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+    "$go_bin" build -trimpath -o "$stage/bin/boetticher-agent-broker" ./cmd/boetticher-agent-broker
+  chmod 0755 "$stage/bin/boetticher" "$stage/bin/boetticher-status" "$stage/bin/boetticher-lab-snapshot" "$stage/bin/boetticher-labviewer" "$stage/bin/boetticher-agent-broker"
   ARRSTACK_SOURCE_ARCHIVE=${ARRSTACK_SOURCE_ARCHIVE:?ARRSTACK_SOURCE_ARCHIVE must point to the reviewed upstream tarball} \
     sh scripts/build-arrstack.sh "$stage/bin/arrstack"
   chmod 0755 "$stage/bin/arrstack"
