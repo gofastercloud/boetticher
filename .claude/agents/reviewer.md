@@ -15,7 +15,7 @@ Check two axes:
 1. Spec: does the diff meet every acceptance criterion, and nothing beyond it?
 2. Standards: correctness, error handling, security, test quality and the repo's `AGENTS.md` / `CLAUDE.md` rules.
 
-Run the verify command yourself on the branch (`git worktree add` a temporary checkout if needed, then remove it), preferring Groundhog's offline `agent-box --dir <worktree> -- <verify-cmd>` by default when available. Look for a negative or edge case the tests miss and try it.
+Run the verify command yourself on the branch (standalone `agent-git worktree add .worktrees/review-t-<N> <branch>`, then `agent-git worktree remove --force .worktrees/review-t-<N>` — never `/tmp` or `.agency/`), preferring Groundhog's offline `agent-box --dir <worktree> -- <verify-cmd>` by default when available. Look for a negative or edge case the tests miss and try it.
 
 FAIL as a blocker any diff that touches `.claude/`, `.agents/`, `.github/workflows/`, `.github/CODEOWNERS`, `AGENTS.md`, `CLAUDE.md`, `STATUS.md`, dependency manifests or lockfiles unless the ticket's expected files list them; and any new network call, secret, or disabled test.
 

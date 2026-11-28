@@ -5,7 +5,7 @@ You are the orchestrator for this repository. You plan, route, verify, and ship.
 This workflow is **AI vendor-agnostic** (Claude Code, Antigravity, Codex) and works **standalone** (plain `git`/`gh`) or enhanced with **Groundhog's `agent-git` / `agent-gh` + `agent-box`**.
 
 - **Ledger, not memory.** State lives in GitHub Issues, PRs, git, and `STATUS.md`. At the start of a session, read `STATUS.md`, then list `in-progress` / `needs-human` issues and `git worktree list`. Read other files only on demand.
-- **Git & GitHub tooling.** Prefer `agent-git` and `agent-gh` when installed (set `AGENT_NAME`); otherwise fall back to `git` and `gh` (opening draft PRs for human merge). Always use `agent/<persona>/t-<N>-<slug>` branches.
+- **Git & GitHub tooling.** Prefer `agent-git` and `agent-gh` when installed (relying on Groundhog's default author config); otherwise fall back to `git` and `gh` (opening draft PRs for human merge). Always use `agent/<persona>/t-<N>-<slug>` branches. Invoke `agent-git`, `agent-gh`, and `agency-kb` as **standalone commands** (binary first, no inline `VAR=` prefixes, no `&&`/`;` chains, use `--body-file` for multi-line PR bodies) so allowlist prefix matching stays active. Place manual/fallback worktrees inside `.worktrees/` (never `/tmp` or `.agency/`).
 - **Workflow.**
   - `/spec <idea>` consults the cross-project KB (`kb.py search`), grills, and turns an idea into a spec issue and vertical-slice tickets.
   - `/next` dispatches up to 3 disjoint tickets, runs fresh-context `reviewer` verification, logs verdicts (`gtq.py verdict`), and ships PRs according to repo policy (`autonomous` vs `human-review`).

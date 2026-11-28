@@ -19,7 +19,7 @@ Tickets labelled `in-progress` with no running implementer were interrupted (usa
 
 **2. Dispatch.** Claim each ticket first:
 `agent-gh issue edit <N> --remove-label ready-for-agent --add-label in-progress`
-Then start one `implementer` per ticket in the background (Claude Code: `implementer` subagent with `isolation: worktree`; Antigravity: `invoke_subagent` with `Workspace: "share"`; Codex: isolated worktree). Give each a brief of no more than 6 lines: the ticket number, the verify command, and anything decided in this session that isn't in the ticket. Don't paste the ticket body; it reads the issue itself. Don't poll: wait for the completion notice.
+Then start one `implementer` per ticket in the background (Claude Code: `implementer` subagent with `isolation: worktree`; Antigravity: `invoke_subagent` with `Workspace: "share"`, or fallback `agent-git worktree add -b agent/implementer/t-<N>-<slug> .worktrees/t-<N> main`; Codex: isolated worktree under `.worktrees/t-<N>`). Give each a brief of no more than 6 lines: the ticket number, the verify command, and anything decided in this session that isn't in the ticket. Don't paste the ticket body; it reads the issue itself. Don't poll: wait for the completion notice.
 
 **3. Check the work.** When an implementer reports:
 - If it says `BLOCKED`, put the question in `STATUS.md`, swap the ticket's `in-progress` label for `needs-human`, and move on.
@@ -31,10 +31,10 @@ Then start one `implementer` per ticket in the background (Claude Code: `impleme
 
 **4. Ship.** When the reviewer returns `PASS`:
 1. Check the repository's `agent-git` policy (`groundhog agent-git status`).
-2. Push the branch: `AGENT_NAME="Agency Orchestrator" agent-git push -u origin <branch>`. The pretool hook refuses any branch whose diff touches `.claude/`, `.agents/`, `.github/`, `.git*`, `AGENTS.md`, `CLAUDE.md`, `STATUS.md`, `.mcp.json`, symlinks, submodules, or file modes. If refused, don't work around it: label the ticket `needs-human` with the reason.
-3. Ship according to repo policy:
-   - **Autonomous repo:** open a PR labelled `agent-authored` (`agent-gh pr create --label agent-authored --title "<ticket title>" --body "Closes #<N>\n\n..."` including the reviewer verdict). Once checks are green, squash-merge (`agent-gh pr merge --squash --delete-branch`), sync `main` (`agent-git pull --ff-only --prune`), and remove `in-progress`.
-   - **Human-review repo:** open a draft PR labelled `agent-authored` and `needs-human-review` (`agent-gh pr create --draft --label agent-authored --label needs-human-review --title "<ticket title>" --body "Closes #<N>\n\n..."`), swap `in-progress` for `needs-human`, and leave open for human approval.
+2. Push the branch as a standalone command (never prefix with `VAR=` or chain with `&&`): `agent-git push -u origin <branch>`. The pretool hook refuses any branch whose diff touches `.claude/`, `.agents/`, `.github/`, `.git*`, `AGENTS.md`, `CLAUDE.md`, `STATUS.md`, `.mcp.json`, symlinks, submodules, or file modes. If refused, don't work around it: label the ticket `needs-human` with the reason.
+3. Ship according to repo policy, running each `agent-gh`/`agent-git` step as its own standalone command (use `--body-file` for multi-line PR bodies so allowlist prefix matching stays active):
+   - **Autonomous repo:** open a PR labelled `agent-authored` (`agent-gh pr create --base main --head <branch> --label agent-authored --title "<ticket title>" --body-file <file>` including `Closes #<N>` and the reviewer verdict). Once checks are green, squash-merge (`agent-gh pr merge <pr> --squash --delete-branch`), sync `main` (`agent-git pull --ff-only --prune`), and remove `in-progress` (`agent-gh issue edit <N> --remove-label in-progress`).
+   - **Human-review repo:** open a draft PR labelled `agent-authored` and `needs-human-review` (`agent-gh pr create --draft --base main --head <branch> --label agent-authored --label needs-human-review --title "<ticket title>" --body-file <file>`), swap `in-progress` for `needs-human`, and leave open for human approval.
 
 Never push directly to `main`/`master`, and never bypass a `human-review` repo policy.
 
