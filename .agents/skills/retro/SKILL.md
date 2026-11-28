@@ -14,9 +14,9 @@ Run a concise retrospective after a `/next-all` run, completed spec, or repeated
    - **Libraries (`--kind library`):** libraries/CLIs that were easy (or painful) to work with, including exact versions/gotchas.
    - **Pitfalls (`--kind pitfall`):** causes of reviewer `FAIL`s, flaky tests, or subtle bugs to avoid next time.
    - **Project retro (`--kind retro`):** 1 short summary of this build block (what shipped, first-pass rate, key takeaway).
-3. **Save to the cross-project knowledge base** (defaults to `~/.agency-kb/`):
+3. **Save to the cross-project knowledge base** (defaults to `~/.agency-kb/` — prefer standalone `agency-kb add` calls with no `&&` chains so allowlist prefix matching stays active, else `python3 .claude/hooks/kb.py`):
    ```
-   python3 .claude/hooks/kb.py add --kind <kind> --title "<short title>" --tags "<tag1,tag2>" --project "<repo-name>" --body "<concise markdown>"
+   agency-kb add --kind <kind> --title "<short title>" --tags "<tag1,tag2>" --project "<repo-name>" --body "<concise markdown>"
    ```
 4. **Propose repo rule updates (optional):** if a pitfall is specific to this repo and happened more than once, propose a 1-line addition to `AGENTS.md` for the maintainer to approve — never edit `AGENTS.md` without approval.
 5. **Report** in ≤6 lines what was added to the knowledge base and the repo's current first-pass rate.

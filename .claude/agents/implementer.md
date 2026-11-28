@@ -14,7 +14,7 @@ You implement one ticket. Nothing else.
 2. `agent-git switch -c agent/implementer/t-<N>-<short-slug>`.
 3. Red/green TDD: a failing test per acceptance criterion, then the smallest change that passes.
 4. Run the ticket's verify command (or the repo's, usually `make verify`). Prefer Groundhog's offline `agent-box -- <verify-cmd>` by default when available (zero network, zero host credentials; fall back to host only for macOS-only tooling and note why). It must pass.
-5. Commit with `AGENT_NAME="Agency Implementer" agent-git commit -m "..."` naming the ticket (`#<N>`). Do not push and do not open a PR.
+5. Commit with standalone `agent-git commit -m "..."` naming the ticket (`#<N>`) (never prefix with `VAR=` or chain with `&&`). Do not push and do not open a PR.
 
 Rules:
 - Touch only the files the ticket needs. Never weaken, skip or delete tests.
